@@ -9,13 +9,12 @@ Real-time object detection and depth estimation pipeline deployed on edge hardwa
 ### Hardware Components
 * **Compute:** Raspberry Pi 5 (8GB RAM recommended)
 * **AI Acceleration:** Hailo AI Hat+ (26 TOPS)
-* **Vision:** OV3660 USB Camera Module
+* **Vision:** OV2640 USB Camera Module
 * **Haptics Controller:** ESP32 (communicating via UART)
 * **Audio Output:** Bone-conduction earphones (Bluetooth)
 
 ### Software Stack
 * **OS:** Raspberry Pi OS (Trixie, 64-bit)
-* **Environment:** Docker & Docker Compose
 * **Models:** YOLOv8n (Object Detection), SC-DepthV3 (Depth Estimation)
 * **Inference Runtime:** HailoRT
 * **Audio Synthesis:** `pyttsx3`
@@ -47,7 +46,7 @@ second-vision-repo/
 ├── config/
 │   └── defaults.yaml              ← Default thresholds, zones, baud rate
 ├── tests/
-├── SV-Docu/                       ← Project documentation 
+├── documentation/                 ← Project documentation 
 └── pyproject.toml
 ```
 
