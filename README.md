@@ -1,4 +1,4 @@
-# **Second Vision: IoT-Based Smart Glass for the Visually Impaired**
+# **Second Vision: IoT-Based Smart Glasses for the Visually Impaired**
 
 Real-time object detection and depth estimation on edge hardware, delivering spatial awareness through audio and haptic feedback.
 
@@ -160,7 +160,7 @@ python3 -m pytest tests/
 
 | Document | Description |
 |---|---|
-| [`CLAUDE.md`](CLAUDE.md) | Instructions for AI coding agents — read this first |
+| [`AGENT.md`](AGENT.md) | Instructions for AI coding agents — read this first |
 | [`PROJECT.md`](documentation/PROJECT.md) | Project overview, team, hardware specs |
 | [`ARCHITECTURE.md`](documentation/ARCHITECTURE.md) | System architecture, data flow, protocols |
 | [`DECISIONS.md`](documentation/DECISIONS.md) | All architectural decisions with rationale |
