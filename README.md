@@ -14,27 +14,41 @@ Real-time object detection and depth estimation pipeline deployed on edge hardwa
 * **Audio Output:** Bone-conduction earphones (Bluetooth)
 
 ### Software Stack
-* **OS:** Raspberry Pi OS (Bookworm, 64-bit)
+* **OS:** Raspberry Pi OS (Trixie, 64-bit)
 * **Environment:** Docker & Docker Compose
 * **Models:** YOLOv8n (Object Detection), SC-DepthV3 (Depth Estimation)
 * **Inference Runtime:** HailoRT
 * **Audio Synthesis:** `pyttsx3`
 
-## Repository Structure (Proposed)
+## Repository Structure 
 
-```text
-second-vision/
-├── docker-compose.yml        # Container orchestration and hardware passthrough
-├── Dockerfile                # Core dependency stack definition
-├── requirements.txt          # Python packages
+```
+second-vision-repo/
+├── my_hailo_env/                  ← Python venv (hailo_apps installed here)
+├── src/
+│   └── second_vision/
+│       ├── __init__.py
+│       ├── main.py                ← Entry point: python3 src/second_vision/main.py
+│       ├── pipeline/
+│       │   ├── app.py             ← SecondVisionApp (extends GStreamerParallelApp)
+│       │   └── callbacks.py       ← on_det_frame, on_depth_frame
+│       ├── workers/
+│       │   ├── tts_worker.py      ← TTS consumer (espeak-ng + cooldown)
+│       │   ├── serial_worker.py   ← ESP32 motor commands (binary protocol)
+│       │   └── config_reader.py   ← Arduino settings reader
+│       ├── core/
+│       │   ├── config.py          ← SystemConfig (thread-safe shared state)
+│       │   ├── protocol.py        ← Binary packet encode/decode
+│       │   └── depth_utils.py     ← Zone splitting, proximity, hazard detection
+│       └── mock/
+│           └── data_generator.py  ← Fake data for --mock mode
+├── scripts/
+│   └── run.sh                     ← Activates venv + runs main.py
 ├── config/
-│   └── settings.yaml         # Centralized parameters (UART, thresholds, tuning)
-├── models/                   # Compiled Hailo Executable Format (.hef) binaries
-├── scripts/                  # Utilities for compilation and diagnostics
-├── src/                      
-│   ├── main.py               # Asynchronous execution entry point
-│   ├── core/                 # Pipeline and Hailo API abstraction
-│   └── hardware/             # Isolated interfaces (Camera, UART, Bluetooth TTS)
-└── tests/                    # Validation scripts for hardware mocks
+│   └── defaults.yaml              ← Default thresholds, zones, baud rate
+├── tests/
+├── SV-Docu/                       ← Project documentation 
+└── pyproject.toml
+```
 
 
