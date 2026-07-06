@@ -22,6 +22,7 @@ from hailo_apps.python.core.gstreamer.gstreamer_app import app_callback_class
 logger = get_logger(__name__)
 
 def main():
+    print("Hi")
     # 1. Load Configs
     #TBA
 
