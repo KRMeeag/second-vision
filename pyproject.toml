@@ -1,0 +1,20 @@
+[project]
+name = "second-vision-repo"
+version = "0.1.0"
+description = "Software for Second Vision: Smartglasses with YOLOv8n and SCDepthv3 for Obstacle Detection\""
+authors = [
+    {name = "KRMeeag",email = "kenthrazenmagbanua@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pyttsx3 (>=2.99,<3.0)",
+    "hailo-apps @ git+https://github.com/hailo-ai/hailo-apps.git ; sys_platform == 'linux' and (platform_machine == 'aarch64' or platform_machine == 'armv7l')"
+]
+
+[tool.poetry]
+package-mode = false
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
