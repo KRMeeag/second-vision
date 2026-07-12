@@ -22,12 +22,12 @@ from hailo_apps.python.core.common.defines import (
     DEPTH_POSTPROCESS_SO_FILENAME,
     RESOURCES_SO_DIR_NAME,
     RESOURCES_VIDEOS_DIR_NAME,
-    SIMPLE_DETECTION_APP_TITLE,
-    SIMPLE_DETECTION_PIPELINE,
-    SIMPLE_DETECTION_POSTPROCESS_FUNCTION,
-    SIMPLE_DETECTION_POSTPROCESS_SO_FILENAME,
-    SIMPLE_DETECTION_VIDEO_NAME,
+    DETECTION_APP_TITLE,
+    DETECTION_PIPELINE,
+    DETECTION_POSTPROCESS_FUNCTION,
+    DETECTION_POSTPROCESS_SO_FILENAME,
 )
+from hailo_apps.python.core.common.hef_utils import get_hef_labels_json
 
 from hailo_apps.python.core.common.hailo_logger import get_logger
 from hailo_apps.python.core.gstreamer.gstreamer_app import (
@@ -40,6 +40,7 @@ from hailo_apps.python.core.gstreamer.gstreamer_helper_pipelines import (
     INFERENCE_PIPELINE,
     INFERENCE_PIPELINE_WRAPPER,
     USER_CALLBACK_PIPELINE,
+    TRACKER_PIPELINE,
     QUEUE,
 )
 
@@ -55,27 +56,33 @@ class GStreamerParallelApp(GStreamerApp):
             default=None,
             help="Path to custom labels JSON file",
         )
+        
+        parser.add_argument(
+            "--det-hef-path",
+            default="yolov8s.hef",
+            help="Specific HEF model to use for detection (default: yolov8s.hef)",
+        )
 
         # Handle list models flags for both
         handle_list_models_flag(parser, DEPTH_PIPELINE)
-        handle_list_models_flag(parser, SIMPLE_DETECTION_PIPELINE)
+        handle_list_models_flag(parser, DETECTION_PIPELINE)
 
-        hailo_logger.info("Initializing Parallel Depth & Detection App...")
+        hailo_logger.info("Initializing Parallel Depth & Detection App V3...")
         
         super().__init__(parser, user_data)
         
-        # Adjust dimensions for simple detection defaults
+        # Adjust dimensions for detection defaults
         if self.video_width == 1280:
             self.video_width = 640
         if self.video_height == 720:
             self.video_height = 640
 
-        # Adjust batch size for simple detection defaults
+        # Adjust batch size for detection defaults
         if self.batch_size == 1:
             self.batch_size = 2
 
         self.app_callback = app_callback
-        setproctitle.setproctitle("Parallel-Depth-Detection")
+        setproctitle.setproctitle("Parallel-Depth-Detection-V3")
 
         # ---- Depth App Parameters ----
         self.depth_hef_path = resolve_hef_path(
@@ -86,19 +93,20 @@ class GStreamerParallelApp(GStreamerApp):
         )
         self.depth_post_function_name = DEPTH_POSTPROCESS_FUNCTION
 
-        # ---- Simple Detection Parameters ----
+        # ---- Detection Parameters ----
         self.det_hef_path = resolve_hef_path(
-            self.hef_path, app_name=SIMPLE_DETECTION_PIPELINE, arch=self.arch
+            self.options_menu.det_hef_path, app_name=DETECTION_PIPELINE, arch=self.arch
         )
         self.det_post_process_so = get_resource_path(
-            pipeline_name=SIMPLE_DETECTION_PIPELINE,
-            resource_type=RESOURCES_SO_DIR_NAME,
-            arch=self.arch,
-            model=SIMPLE_DETECTION_POSTPROCESS_SO_FILENAME,
+            DETECTION_PIPELINE, RESOURCES_SO_DIR_NAME, self.arch, DETECTION_POSTPROCESS_SO_FILENAME
         )
-        self.det_post_function_name = SIMPLE_DETECTION_POSTPROCESS_FUNCTION
+        self.det_post_function_name = DETECTION_POSTPROCESS_FUNCTION
         
         self.labels_json = self.options_menu.labels_json
+        if self.labels_json is None: # if no labels JSON file is provided, try auto-detect it from the HEF file
+            self.labels_json = get_hef_labels_json(self.det_hef_path)
+            if self.labels_json is not None:
+                hailo_logger.info("Auto detected Labels JSON: %s", self.labels_json)
 
         nms_score_threshold = 0.3
         nms_iou_threshold = 0.45
@@ -116,7 +124,7 @@ class GStreamerParallelApp(GStreamerApp):
             (self.det_post_process_so, "Detection Postprocess SO")
         ]:
             if path is None or not Path(path).exists():
-                hailo_logger.error(f"{name} path is invalid or missing: {path}")
+                hailo_logger.error(f"{name} path is invalid or missing: %s", path)
 
         self.create_pipeline()
         hailo_logger.debug("Pipeline created successfully")
@@ -149,6 +157,10 @@ class GStreamerParallelApp(GStreamerApp):
             additional_params=self.thresholds_str,
             name="det_inference"
         )
+        detection_pipeline_wrapper = INFERENCE_PIPELINE_WRAPPER(
+            detection_pipeline, name="inference_wrapper_det"
+        )
+        tracker_pipeline = TRACKER_PIPELINE(class_id=1, name="det_tracker")
         det_callback = USER_CALLBACK_PIPELINE(name="det_callback")
         det_display = DISPLAY_PIPELINE(
             video_sink=self.video_sink, sync=self.sync, show_fps=self.show_fps, name="det_display"
@@ -158,10 +170,10 @@ class GStreamerParallelApp(GStreamerApp):
         pipeline_str = (
             f"{source_pipeline} ! tee name=t "
             f"t. ! {QUEUE(name='depth_branch_q')} ! {depth_pipeline_wrapper} ! {depth_callback} ! {depth_display} "
-            f"t. ! {QUEUE(name='det_branch_q')} ! {detection_pipeline} ! {det_callback} ! {det_display}"
+            f"t. ! {QUEUE(name='det_branch_q')} ! {detection_pipeline_wrapper} ! {tracker_pipeline} ! {det_callback} ! {det_display}"
         )
         
-        hailo_logger.info(f"Generated Pipeline string:\n{pipeline_str}")
+        hailo_logger.info("Generated Pipeline string:\n%s", pipeline_str)
         return pipeline_str
 
 def main():
@@ -172,5 +184,5 @@ def main():
     app.run()
 
 if __name__ == "__main__":
-    hailo_logger.info("Starting Parallel Depth & Detection App...")
+    hailo_logger.info("Starting Parallel Depth & Detection App V3...")
     main()
