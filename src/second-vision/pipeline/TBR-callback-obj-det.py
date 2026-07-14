@@ -32,6 +32,8 @@ class user_app_callback_class(app_callback_class):
         # Structure: {track_id: {'direction': str, 'label': str, 'last_frame': int}}
         self.track_history = {}
         self.fps_start_time = time.monotonic()
+        # Set of track_ids that have moved from center to a side zone
+        self.IDs_changed_zones = set()
 
     def get_depth_stats(self, depth_mat):
         depth_values = np.array(depth_mat).flatten()
@@ -103,7 +105,12 @@ def cv2_draw_det(frame_bgr, active_zones, det_labels, width, height, user_data):
         x2 = int(bbox.xmax() * width)
         y2 = int(bbox.ymax() * height)
 
-        cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        if track_id in user_data.IDs_changed_zones:
+            bbox_color = (0, 165, 255)  # Orange for objects that left the center
+        else:
+            bbox_color = (0, 255, 0)    # Green for standard detections
+
+        cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), bbox_color, 2)
         cv2.putText(
             img=frame_bgr,
             text=display_text,
@@ -150,10 +157,6 @@ def on_det_frame(element, buffer, user_data):
     active_zones = set()
     # Structure: {(direction, label): (display_text, bbox, area, track_id)}
     det_labels = {} 
-    
-    # List of IDs that changed detection zones this frame
-    # Structure: {track_id: old_direction}
-    IDs_changed_zones = set()
 
     for det in detections:
         # Get object properties from detection
@@ -193,7 +196,10 @@ def on_det_frame(element, buffer, user_data):
                 # If the object was seen before, and its zone changed
                 if track_hist["label"] == label and track_hist["direction"] == "center" and direction != "center":
                     direction_text = f"center {label} leaving {direction}!"
-                    IDs_changed_zones.add(track_id)
+                    user_data.IDs_changed_zones.add(track_id)
+                elif track_hist["label"] == label and track_hist["direction"] != "center" and direction == "center":
+                    # If it comes back to the center, remove it from the hazard set
+                    user_data.IDs_changed_zones.discard(track_id)
 
             user_data.track_history[track_id] = {
                 "direction": direction,
@@ -219,7 +225,7 @@ def on_det_frame(element, buffer, user_data):
             
             active_zones.add(direction)
 
-    # --- Pass 2: ID Related Logic ---
+    # --- Pass 2: Stale ID Related Logic ---
     stale_ids = []
     for track_id in user_data.track_history:
         if frame_count - user_data.track_history[track_id]["last_frame"] > 15:
@@ -227,6 +233,7 @@ def on_det_frame(element, buffer, user_data):
 
     for track_id in stale_ids:
         user_data.track_history.pop(track_id, None)
+        user_data.IDs_changed_zones.discard(track_id)
     
     # --- Pass 3: Draw zone tints, lines, and text ---
     if frame_bgr is not None:
