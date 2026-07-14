@@ -1,17 +1,3 @@
-'''
-NOTE:
-Prototyping for object detection is currently being done
-in another separate repo within the RPI. 
-This file aims to backup the progress of the development
-of the callbacks for the Object Detection in the event
-that the SD Card corrupts.
-
-Once finalized, the object detection callback will be
-migrated to callbacks.py for integration testing and
-this file will be DELETED
-
-'''
-
 import os
 from pathlib import Path
 import cv2
@@ -30,10 +16,10 @@ from hailo_apps.python.core.common.hailo_logger import get_logger
 
 from hailo_apps.python.core.common.buffer_utils import get_caps_from_pad, get_numpy_from_buffer
 
-LEFT_BOUNDARY = 0.30
-CENTER_LEFT_BOUNDARY = 0.36
-CENTER_RIGHT_BOUNDARY = 0.64
-RIGHT_BOUNDARY = 0.70
+LEFT_BOUNDARY = 0.22
+CENTER_LEFT_BOUNDARY = 0.25
+CENTER_RIGHT_BOUNDARY = 0.75
+RIGHT_BOUNDARY = 0.78
 
 hailo_logger = get_logger(__name__)
 
@@ -71,8 +57,7 @@ def on_depth_frame(element, buffer, user_data):
         avg_d, min_d, max_d = user_data.get_depth_stats(depth_mask[0].get_data())
         # print(f"[DEPTH] Frame {frame_count} | Avg: {avg_d:.2f} | Min: {min_d:.2f} | Max: {max_d:.2f}")
 
-
-def cv2_draw_det(frame_bgr, active_zones, det_labels):
+def cv2_draw_det(frame_bgr, active_zones, det_labels, width, height, user_data):
     left_line_x = int(width * LEFT_BOUNDARY)
     center_left_line_x = int(width * CENTER_LEFT_BOUNDARY)
     center_right_line_x = int(width * CENTER_RIGHT_BOUNDARY)
@@ -152,23 +137,27 @@ def on_det_frame(element, buffer, user_data):
         center_x = bbox.xmin() + (bbox.width() / 2.0)
 
         display_text = f"{label} ({confidence*100:.0f}%)"
-        if label == "person":
+        # print(f"[DET] {display_text}")
+        if confidence >= 0.70:
             if center_x <= LEFT_BOUNDARY:
-                display_text = "Person at the left!"
+                display_text = f"{label} at the left!"
                 direction = "left"
             elif center_x >= CENTER_LEFT_BOUNDARY and center_x <= CENTER_RIGHT_BOUNDARY:
-                display_text = "Person in the middle!"
+                display_text = f"{label} in the middle!"
                 direction = "center"
             elif center_x >= RIGHT_BOUNDARY:
-                display_text = "Person in the right!"
+                display_text = f"{label} in the right!"
                 direction = "right"
             else:
-                display_text = "Person not identifiable!"
+                display_text = f"{label} not identifiable!"
                 continue
 
             if (direction, label) in det_labels:
                 curr_text, curr_bbox = det_labels[(direction, label)]
-                if (bbox.width() * bbox.height()) > (curr_bbox.width() * curr_bbox.height()):
+                area = bbox.width() * bbox.height()
+                curr_area = curr_bbox.width() * curr_bbox.height()
+
+                if area > curr_area:
                     det_labels[(direction, label)] = (display_text, bbox)
                 else:
                     det_labels[(direction, label)] = (curr_text, curr_bbox)
@@ -179,51 +168,7 @@ def on_det_frame(element, buffer, user_data):
 
     # --- Pass 2: Draw zone tints, lines, and text ---
     if frame_bgr is not None:
-        left_line_x = int(width * LEFT_BOUNDARY)
-        center_left_line_x = int(width * CENTER_LEFT_BOUNDARY)
-        center_right_line_x = int(width * CENTER_RIGHT_BOUNDARY)
-        right_line_x = int(width * RIGHT_BOUNDARY)
-
-        # Draw semi-transparent red tint on active zones
-        overlay = frame_bgr.copy()
-        tint_color = (0, 0, 255)  # Red in BGR
-
-        if "left" in active_zones:
-            cv2.rectangle(overlay, (0, 0), (left_line_x, height), tint_color, -1)
-        if "center" in active_zones:
-            cv2.rectangle(overlay, (center_left_line_x, 0), (center_right_line_x, height), tint_color, -1)
-        if "right" in active_zones:
-            cv2.rectangle(overlay, (right_line_x, 0), (width, height), tint_color, -1)
-
-        # Blend: 30% tint + 70% original
-        if active_zones:
-            frame_bgr = cv2.addWeighted(overlay, 0.3, frame_bgr, 0.7, 0)
-
-        # Draw zone divider lines on top of the blended frame
-        cv2.line(frame_bgr, (left_line_x, 0), (left_line_x, height), (255, 0, 0), 2)
-        cv2.line(frame_bgr, (center_left_line_x, 0), (center_left_line_x, height), (0, 255, 0), 2)
-        cv2.line(frame_bgr, (center_right_line_x, 0), (center_right_line_x, height), (0, 255, 0), 2)
-        cv2.line(frame_bgr, (right_line_x, 0), (right_line_x, height), (0, 0, 255), 2)
-
-        # Draw bounding boxes and text labels for each person detection
-        for (direction, label), (display_text, bbox) in det_labels.items():
-            x1 = int(bbox.xmin() * width)
-            y1 = int(bbox.ymin() * height)
-            x2 = int(bbox.xmax() * width)
-            y2 = int(bbox.ymax() * height)
-
-            cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(
-                img=frame_bgr,
-                text=display_text,
-                org=(x1, y1 - 10),
-                fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                fontScale=0.7,
-                color=(0, 0, 0),
-                thickness=2
-            )
-
-        user_data.set_frame(frame_bgr)
+        cv2_draw_det(frame_bgr, active_zones, det_labels, width, height, user_data)
 
 class GStreamerDualApp(GStreamerParallelApp):
     def _connect_callback(self):
