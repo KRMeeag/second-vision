@@ -18,7 +18,7 @@ try:
     import numpy as np
     HAILO_AVAILABLE = True
 except ImportError:
-    HAILO_AVAILALE = False
+    HAILO_AVAILABLE = False
 
 def on_det_frame(element, buffer, user_data):
     """Process detection results. Runs in GStreamer thread — must be fast."""
@@ -87,20 +87,27 @@ def _process_real_depth(buffer, user_data):
         return
     
     depth_data = np.array(depth_masks[0].get_data())
-    
-    # STUB: Simple zone splitting (replace with real depth_utils)
+
+    # Zone splitting (25/50/25) with percentile-based outlier filtering
     if depth_data.ndim == 2:
         h, w = depth_data.shape
-        left_avg   = float(np.mean(depth_data[:, :w//4]))
-        center_avg = float(np.mean(depth_data[:, w//4:3*w//4]))
-        right_avg  = float(np.mean(depth_data[:, 3*w//4:]))
+
+        def zone_avg(zone_slice):
+            lo, hi = np.percentile(zone_slice, [5, 95])
+            filtered = zone_slice[(zone_slice >= lo) & (zone_slice <= hi)]
+            return float(np.mean(filtered)) if filtered.size else float(np.mean(zone_slice))
+
+        left_avg   = zone_avg(depth_data[:, :w//4])
+        center_avg = zone_avg(depth_data[:, w//4:3*w//4])
+        right_avg  = zone_avg(depth_data[:, 3*w//4:])
     else:
         left_avg = center_avg = right_avg = 0.0
-    
-    # STUB: Linear proximity (replace with exponential curve)
-    def to_intensity(avg, max_depth=5.0):
-        clamped = max(0.0, min(avg, max_depth))
-        return int((1.0 - clamped / max_depth) * 255)
+
+    # Inverse-square proximity curve — linear feels unnatural to users (ARCHITECTURE.md)
+    def to_intensity(avg, max_depth=5.0, min_depth=0.3):
+        clamped = max(min_depth, min(avg, max_depth))
+        falloff = (max_depth - clamped) / (max_depth - min_depth)
+        return int(round(255 * falloff ** 2))
     
     try:
         user_data.serial_queue.put_nowait({
