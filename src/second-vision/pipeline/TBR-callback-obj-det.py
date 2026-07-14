@@ -1,19 +1,19 @@
 import os
-from pathlib import Path
 import cv2
+import time
+import numpy as np
+
+from pathlib import Path
+
 os.environ["GST_PLUGIN_FEATURE_RANK"] = "vaapidecodebin:NONE"
 
 import gi
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst
-
 import hailo
-import numpy as np
-
 from hailo_apps.python.pipeline_apps.custom_depth_detection.sv_pipeline_v4 import GStreamerParallelApp
 from hailo_apps.python.core.gstreamer.gstreamer_app import app_callback_class, _internal_callback_wrapper
 from hailo_apps.python.core.common.hailo_logger import get_logger
-
 from hailo_apps.python.core.common.buffer_utils import get_caps_from_pad, get_numpy_from_buffer
 
 # Constant values for object detection
@@ -29,6 +29,8 @@ hailo_logger = get_logger(__name__)
 class user_app_callback_class(app_callback_class):
     def __init__(self):
         super().__init__()
+        # Structure: {track_id: {'direction': str, 'label': str, 'last_frame': int}}
+        self.fps_start_time = time.monotic()
 
     def get_depth_stats(self, depth_mat):
         depth_values = np.array(depth_mat).flatten()
@@ -43,6 +45,12 @@ class user_app_callback_class(app_callback_class):
             max_d = np.max(m_depth_values)
             return avg_d, min_d, max_d
         return 0, 0, 0
+
+    def get_fps(self):
+        elapsed = time.monotonic() - self.fps_start_time
+        if elapsed> 0:
+            return self.get_count() / elapsed
+        return 0.0
 
 def on_depth_frame(element, buffer, user_data):
     if buffer is None:
