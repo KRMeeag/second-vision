@@ -30,7 +30,8 @@ class user_app_callback_class(app_callback_class):
     def __init__(self):
         super().__init__()
         # Structure: {track_id: {'direction': str, 'label': str, 'last_frame': int}}
-        self.fps_start_time = time.monotic()
+        self.track_history = {}
+        self.fps_start_time = time.monotonic()
 
     def get_depth_stats(self, depth_mat):
         depth_values = np.array(depth_mat).flatten()
@@ -147,7 +148,12 @@ def on_det_frame(element, buffer, user_data):
 
     # --- Pass 1: Collect active zones and detection info ---
     active_zones = set()
-    det_labels = {}  # Store (display_text, bbox) for drawing later
+    # Structure: {(direction, label): (display_text, bbox, area, track_id)}
+    det_labels = {} 
+    
+    # List of IDs that changed detection zones this frame
+    # Structure: {track_id: old_direction}
+    IDs_changed_zones = set()
 
     for det in detections:
         # Get object properties from detection
@@ -161,36 +167,68 @@ def on_det_frame(element, buffer, user_data):
         center_x = bbox.xmin() + (bbox.width() / 2.0)
 
         # Get the label for the detection
-        display_text = f"{label} ({confidence*100:.0f}%)"
-        # print(f"[DET] {display_text}")
+        direction_text = f"{label} direction cannot be determined!"
+        # print(f"[DET] Confidence value of {label} is {confidence*100:.0f}%")
 
         # Filter detections based on confidence threshold
         if confidence >= CONFIDENCE_THRESHOLD:
+            # Direction Assignment
             if center_x <= LEFT_BOUNDARY:
-                display_text = f"{label} at the left!"
+                direction_text = f"{label} on left!"
                 direction = "left"
             elif center_x >= CENTER_LEFT_BOUNDARY and center_x <= CENTER_RIGHT_BOUNDARY:
-                display_text = f"{label} in the middle!"
+                direction_text = f"{label} in front!"
                 direction = "center"
             elif center_x >= RIGHT_BOUNDARY:
-                display_text = f"{label} in the right!"
+                direction_text = f"{label} on right!"
                 direction = "right"
             else:
-                display_text = f"{label} not identifiable!"
+                direction_text = f"{label} not identifiable!"
                 continue
 
+            # ID Tracking - Check if ID has changed direction
+            if track_id in user_data.track_history:
+                track_hist = user_data.track_history[track_id]
+
+                # If the object was seen before, and its zone changed
+                if track_hist["label"] == label and track_hist["direction"] == "center" and direction != "center":
+                    direction_text = f"center {label} leaving {direction}!"
+                    IDs_changed_zones.add(track_id)
+
+            user_data.track_history[track_id] = {
+                "direction": direction,
+                "label": label,
+                "last_frame": frame_count
+            }
+
+            # Add or update detection in the list
             area = bbox.width() * bbox.height()
             if (direction, label) in det_labels:
-                curr_text, curr_bbox, curr_area, curr_track_id = det_labels[(direction, label)]
+                prev_text, prev_bbox, prev_area, prev_track_id = det_labels[(direction, label)]
 
-                if area > curr_area:
-                    det_labels[(direction, label)] = (display_text, bbox, area, track_id)
+                # Make sure the current text says "multiple"
+                if not prev_text.startswith("multiple"):
+                    prev_text = f"multiple {prev_text}"
+
+                if area > prev_area:
+                    det_labels[(direction, label)] = (f"multiple {direction_text}", bbox, area, track_id)
+                else:
+                    det_labels[(direction, label)] = (prev_text, prev_bbox, prev_area, prev_track_id)
             else:
-                det_labels[(direction, label)] = (display_text, bbox, area, track_id)
+                det_labels[(direction, label)] = (direction_text, bbox, area, track_id)
             
             active_zones.add(direction)
 
-    # --- Pass 2: Draw zone tints, lines, and text ---
+    # --- Pass 2: ID Related Logic ---
+    stale_ids = []
+    for track_id in user_data.track_history:
+        if frame_count - user_data.track_history[track_id]["last_frame"] > 15:
+            stale_ids.append(track_id)
+
+    for track_id in stale_ids:
+        user_data.track_history.pop(track_id, None)
+    
+    # --- Pass 3: Draw zone tints, lines, and text ---
     if frame_bgr is not None:
         cv2_draw_det(frame_bgr, active_zones, det_labels, width, height, user_data)
 
