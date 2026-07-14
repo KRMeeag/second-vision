@@ -16,10 +16,13 @@ from hailo_apps.python.core.common.hailo_logger import get_logger
 
 from hailo_apps.python.core.common.buffer_utils import get_caps_from_pad, get_numpy_from_buffer
 
+# Constant values for object detection
 LEFT_BOUNDARY = 0.22
 CENTER_LEFT_BOUNDARY = 0.25
 CENTER_RIGHT_BOUNDARY = 0.75
 RIGHT_BOUNDARY = 0.78
+
+CONFIDENCE_THRESHOLD = 0.70
 
 hailo_logger = get_logger(__name__)
 
@@ -85,7 +88,7 @@ def cv2_draw_det(frame_bgr, active_zones, det_labels, width, height, user_data):
     cv2.line(frame_bgr, (right_line_x, 0), (right_line_x, height), (0, 0, 255), 2)
 
     # Draw bounding boxes and text labels for each person detection
-    for (direction, label), (display_text, bbox) in det_labels.items():
+    for (direction, label), (display_text, bbox, area, track_id) in det_labels.items():
         x1 = int(bbox.xmin() * width)
         y1 = int(bbox.ymin() * height)
         x2 = int(bbox.xmax() * width)
@@ -99,6 +102,15 @@ def cv2_draw_det(frame_bgr, active_zones, det_labels, width, height, user_data):
             fontFace=cv2.FONT_HERSHEY_SIMPLEX,
             fontScale=0.7,
             color=(0, 0, 0),
+            thickness=2
+        )
+        cv2.putText(
+            img=frame_bgr,
+            text=f"ID: {track_id}",
+            org=(x1, y1 + 15),
+            fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+            fontScale=0.6,
+            color=(0, 255, 0),
             thickness=2
         )
 
@@ -130,15 +142,22 @@ def on_det_frame(element, buffer, user_data):
     det_labels = {}  # Store (display_text, bbox) for drawing later
 
     for det in detections:
+        # Get object properties from detection
         label = det.get_label()
         confidence = det.get_confidence()
         bbox = det.get_bbox()
+        track = det.get_objects_typed(hailo.HAILO_UNIQUE_ID)
+        track_id = (track[0].get_id() if len(track) == 1 else 0)
 
+        # Get the center x coordinate of the bounding box
         center_x = bbox.xmin() + (bbox.width() / 2.0)
 
+        # Get the label for the detection
         display_text = f"{label} ({confidence*100:.0f}%)"
         # print(f"[DET] {display_text}")
-        if confidence >= 0.70:
+
+        # Filter detections based on confidence threshold
+        if confidence >= CONFIDENCE_THRESHOLD:
             if center_x <= LEFT_BOUNDARY:
                 display_text = f"{label} at the left!"
                 direction = "left"
@@ -152,17 +171,14 @@ def on_det_frame(element, buffer, user_data):
                 display_text = f"{label} not identifiable!"
                 continue
 
+            area = bbox.width() * bbox.height()
             if (direction, label) in det_labels:
-                curr_text, curr_bbox = det_labels[(direction, label)]
-                area = bbox.width() * bbox.height()
-                curr_area = curr_bbox.width() * curr_bbox.height()
+                curr_text, curr_bbox, curr_area, curr_track_id = det_labels[(direction, label)]
 
                 if area > curr_area:
-                    det_labels[(direction, label)] = (display_text, bbox)
-                else:
-                    det_labels[(direction, label)] = (curr_text, curr_bbox)
+                    det_labels[(direction, label)] = (display_text, bbox, area, track_id)
             else:
-                det_labels[(direction, label)] = (display_text, bbox)
+                det_labels[(direction, label)] = (display_text, bbox, area, track_id)
             
             active_zones.add(direction)
 
