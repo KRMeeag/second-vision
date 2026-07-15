@@ -1,6 +1,8 @@
-""" TTS Worker - Consumes Detections, produces speech."""
+"""TTS Worker - Consumes detections, produces speech."""
 
 import queue
+import shutil
+import subprocess
 import time
 
 # ============================================================
@@ -10,11 +12,15 @@ import time
 #   Config: config.tts_enabled, config.cooldown_seconds
 # ============================================================
 
+_ESPEAK_SPEED = 160
+_pyttsx3_engine = None
+
 
 class CooldownManager:
     """Tracks per-label-zone cooldown timers."""
-    def __init__(self, cooldown_seconds=3.0):
-        self.cooldowns = {}
+
+    def __init__(self, cooldown_seconds: float = 3.0):
+        self.cooldowns: dict[str, float] = {}
         self.cooldown_seconds = cooldown_seconds
 
     def should_announce(self, key: str) -> bool:
@@ -24,6 +30,7 @@ class CooldownManager:
             self.cooldowns[key] = now
             return True
         return False
+
 
 def tts_worker(user_data, config):
     """Main TTS worker loop."""
@@ -35,39 +42,49 @@ def tts_worker(user_data, config):
         except queue.Empty:
             continue
 
-        if not config.get("tts_enabled"):
-            continue
+        try:
+            if not config.get("tts_enabled"):
+                continue
 
-        # Handle mode announcements (from pipeline switch)
-        if "announce" in det:
-            _speak(det["announce"])
-            continue
+            # Handle mode announcements (from pipeline switch)
+            if "announce" in det:
+                _speak(det["announce"])
+                continue
 
-        # Update cooldown from live config
-        cooldown.cooldown_seconds = config.get("cooldown_seconds")
+            # Update cooldown from live config
+            cooldown.cooldown_seconds = config.get("cooldown_seconds")
 
-        label = det.get("label", "unknown")
-        zone = det.get("zone", "center")
-        cooldown_key = f"{label}-{zone}"
-        
-        if cooldown.should_announce(cooldown_key):
-            phrase = f"{label} {zone}"
-            _speak(phrase)
+            label = det.get("label", "unknown")
+            zone = det.get("zone", "center")
+            cooldown_key = f"{label}-{zone}"
+
+            if cooldown.should_announce(cooldown_key):
+                phrase = f"{label} {zone}"
+                _speak(phrase)
+        except Exception as e:
+            print(f"[TTS] Error processing detection: {e}")
 
 
-def _speak(text: str):
-    # TODO: TTS Implementation
-    """
-    STUB — Replace with real TTS implementation.
-    
-    Real implementation:
-        import subprocess
-        subprocess.Popen(["espeak-ng", "-s", "160", text])
-    
-    Or with pyttsx3:
-        engine = pyttsx3.init()
-        engine.say(text)
-        engine.runAndWait()
-    """
-    # TEMPORARY, but can be kept for tracking purposes
-    print(f"[TTS STUB] 🔊 '{text}'") 
+def _speak(text: str) -> None:
+    """Speak text via espeak-ng, with pyttsx3 fallback when unavailable."""
+    print(f"[TTS] '{text}'")
+
+    if shutil.which("espeak-ng"):
+        subprocess.Popen(
+            ["espeak-ng", "-s", str(_ESPEAK_SPEED), text],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+
+    global _pyttsx3_engine
+    try:
+        import pyttsx3
+
+        if _pyttsx3_engine is None:
+            _pyttsx3_engine = pyttsx3.init()
+            _pyttsx3_engine.setProperty("rate", _ESPEAK_SPEED)
+        _pyttsx3_engine.say(text)
+        _pyttsx3_engine.runAndWait()
+    except Exception as e:
+        print(f"[TTS] Speech fallback failed: {e}")

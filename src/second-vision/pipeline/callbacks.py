@@ -18,7 +18,7 @@ try:
     import numpy as np
     HAILO_AVAILABLE = True
 except ImportError:
-    HAILO_AVAILALE = False
+    HAILO_AVAILABLE = False
 
 def on_det_frame(element, buffer, user_data):
     """Process detection results. Runs in GStreamer thread — must be fast."""
@@ -40,38 +40,76 @@ def on_depth_frame(element, buffer, user_data):
     else:
         pass  # Mock mode — mock_depth_generator handles this
 
-def _get_detection_zone(bbox) -> str:
-    """Determine zone from bounding box center position."""
+def _bbox_area(bbox) -> float:
+    """Bounding-box area as a proximity proxy (larger = closer)."""
+    return max(0.0, bbox.xmax() - bbox.xmin()) * max(0.0, bbox.ymax() - bbox.ymin())
+
+
+def _get_detection_zone(bbox, previous_zone: str | None = None) -> str:
+    """
+    Determine zone from bounding box center with boundary hysteresis.
+
+    Enter left:    center_x < 0.30
+    Enter center:  0.36 < center_x < 0.64
+    Enter right:   center_x > 0.70
+    Hysteresis:    0.30-0.36 and 0.64-0.70 keep previous zone
+    """
     center_x = (bbox.xmin() + bbox.xmax()) / 2.0
-    if center_x < 0.33:
+
+    if center_x < 0.30:
         return "left"
-    elif center_x > 0.66:
+    if center_x > 0.70:
         return "right"
+    if 0.36 < center_x < 0.64:
+        return "center"
+
+    if 0.30 <= center_x <= 0.36:
+        if previous_zone in ("left", "center"):
+            return previous_zone
+        return "left"
+
+    if 0.64 <= center_x <= 0.70:
+        if previous_zone in ("center", "right"):
+            return previous_zone
+        return "right"
+
     return "center"
+
 
 def _process_real_detections(buffer, user_data):
     """
-    STUB — Extract detections from hailo buffer.
-    
-    Replace the zone logic and filtering as needed,
-    but keep the queue.put_nowait interface.
+    Extract detections from hailo buffer and queue the highest-priority one.
+
+    Priority: higher confidence first, then larger bbox (closer object).
     """
     roi = hailo.get_roi_from_buffer(buffer)
-    detections = roi.get_objects_typed(hailo.HAILO_DETECTION)
-    
-    for det in detections:
-        label = det.get_label()
-        confidence = det.get_confidence()
-        zone = _get_detection_zone(det.get_bbox())
-        
-        try:
-            user_data.tts_queue.put_nowait({
-                "label": label,
-                "zone": zone,
-                "confidence": confidence,
-            })
-        except queue.Full:
-            pass  # TTS busy — drop, don't block pipeline
+    detections = list(roi.get_objects_typed(hailo.HAILO_DETECTION))
+    if not detections:
+        return
+
+    if not hasattr(user_data, "_zone_cache"):
+        user_data._zone_cache = {}
+
+    best = max(
+        detections,
+        key=lambda det: (det.get_confidence(), _bbox_area(det.get_bbox())),
+    )
+
+    label = best.get_label()
+    confidence = best.get_confidence()
+    bbox = best.get_bbox()
+    previous_zone = user_data._zone_cache.get(label)
+    zone = _get_detection_zone(bbox, previous_zone)
+    user_data._zone_cache[label] = zone
+
+    try:
+        user_data.tts_queue.put_nowait({
+            "label": label,
+            "zone": zone,
+            "confidence": confidence,
+        })
+    except queue.Full:
+        pass  # TTS busy — drop, don't block pipeline
 
 def _process_real_depth(buffer, user_data):
     """
