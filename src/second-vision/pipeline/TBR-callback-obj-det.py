@@ -29,7 +29,7 @@ hailo_logger = get_logger(__name__)
 class user_app_callback_class(app_callback_class):
     def __init__(self):
         super().__init__()
-        # Structure: {track_id: {'direction': str, 'label': str, 'last_frame': int}}
+        # Structure: {track_id: {'direction': str, 'label': str, 'last_frame': int}, 'time': int}
         self.track_history = {}
         self.fps_start_time = time.monotonic()
         # Set of track_ids that have moved from center to a side zone
@@ -189,22 +189,39 @@ def on_det_frame(element, buffer, user_data):
                 direction_text = f"{label} not identifiable!"
                 continue
 
-            # ID Tracking - Check if ID has changed direction
+            # Handle tracking state and stationary logic
+            start_time = time.time() # Default for brand new objects
+            
             if track_id in user_data.track_history:
                 track_hist = user_data.track_history[track_id]
+                
+                # Carry over the original start time from the history
+                start_time = track_hist.get("start_time", time.time())
 
-                # If the object was seen before, and its zone changed
-                if track_hist["label"] == label and track_hist["direction"] == "center" and direction != "center":
-                    direction_text = f"center {label} leaving {direction}!"
-                    user_data.IDs_changed_zones.add(track_id)
-                elif track_hist["label"] == label and track_hist["direction"] != "center" and direction == "center":
-                    # If it comes back to the center, remove it from the hazard set
-                    user_data.IDs_changed_zones.discard(track_id)
+                if track_hist["label"] == label:
+                    # If direction changed, reset the stationary timer
+                    if track_hist["direction"] != direction:
+                        start_time = time.time()
 
+                    # 1. Stationary Object Logic
+                    if track_hist["direction"] == direction and (time.time() - start_time) > 10:
+                        direction_text = f"{label} still on {direction}"
+                    
+                    # 2. Leaving Center Logic
+                    elif track_hist["direction"] == "center" and direction != "center":
+                        direction_text = f"center {label} leaving {direction}!"
+                        user_data.IDs_changed_zones.add(track_id)
+                        
+                    # 3. Returning to Center Logic
+                    elif track_hist["direction"] != "center" and direction == "center":
+                        user_data.IDs_changed_zones.discard(track_id)
+
+            # Update the history
             user_data.track_history[track_id] = {
                 "direction": direction,
                 "label": label,
-                "last_frame": frame_count
+                "last_frame": frame_count,
+                "start_time": start_time
             }
 
             # Add or update detection in the list
