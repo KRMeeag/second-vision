@@ -34,6 +34,7 @@ class user_app_callback_class(app_callback_class):
         self.fps_start_time = time.monotonic()
         # Set of track_ids that have moved from center to a side zone
         self.IDs_changed_zones = set()
+        self.head_turn_cooldown_until = 0.0
 
     def get_depth_stats(self, depth_mat):
         depth_values = np.array(depth_mat).flatten()
@@ -153,6 +154,38 @@ def on_det_frame(element, buffer, user_data):
         # Hailo provides RGB, but CV2 expects BGR
         frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
+    # --- Pass 0: Head Turn Suppression Logic ---
+    total_tracked = 0
+    shifted_left = 0
+    shifted_right = 0
+    
+    for det in detections:
+        track = det.get_objects_typed(hailo.HAILO_UNIQUE_ID)
+        if len(track) == 1:
+            track_id = track[0].get_id()
+            if track_id in user_data.track_history:
+                bbox = det.get_bbox()
+                center_x = bbox.xmin() + (bbox.width() / 2.0)
+                # Compare to previous frame
+                prev_x = user_data.track_history[track_id].get("center_x", center_x)
+                delta_x = center_x - prev_x
+                
+                # 0.02 threshold = 2% of frame width
+                if delta_x > 0.02:
+                    shifted_right += 1
+                elif delta_x < -0.02:
+                    shifted_left += 1
+                total_tracked += 1
+
+    # Check if >70% of tracked objects moved in the same direction
+    is_head_turning = False
+    if total_tracked > 0:
+        if (shifted_right / total_tracked) >= 0.7 or (shifted_left / total_tracked) >= 0.7:
+            user_data.head_turn_cooldown_until = time.time() + 2.0  # Suppress transitions for 2 seconds
+
+    if time.time() < user_data.head_turn_cooldown_until:
+        is_head_turning = True
+
     # --- Pass 1: Collect active zones and detection info ---
     active_zones = set()
     # Structure: {(direction, label): (display_text, bbox, area, track_id)}
@@ -209,8 +242,9 @@ def on_det_frame(element, buffer, user_data):
                     
                     # 2. Leaving Center Logic
                     elif track_hist["direction"] == "center" and direction != "center":
-                        direction_text = f"center {label} leaving {direction}!"
-                        user_data.IDs_changed_zones.add(track_id)
+                        if not is_head_turning:
+                            direction_text = f"center {label} leaving {direction}!"
+                            user_data.IDs_changed_zones.add(track_id)
                         
                     # 3. Returning to Center Logic
                     elif track_hist["direction"] != "center" and direction == "center":
@@ -221,7 +255,8 @@ def on_det_frame(element, buffer, user_data):
                 "direction": direction,
                 "label": label,
                 "last_frame": frame_count,
-                "start_time": start_time
+                "start_time": start_time,
+                "center_x": center_x
             }
 
             # Add or update detection in the list
