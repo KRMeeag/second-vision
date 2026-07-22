@@ -11,7 +11,7 @@ from gi.repository import Gst
 import hailo
 import numpy as np
 
-from hailo_apps.python.pipeline_apps.custom_depth_detection.sv_pipeline_v3 import GStreamerParallelApp
+from sv_pipeline_v3 import GStreamerParallelApp
 from hailo_apps.python.core.gstreamer.gstreamer_app import app_callback_class, _internal_callback_wrapper
 from hailo_apps.python.core.common.hailo_logger import get_logger
 

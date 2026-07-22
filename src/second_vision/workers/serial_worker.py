@@ -92,7 +92,7 @@ def _send_packet(port, packet: bytes):
             port.write(packet)
     """
     hex_str = packet.hex(" ")
-    print(f"[SERIAL STUB] → {hex_str}")
+    # print(f"[SERIAL STUB] → {hex_str}")
 
 def _send_heartbeat(port):
     """STUB — sends heartbeat packet."""
