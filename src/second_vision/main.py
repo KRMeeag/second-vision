@@ -8,13 +8,18 @@ Usage:
 """
 
 import os
-import signal
 import sys
 import threading
 import queue
 import time
+from pathlib import Path
 
 os.environ["GST_PLUGIN_FEATURE_RANK"] = "vaapidecodebin:NONE"
+
+# Running this file directly (`python3 src/second_vision/main.py`) puts
+# src/second_vision/ on sys.path, not src/ itself — so the `second_vision.*`
+# absolute imports below can't resolve without src/ on the path too.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from second_vision.core.config import SystemConfig
 
@@ -41,12 +46,22 @@ from second_vision.workers.serial_worker import serial_worker
 from second_vision.workers.config_reader import config_reader_worker
 from second_vision.mock.data_generator import mock_detection_generator, mock_depth_generator
 
+# user_app_callback_class only exists in callbacks.py when the real hailo/gi
+# stack imported above did too — in mock mode there's no tracking state to
+# carry, since the mock generators push straight into the queues and never
+# go through on_det_frame at all.
+if HAILO_AVAILABLE:
+    from second_vision.pipeline.callbacks import user_app_callback_class
+    _UserDataBase = user_app_callback_class
+else:
+    _UserDataBase = app_callback_class
+
 logger = get_logger(__name__) if HAILO_AVAILABLE else logging.getLogger(__name__)
 
 
-class SecondVisionUserData(app_callback_class):
+class SecondVisionUserData(_UserDataBase):
     """Shared state across all callbacks and workers."""
-    
+
     def __init__(self, config: SystemConfig):
         super().__init__()
         self.config = config

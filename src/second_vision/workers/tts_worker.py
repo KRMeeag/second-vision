@@ -7,7 +7,8 @@ import time
 
 # ============================================================
 # INTERFACE CONTRACT (do not change):
-#   Input:  user_data.tts_queue (dict with "label", "zone", "confidence")
+#   Input:  user_data.tts_queue (dict with "label", "zone", "confidence",
+#           and an optional "phrase" override for the spoken text)
 #   Output: Audio announcement via speaker
 #   Config: config.tts_enabled, config.cooldown_seconds
 # ============================================================
@@ -59,7 +60,9 @@ def tts_worker(user_data, config):
             cooldown_key = f"{label}-{zone}"
 
             if cooldown.should_announce(cooldown_key):
-                phrase = f"{label} {zone}"
+                # Callbacks may supply a more specific phrase (e.g. "person leaving
+                # left"); fall back to the generic "label zone" when they don't.
+                phrase = det.get("phrase") or f"{label} {zone}"
                 _speak(phrase)
         except Exception as e:
             print(f"[TTS] Error processing detection: {e}")

@@ -1,4 +1,7 @@
 import os
+import queue
+import sys
+import threading
 from pathlib import Path
 
 os.environ["GST_PLUGIN_FEATURE_RANK"] = "vaapidecodebin:NONE"
@@ -7,7 +10,7 @@ import gi
 import setproctitle
 
 gi.require_version("Gst", "1.0")
-from gi.repository import Gst
+from gi.repository import Gst, GLib
 
 from hailo_apps.python.core.common.core import (
     get_pipeline_parser,
@@ -32,8 +35,7 @@ from hailo_apps.python.core.common.hef_utils import get_hef_labels_json
 from hailo_apps.python.core.common.hailo_logger import get_logger
 from hailo_apps.python.core.gstreamer.gstreamer_app import (
     GStreamerApp,
-    app_callback_class,
-    dummy_callback,
+    _internal_callback_wrapper,
 )
 from hailo_apps.python.core.gstreamer.gstreamer_helper_pipelines import (
     DISPLAY_PIPELINE,
@@ -44,19 +46,24 @@ from hailo_apps.python.core.gstreamer.gstreamer_helper_pipelines import (
     QUEUE,
 )
 
+# callbacks.py is a sibling module, not an installed package — make sure it
+# resolves whether app.py is run directly or imported from elsewhere.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import callbacks
+
 hailo_logger = get_logger(__name__)
 
-class GStreamerParallelApp(GStreamerApp):
-    def __init__(self, app_callback, user_data, parser=None):
+class SecondVisionApp(GStreamerApp):
+    def __init__(self, app_callback, user_data, config=None, parser=None):
         if parser is None:
             parser = get_pipeline_parser()
-        
+
         parser.add_argument(
             "--labels-json",
             default=None,
             help="Path to custom labels JSON file",
         )
-        
+
         parser.add_argument(
             "--det-hef-path",
             default="yolov8s.hef",
@@ -67,10 +74,10 @@ class GStreamerParallelApp(GStreamerApp):
         handle_list_models_flag(parser, DEPTH_PIPELINE)
         handle_list_models_flag(parser, DETECTION_PIPELINE)
 
-        hailo_logger.info("Initializing Parallel Depth & Detection App V3...")
-        
+        hailo_logger.info("Initializing Parallel Depth & Detection App V4...")
+
         super().__init__(parser, user_data)
-        
+
         # Adjust dimensions for detection defaults
         if self.video_width == 1280:
             self.video_width = 640
@@ -82,7 +89,8 @@ class GStreamerParallelApp(GStreamerApp):
             self.batch_size = 2
 
         self.app_callback = app_callback
-        setproctitle.setproctitle("Parallel-Depth-Detection-V3")
+        self.config = config
+        setproctitle.setproctitle("Parallel-Depth-Detection-V4")
 
         # ---- Depth App Parameters ----
         self.depth_hef_path = resolve_hef_path(
@@ -101,7 +109,7 @@ class GStreamerParallelApp(GStreamerApp):
             DETECTION_PIPELINE, RESOURCES_SO_DIR_NAME, self.arch, DETECTION_POSTPROCESS_SO_FILENAME
         )
         self.det_post_function_name = DETECTION_POSTPROCESS_FUNCTION
-        
+
         self.labels_json = self.options_menu.labels_json
         if self.labels_json is None: # if no labels JSON file is provided, try auto-detect it from the HEF file
             self.labels_json = get_hef_labels_json(self.det_hef_path)
@@ -146,7 +154,7 @@ class GStreamerParallelApp(GStreamerApp):
         depth_display = DISPLAY_PIPELINE(
             video_sink=self.video_sink, sync=self.sync, show_fps=self.show_fps, name="depth_display"
         )
-        
+
         # 2. Detection Branch
         detection_pipeline = INFERENCE_PIPELINE(
             hef_path=self.det_hef_path,
@@ -160,7 +168,16 @@ class GStreamerParallelApp(GStreamerApp):
         detection_pipeline_wrapper = INFERENCE_PIPELINE_WRAPPER(
             detection_pipeline, name="inference_wrapper_det"
         )
-        tracker_pipeline = TRACKER_PIPELINE(class_id=1, name="det_tracker")
+        tracker_pipeline = TRACKER_PIPELINE(
+            class_id=-1,
+            kalman_dist_thr=0.7,
+            iou_thr=0.8,              # Slightly stricter IoU matching (default: 0.9)
+            init_iou_thr=0.6,         # Pickier about new object matching to reduce phantom IDs (default: 0.7)
+            keep_new_frames=3,         # 100ms grace period for new detections to stabilize (default: 2)
+            keep_tracked_frames=10,    # 333ms before tracked→lost, reduces ghost duration (default: 15)
+            keep_lost_frames=4,        # 133ms grace for brief occlusions like walking behind a pole (default: 2)
+            name="det_tracker"
+        )
         det_callback = USER_CALLBACK_PIPELINE(name="det_callback")
         det_display = DISPLAY_PIPELINE(
             video_sink=self.video_sink, sync=self.sync, show_fps=self.show_fps, name="det_display"
@@ -169,20 +186,80 @@ class GStreamerParallelApp(GStreamerApp):
         # 3. Parallel tee architecture with separate display sinks
         pipeline_str = (
             f"{source_pipeline} ! tee name=t "
-            f"t. ! {QUEUE(name='depth_branch_q')} ! {depth_pipeline_wrapper} ! {depth_callback} ! {depth_display} "
-            f"t. ! {QUEUE(name='det_branch_q')} ! {detection_pipeline_wrapper} ! {tracker_pipeline} ! {det_callback} ! {det_display}"
+            f"t. ! {QUEUE(name='depth_branch_q', leaky='downstream')} ! {depth_pipeline_wrapper} ! {depth_callback} ! {depth_display} "
+            f"t. ! {QUEUE(name='det_branch_q', leaky='downstream')} ! {detection_pipeline_wrapper} ! {tracker_pipeline} ! {det_callback} ! {det_display}"
         )
-        
+
         hailo_logger.info("Generated Pipeline string:\n%s", pipeline_str)
         return pipeline_str
 
+    def _connect_callback(self):
+        """
+        Wire the detection and depth branches to their callbacks.py handlers.
+
+        This pipeline exposes two USER_CALLBACK_PIPELINE identities
+        ("det_callback" and "depth_callback") instead of the single
+        "identity_callback" the base GStreamerApp expects, so the default
+        _connect_callback can't find either one — this override replaces it.
+        """
+        disable_callback = self.options_menu.disable_callback
+
+        # Detection branch goes through the internal wrapper for frame
+        # counting/watchdog support.
+        det_identity = self.pipeline.get_by_name("det_callback")
+        if det_identity:
+            det_identity.set_property("signal-handoffs", True)
+            det_identity.connect(
+                "handoff", _internal_callback_wrapper, self.user_data, callbacks.on_det_frame, disable_callback
+            )
+            hailo_logger.debug("Connected detection callback.")
+        else:
+            hailo_logger.warning("det_callback identity not found in pipeline")
+
+        # Depth branch connects directly — the tee means both branches see
+        # every frame, so routing depth through the wrapper too would
+        # double-increment the shared frame counter.
+        depth_identity = self.pipeline.get_by_name("depth_callback")
+        if depth_identity:
+            depth_identity.set_property("signal-handoffs", True)
+            if not disable_callback:
+                depth_identity.connect("handoff", callbacks.on_depth_frame, self.user_data)
+            hailo_logger.debug("Connected depth callback.")
+        else:
+            hailo_logger.warning("depth_callback identity not found in pipeline")
+
+    def trigger_rebuild(self):
+        """
+        Schedule a pipeline rebuild, called by config_reader_worker after a
+        mode change. Rebuilds must go through GLib.idle_add — the config
+        reader runs on its own thread, and GStreamer state changes aren't
+        safe to make directly from a thread other than the main loop's.
+
+        Note: get_pipeline_string() isn't mode-aware yet, so this currently
+        just tears down and rebuilds the same fixed dual-branch pipeline —
+        it doesn't yet switch to a detection-only/depth-only pipeline based
+        on self.config.pipeline_mode.
+        """
+        GLib.idle_add(self._rebuild_pipeline)
+
+class StandaloneUserData(callbacks.user_app_callback_class):
+    """
+    user_data for running this app directly (`python3 app.py`), outside of
+    main.py's full SecondVisionUserData wiring — adds the queues callbacks.py's
+    tts/serial contract needs on top of user_app_callback_class.
+    """
+    def __init__(self):
+        super().__init__()
+        self.tts_queue = queue.Queue(maxsize=1)
+        self.serial_queue = queue.Queue(maxsize=10)
+        self.shutdown_event = threading.Event()
+
 def main():
-    hailo_logger.info("Creating user data for the app callback...")
-    user_data = app_callback_class()
-    app_callback = dummy_callback
-    app = GStreamerParallelApp(app_callback, user_data)
+    hailo_logger.info("Starting SV Dual Pipeline App")
+    user_data = StandaloneUserData()
+    # Pass None for app_callback because we explicitly connect them in _connect_callback override
+    app = SecondVisionApp(None, user_data)
     app.run()
 
 if __name__ == "__main__":
-    hailo_logger.info("Starting Parallel Depth & Detection App V3...")
     main()
