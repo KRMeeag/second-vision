@@ -38,7 +38,6 @@ from hailo_apps.python.core.gstreamer.gstreamer_app import (
     _internal_callback_wrapper,
 )
 from hailo_apps.python.core.gstreamer.gstreamer_helper_pipelines import (
-    DISPLAY_PIPELINE,
     INFERENCE_PIPELINE,
     INFERENCE_PIPELINE_WRAPPER,
     USER_CALLBACK_PIPELINE,
@@ -151,9 +150,11 @@ class SecondVisionApp(GStreamerApp):
             depth_pipeline, name="inference_wrapper_depth"
         ).replace("use-letterbox=true", "use-letterbox=false")
         depth_callback = USER_CALLBACK_PIPELINE(name="depth_callback")
-        depth_display = DISPLAY_PIPELINE(
-            video_sink=self.video_sink, sync=self.sync, show_fps=self.show_fps, name="depth_display"
-        )
+        # No DISPLAY_PIPELINE here — that opens its own native GStreamer window
+        # with hailo's own overlay, on top of the cv2 window callbacks.py
+        # already draws (via use_frame/set_frame), which was showing up as two
+        # redundant video windows. Display is handled by cv2 in callbacks.py.
+        depth_sink = "fakesink name=depth_sink sync=false"
 
         # 2. Detection Branch
         detection_pipeline = INFERENCE_PIPELINE(
@@ -179,15 +180,13 @@ class SecondVisionApp(GStreamerApp):
             name="det_tracker"
         )
         det_callback = USER_CALLBACK_PIPELINE(name="det_callback")
-        det_display = DISPLAY_PIPELINE(
-            video_sink=self.video_sink, sync=self.sync, show_fps=self.show_fps, name="det_display"
-        )
+        det_sink = "fakesink name=det_sink sync=false"
 
-        # 3. Parallel tee architecture with separate display sinks
+        # 3. Parallel tee architecture (display handled by cv2 in callbacks.py)
         pipeline_str = (
             f"{source_pipeline} ! tee name=t "
-            f"t. ! {QUEUE(name='depth_branch_q', leaky='downstream')} ! {depth_pipeline_wrapper} ! {depth_callback} ! {depth_display} "
-            f"t. ! {QUEUE(name='det_branch_q', leaky='downstream')} ! {detection_pipeline_wrapper} ! {tracker_pipeline} ! {det_callback} ! {det_display}"
+            f"t. ! {QUEUE(name='depth_branch_q', leaky='downstream')} ! {depth_pipeline_wrapper} ! {depth_callback} ! {depth_sink} "
+            f"t. ! {QUEUE(name='det_branch_q', leaky='downstream')} ! {detection_pipeline_wrapper} ! {tracker_pipeline} ! {det_callback} ! {det_sink}"
         )
 
         hailo_logger.info("Generated Pipeline string:\n%s", pipeline_str)
