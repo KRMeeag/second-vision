@@ -221,3 +221,6 @@ __marimo__/
 
 # Hailo Specfic Ignores
 my_hailo_env/
+
+# Agents context for development
+.agents/

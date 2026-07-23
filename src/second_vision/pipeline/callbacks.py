@@ -27,7 +27,7 @@ except ImportError:
 
 # ---- Object detection tuning ----
 CONFIDENCE_THRESHOLD = 0.70
-STATIONARY_ANNOUNCE_SECONDS = 10.0   # Minimum gap between repeated "still there" reminders
+COOLDOWN_SECONDS = 10.0   # Minimum gap between repeated "still there" reminders
 STALE_TRACK_FRAMES = 15              # Frames of tracker silence before a track is forgotten
 HEAD_TURN_DELTA = 0.02               # Per-frame center_x shift (fraction of width) counted as movement
 HEAD_TURN_RATIO = 0.7                # Fraction of tracked objects that must shift together
@@ -240,7 +240,6 @@ def _process_real_detections(element, buffer, user_data):
         last_announced = 0.0
         phrase = None
         should_announce = True
-        announced_stationary = False
         display_phrase = None
         display_phrase_until = 0.0
 
@@ -261,14 +260,11 @@ def _process_real_detections(element, buffer, user_data):
                 elif zone == "center":
                     user_data.IDs_changed_zones.discard(track_id)
             else:
-                stationary_for = now - zone_since
-                if stationary_for > STATIONARY_ANNOUNCE_SECONDS:
-                    if now - last_announced < STATIONARY_ANNOUNCE_SECONDS:
-                        # Already reminded recently about this stationary object — stay quiet.
-                        should_announce = False
-                    else:
-                        phrase = f"{label} still {zone}"
-                        announced_stationary = True
+                if now - last_announced < COOLDOWN_SECONDS:
+                    should_announce = False
+                else:
+                    phrase = f"{label} still {zone}"
+                    should_announce = True
 
         if phrase:
             display_phrase = phrase
@@ -283,7 +279,7 @@ def _process_real_detections(element, buffer, user_data):
             # Only the stationary reminder needs its own cooldown clock — a
             # plain per-frame sighting must not keep refreshing this, or the
             # very first reminder would always find itself "just announced".
-            "last_announced": now if announced_stationary else last_announced,
+            "last_announced": now if should_announce else last_announced,
             "display_phrase": display_phrase,
             "display_phrase_until": display_phrase_until,
         }
