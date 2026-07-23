@@ -16,6 +16,7 @@ import time
 
 try:
     import cv2
+    # pyrefly: ignore [missing-import]
     import hailo
     import numpy as np
     from hailo_apps.python.core.common.buffer_utils import get_caps_from_pad, get_numpy_from_buffer
@@ -122,10 +123,39 @@ if HAILO_AVAILABLE:
             self.IDs_changed_zones = set()
             self.head_turn_cooldown_until = 0.0
 
-        def get_fps(self):
+            # Depth-branch counterpart to frame_count/fps_start_time above.
+            # Kept fully separate rather than sharing the base class's
+            # frame_count: that one is only ever incremented by the detection
+            # branch (see _connect_callback's comment on why depth is
+            # connected directly, bypassing _internal_callback_wrapper, to
+            # avoid double-incrementing it) and is watchdog plumbing besides
+            # — not a meaningful per-branch throughput figure. The two
+            # branches never converge in the pipeline and can fall behind
+            # each other independently (separate models, separate
+            # leaky='downstream' queues), so depth needs its own counter to
+            # report its own real rate instead of borrowing detection's.
+            # Not wired up to anything yet — call self.increment_depth() from
+            # wherever the real depth processing ends up, once that's built.
+            self.depth_frame_count = 0
+            self.depth_fps_start_time = time.monotonic()
+
+        def get_det_fps(self):
             elapsed = time.monotonic() - self.fps_start_time
             if elapsed > 0:
                 return self.get_count() / elapsed
+            return 0.0
+
+        def increment_depth(self):
+            """Call this once per processed depth frame — mirrors the base class's increment()."""
+            self.depth_frame_count += 1
+
+        def get_depth_count(self):
+            return self.depth_frame_count
+
+        def get_depth_fps(self):
+            elapsed = time.monotonic() - self.depth_fps_start_time
+            if elapsed > 0:
+                return self.depth_frame_count / elapsed
             return 0.0
 
 
@@ -291,7 +321,7 @@ def _process_real_detections(element, buffer, user_data):
         user_data.IDs_changed_zones.discard(track_id)
 
     if user_data.use_frame:
-        _draw_detection_overlay(element, buffer, user_data, active_zones, det_labels)
+        _draw_detection_overlay(element, buffer, user_data, active_zones, det_labels, user_data.get_det_fps())
 
     if not candidates:
         return
@@ -307,7 +337,7 @@ def _process_real_detections(element, buffer, user_data):
         pass  # TTS busy — drop, don't block pipeline
 
 
-def _draw_detection_overlay(element, buffer, user_data, active_zones: set, det_labels: dict) -> None:
+def _draw_detection_overlay(element, buffer, user_data, active_zones: set, det_labels: dict, fps: float) -> None:
     """
     Debug visualization: tint active zones, draw zone-divider lines, and draw
     a labeled bounding box per (zone, label) group.
@@ -354,6 +384,9 @@ def _draw_detection_overlay(element, buffer, user_data, active_zones: set, det_l
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
         cv2.putText(frame_bgr, f"ID: {track_id}", (x1, y1 + 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+    cv2.putText(frame_bgr, f"FPS: {fps:.1f}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
     user_data.set_frame(frame_bgr)
 
