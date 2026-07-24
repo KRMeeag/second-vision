@@ -206,12 +206,6 @@ def _process_real_detections(element, buffer, user_data):
     candidates = []
     active_zones = set()
     det_labels = {}  # (zone, label) -> (display_text, bbox, area, track_id) — debug overlay only
-    # (zone, label) -> count of CONFIRMED tracks in that group this frame —
-    # feeds the "multiple X" TTS wording. Deliberately confirmation-gated
-    # (unlike det_labels' overlay dedup, which counts every detection that
-    # passes CONFIDENCE_THRESHOLD): an unconfirmed blip next to a real object
-    # must not be able to make the device claim there are "multiple" of them.
-    confirmed_zone_label_counts = {}
 
     for det in detections:
         confidence = det.get_confidence()
@@ -265,12 +259,8 @@ def _process_real_detections(element, buffer, user_data):
             display_phrase = phrase
             display_phrase_until = now + DISPLAY_PHRASE_HOLD_SECONDS
 
-        is_confirmed = now - first_seen >= MIN_CONFIRMATION_SECONDS
-        if not is_confirmed:
+        if now - first_seen < MIN_CONFIRMATION_SECONDS:
             should_announce = False
-        else:
-            group_key = (zone, label)
-            confirmed_zone_label_counts[group_key] = confirmed_zone_label_counts.get(group_key, 0) + 1
 
         track_history[track_id] = {
             "zone": zone,
@@ -313,6 +303,20 @@ def _process_real_detections(element, buffer, user_data):
         track_history.pop(track_id, None)
         user_data.IDs_changed_zones.discard(track_id)
 
+    # (zone, label) -> count of confirmed, still-tracked objects in that group
+    # — feeds the "multiple X" TTS wording. Built from track_history (after
+    # stale cleanup above), NOT from this frame's raw detections: a track the
+    # detector momentarily misses for a frame or two is still present here
+    # (it isn't evicted until STALE_TRACK_FRAMES of absence), so one flickered
+    # frame can't undercount a group that's genuinely still there. Also why
+    # this can't be tallied inline in the loop above — the same information
+    # isn't available per-detection, only once every live track is known.
+    confirmed_zone_label_counts = {}
+    for hist in track_history.values():
+        if now - hist["first_seen"] >= MIN_CONFIRMATION_SECONDS:
+            group_key = (hist["zone"], hist["label"])
+            confirmed_zone_label_counts[group_key] = confirmed_zone_label_counts.get(group_key, 0) + 1
+
     if user_data.use_frame:
         _draw_detection_overlay(element, buffer, user_data, active_zones, det_labels, user_data.get_det_fps())
 
@@ -321,10 +325,15 @@ def _process_real_detections(element, buffer, user_data):
 
     confidence, _area, label, zone, phrase = max(candidates, key=lambda c: (c[0], c[1]))
     payload = {"label": label, "zone": zone, "confidence": confidence}
-    if phrase:
+    # "Multiple" composes with whatever phrase would otherwise be used —
+    # including "leaving to X"/"still X" — the same way det_labels' overlay
+    # text does; it must not only apply to the one-time first announcement,
+    # or a persistent multi-object scene would say "multiple" exactly once
+    # and go singular for every reminder after that.
+    if confirmed_zone_label_counts.get((zone, label), 0) >= 2:
+        payload["phrase"] = f"multiple {phrase or f'{label} {zone}'}"
+    elif phrase:
         payload["phrase"] = phrase
-    elif confirmed_zone_label_counts.get((zone, label), 0) >= 2:
-        payload["phrase"] = f"multiple {label} {zone}"
 
     try:
         user_data.tts_queue.put_nowait(payload)
