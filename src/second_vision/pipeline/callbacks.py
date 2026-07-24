@@ -28,6 +28,10 @@ except ImportError:
 # ---- Object detection tuning ----
 CONFIDENCE_THRESHOLD = 0.70
 COOLDOWN_SECONDS = 10.0   # Minimum gap between repeated "still there" reminders
+MIN_CONFIRMATION_SECONDS = 0.3       # A track must persist this long before its first
+                                      # announcement — filters 1-2 frame tracker/NMS
+                                      # glitches that would otherwise get announced as
+                                      # a "first sighting" before disappearing
 STALE_TRACK_FRAMES = 15              # Frames of tracker silence before a track is forgotten
 HEAD_TURN_DELTA = 0.02               # Per-frame center_x shift (fraction of width) counted as movement
 HEAD_TURN_RATIO = 0.7                # Fraction of tracked objects that must shift together
@@ -237,7 +241,16 @@ def _process_real_detections(element, buffer, user_data):
         zone = _get_detection_zone(bbox, previous_zone)
 
         zone_since = now
-        last_announced = 0.0
+        first_seen = now
+        # None means "never actually announced yet" — distinct from a real
+        # past timestamp. Must NOT default to 0.0: now - 0.0 is always far
+        # bigger than COOLDOWN_SECONDS, so a same-zone re-check would read
+        # "cooldown expired" instead of "hasn't been announced at all", and
+        # mislabel a track's still-pending first announcement as a "still X"
+        # reminder. That was harmless before the confirmation gate existed
+        # (a track never reached this branch pre-announcement), but now a
+        # track can sit here for multiple frames while unconfirmed.
+        last_announced = None
         phrase = None
         should_announce = True
         display_phrase = None
@@ -245,7 +258,11 @@ def _process_real_detections(element, buffer, user_data):
 
         if prev is not None and prev["label"] == label:
             zone_since = prev.get("zone_since", now)
-            last_announced = prev.get("last_announced", 0.0)
+            # Unlike zone_since, first_seen must NOT reset on a zone change —
+            # it tracks how long this track_id has existed at all, so a real
+            # object walking center -> left doesn't get re-treated as "new".
+            first_seen = prev.get("first_seen", now)
+            last_announced = prev.get("last_announced")
             display_phrase = prev.get("display_phrase")
             display_phrase_until = prev.get("display_phrase_until", 0.0)
 
@@ -259,22 +276,37 @@ def _process_real_detections(element, buffer, user_data):
                         user_data.IDs_changed_zones.add(track_id)
                 elif zone == "center":
                     user_data.IDs_changed_zones.discard(track_id)
-            else:
-                if now - last_announced < COOLDOWN_SECONDS:
-                    should_announce = False
-                else:
-                    phrase = f"{label} still {zone}"
-                    should_announce = True
+            elif last_announced is not None and now - last_announced < COOLDOWN_SECONDS:
+                should_announce = False
+            elif last_announced is not None:
+                phrase = f"{label} still {zone}"
+                should_announce = True
+            # else: same zone, but genuinely never announced yet (still
+            # gating on confirmation) — should_announce stays True and phrase
+            # stays None, so if this frame does clear the confirmation gate
+            # below, it goes out as a plain first-sighting announcement
+            # instead of a premature "still" reminder.
 
         if phrase:
             display_phrase = phrase
             display_phrase_until = now + DISPLAY_PHRASE_HOLD_SECONDS
+
+        # Unconfirmed tracks never reach TTS, regardless of what the zone/
+        # cooldown logic above decided — a real object stays tracked across
+        # dozens of frames, a false-positive blip doesn't. Everything else
+        # (zone, display overlay, IDs_changed_zones) still updates normally;
+        # only the announcement itself is gated, and this must not consume
+        # last_announced below — an unconfirmed sighting shouldn't burn the
+        # track's first real cooldown window before it's even been announced.
+        if now - first_seen < MIN_CONFIRMATION_SECONDS:
+            should_announce = False
 
         track_history[track_id] = {
             "zone": zone,
             "label": label,
             "last_frame": frame_count,
             "zone_since": zone_since,
+            "first_seen": first_seen,
             "center_x": center_x,
             # Only the stationary reminder needs its own cooldown clock — a
             # plain per-frame sighting must not keep refreshing this, or the
