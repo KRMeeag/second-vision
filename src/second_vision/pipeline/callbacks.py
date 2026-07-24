@@ -111,11 +111,6 @@ def _get_track_id(det) -> int:
     track = det.get_objects_typed(hailo.HAILO_UNIQUE_ID)
     return track[0].get_id() if len(track) == 1 else 0
 
-
-# user_app_callback_class subclasses the real app_callback_class, which is
-# only bound above when the hailo/gi import succeeded — define it inside the
-# same guard so mock-mode environments still import this module cleanly
-# instead of hitting a NameError partway through module load.
 if HAILO_AVAILABLE:
     class user_app_callback_class(app_callback_class):
         def __init__(self):
@@ -126,20 +121,6 @@ if HAILO_AVAILABLE:
             # Set of track_ids that have moved from center to a side zone
             self.IDs_changed_zones = set()
             self.head_turn_cooldown_until = 0.0
-
-            # Depth-branch counterpart to frame_count/fps_start_time above.
-            # Kept fully separate rather than sharing the base class's
-            # frame_count: that one is only ever incremented by the detection
-            # branch (see _connect_callback's comment on why depth is
-            # connected directly, bypassing _internal_callback_wrapper, to
-            # avoid double-incrementing it) and is watchdog plumbing besides
-            # — not a meaningful per-branch throughput figure. The two
-            # branches never converge in the pipeline and can fall behind
-            # each other independently (separate models, separate
-            # leaky='downstream' queues), so depth needs its own counter to
-            # report its own real rate instead of borrowing detection's.
-            # Not wired up to anything yet — call self.increment_depth() from
-            # wherever the real depth processing ends up, once that's built.
             self.depth_frame_count = 0
             self.depth_fps_start_time = time.monotonic()
 
@@ -242,14 +223,6 @@ def _process_real_detections(element, buffer, user_data):
 
         zone_since = now
         first_seen = now
-        # None means "never actually announced yet" — distinct from a real
-        # past timestamp. Must NOT default to 0.0: now - 0.0 is always far
-        # bigger than COOLDOWN_SECONDS, so a same-zone re-check would read
-        # "cooldown expired" instead of "hasn't been announced at all", and
-        # mislabel a track's still-pending first announcement as a "still X"
-        # reminder. That was harmless before the confirmation gate existed
-        # (a track never reached this branch pre-announcement), but now a
-        # track can sit here for multiple frames while unconfirmed.
         last_announced = None
         phrase = None
         should_announce = True
@@ -281,23 +254,11 @@ def _process_real_detections(element, buffer, user_data):
             elif last_announced is not None:
                 phrase = f"{label} still {zone}"
                 should_announce = True
-            # else: same zone, but genuinely never announced yet (still
-            # gating on confirmation) — should_announce stays True and phrase
-            # stays None, so if this frame does clear the confirmation gate
-            # below, it goes out as a plain first-sighting announcement
-            # instead of a premature "still" reminder.
 
         if phrase:
             display_phrase = phrase
             display_phrase_until = now + DISPLAY_PHRASE_HOLD_SECONDS
 
-        # Unconfirmed tracks never reach TTS, regardless of what the zone/
-        # cooldown logic above decided — a real object stays tracked across
-        # dozens of frames, a false-positive blip doesn't. Everything else
-        # (zone, display overlay, IDs_changed_zones) still updates normally;
-        # only the announcement itself is gated, and this must not consume
-        # last_announced below — an unconfirmed sighting shouldn't burn the
-        # track's first real cooldown window before it's even been announced.
         if now - first_seen < MIN_CONFIRMATION_SECONDS:
             should_announce = False
 
@@ -308,18 +269,12 @@ def _process_real_detections(element, buffer, user_data):
             "zone_since": zone_since,
             "first_seen": first_seen,
             "center_x": center_x,
-            # Only the stationary reminder needs its own cooldown clock — a
-            # plain per-frame sighting must not keep refreshing this, or the
-            # very first reminder would always find itself "just announced".
             "last_announced": now if should_announce else last_announced,
             "display_phrase": display_phrase,
             "display_phrase_until": display_phrase_until,
         }
 
         area = _bbox_area(bbox)
-        # Event phrases (leaving/still) only fire for the one frame they're
-        # decided on — hold them on screen for a bit instead of instantly
-        # reverting to the generic text before anyone can read them.
         showing_event_phrase = display_phrase is not None and now < display_phrase_until
         display_text = display_phrase if showing_event_phrase else f"{label} {zone}"
         key = (zone, label)
