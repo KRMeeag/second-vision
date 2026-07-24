@@ -206,6 +206,12 @@ def _process_real_detections(element, buffer, user_data):
     candidates = []
     active_zones = set()
     det_labels = {}  # (zone, label) -> (display_text, bbox, area, track_id) — debug overlay only
+    # (zone, label) -> count of CONFIRMED tracks in that group this frame —
+    # feeds the "multiple X" TTS wording. Deliberately confirmation-gated
+    # (unlike det_labels' overlay dedup, which counts every detection that
+    # passes CONFIDENCE_THRESHOLD): an unconfirmed blip next to a real object
+    # must not be able to make the device claim there are "multiple" of them.
+    confirmed_zone_label_counts = {}
 
     for det in detections:
         confidence = det.get_confidence()
@@ -259,8 +265,12 @@ def _process_real_detections(element, buffer, user_data):
             display_phrase = phrase
             display_phrase_until = now + DISPLAY_PHRASE_HOLD_SECONDS
 
-        if now - first_seen < MIN_CONFIRMATION_SECONDS:
+        is_confirmed = now - first_seen >= MIN_CONFIRMATION_SECONDS
+        if not is_confirmed:
             should_announce = False
+        else:
+            group_key = (zone, label)
+            confirmed_zone_label_counts[group_key] = confirmed_zone_label_counts.get(group_key, 0) + 1
 
         track_history[track_id] = {
             "zone": zone,
@@ -313,6 +323,8 @@ def _process_real_detections(element, buffer, user_data):
     payload = {"label": label, "zone": zone, "confidence": confidence}
     if phrase:
         payload["phrase"] = phrase
+    elif confirmed_zone_label_counts.get((zone, label), 0) >= 2:
+        payload["phrase"] = f"multiple {label} {zone}"
 
     try:
         user_data.tts_queue.put_nowait(payload)
