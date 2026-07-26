@@ -48,7 +48,11 @@ from hailo_apps.python.core.gstreamer.gstreamer_helper_pipelines import (
 # callbacks.py is a sibling module, not an installed package — make sure it
 # resolves whether app.py is run directly or imported from elsewhere.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# callbacks.py (and StandaloneUserData below) import second_vision.core.* — put
+# src/ on the path too so those absolute imports resolve when app.py is run directly.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import callbacks
+from second_vision.core.priority import PriorityMailbox
 
 hailo_logger = get_logger(__name__)
 
@@ -249,7 +253,8 @@ class StandaloneUserData(callbacks.user_app_callback_class):
     """
     def __init__(self):
         super().__init__()
-        self.tts_queue = queue.Queue(maxsize=1)
+        # TTS uses a priority mailbox (offer/take/peek); serial stays FIFO.
+        self.tts_queue = PriorityMailbox()
         self.serial_queue = queue.Queue(maxsize=10)
         self.shutdown_event = threading.Event()
 

@@ -25,9 +25,19 @@ try:
 except ImportError:
     HAILO_AVAILABLE = False
 
+# priority.py is pure-Python (no hailo/gi) so it imports in mock mode too. It
+# owns the scoring/preemption tunables; this module only computes per-detection
+# priority/tier and offers the winner to the PriorityMailbox (user_data.tts_queue).
+from second_vision.core.priority import (
+    TIER_URGENT,
+    compute_priority,
+    compute_tier,
+)
+
 # ---- Object detection tuning ----
 CONFIDENCE_THRESHOLD = 0.70
-COOLDOWN_SECONDS = 10.0   # Minimum gap between repeated "still there" reminders
+MIN_REPEAT_INTERVAL = 10.0   # Hard floor: min gap between repeated "still there"
+                             # reminders for a track. Urgent-tier objects bypass it.
 MIN_CONFIRMATION_SECONDS = 0.3       # A track must persist this long before its first
                                       # announcement — filters 1-2 frame tracker/NMS
                                       # glitches that would otherwise get announced as
@@ -182,8 +192,9 @@ def _process_real_detections(element, buffer, user_data):
     Extract detections from the hailo buffer, update per-track zone/timing
     state, and queue the single most salient event for the TTS worker.
 
-    Priority when multiple detections qualify: higher confidence first,
-    then larger bbox (closer object).
+    When multiple detections qualify, the single most salient one is chosen by
+    the composite priority score (see core/priority.py) and offered to the
+    PriorityMailbox with its priority/tier for the TTS worker to act on.
     """
     roi = hailo.get_roi_from_buffer(buffer)
     detections = list(roi.get_objects_typed(hailo.HAILO_DETECTION))
@@ -216,6 +227,7 @@ def _process_real_detections(element, buffer, user_data):
         bbox = det.get_bbox()
         track_id = _get_track_id(det)
         center_x = bbox.xmin() + (bbox.width() / 2.0)
+        area = _bbox_area(bbox)
 
         prev = track_history.get(track_id)
         previous_zone = prev["zone"] if prev else None
@@ -239,6 +251,13 @@ def _process_real_detections(element, buffer, user_data):
             display_phrase = prev.get("display_phrase")
             display_phrase_until = prev.get("display_phrase_until", 0.0)
 
+        # Priority + urgency tier for this detection. Computed for every
+        # detection (the frame's single winner is chosen by priority below), and
+        # the tier decides whether an urgent object may bypass the repeat floor.
+        priority = compute_priority(confidence, area, zone, label, last_announced, now)
+        tier = compute_tier(priority, label, zone)
+
+        if prev is not None and prev["label"] == label:
             if prev["zone"] != zone:
                 # Direction changed — restart the "how long has it been here" timer.
                 zone_since = now
@@ -249,7 +268,11 @@ def _process_real_detections(element, buffer, user_data):
                         user_data.IDs_changed_zones.add(track_id)
                 elif zone == "center":
                     user_data.IDs_changed_zones.discard(track_id)
-            elif last_announced is not None and now - last_announced < COOLDOWN_SECONDS:
+            elif (last_announced is not None
+                  and now - last_announced < MIN_REPEAT_INTERVAL
+                  and tier != TIER_URGENT):
+                # Hard cooldown floor — suppress a too-soon "still there" repeat,
+                # unless the object has escalated to the urgent tier.
                 should_announce = False
             elif last_announced is not None:
                 phrase = f"{label} still {zone}"
@@ -274,7 +297,6 @@ def _process_real_detections(element, buffer, user_data):
             "display_phrase_until": display_phrase_until,
         }
 
-        area = _bbox_area(bbox)
         showing_event_phrase = display_phrase is not None and now < display_phrase_until
         display_text = display_phrase if showing_event_phrase else f"{label} {zone}"
         key = (zone, label)
@@ -291,7 +313,7 @@ def _process_real_detections(element, buffer, user_data):
         active_zones.add(zone)
 
         if should_announce:
-            candidates.append((confidence, area, label, zone, phrase))
+            candidates.append((priority, tier, confidence, label, zone, phrase))
 
     # Forget tracks the tracker hasn't updated recently, so zone hysteresis and
     # cooldown state don't leak onto an unrelated object that later reuses the ID.
@@ -323,8 +345,18 @@ def _process_real_detections(element, buffer, user_data):
     if not candidates:
         return
 
-    confidence, _area, label, zone, phrase = max(candidates, key=lambda c: (c[0], c[1]))
-    payload = {"label": label, "zone": zone, "confidence": confidence}
+    # One winner per frame, now chosen by composite priority (was confidence,
+    # then bbox area). Cross-frame competition is handled downstream by the
+    # PriorityMailbox + the worker's preemption, so a runner-up simply wins on a
+    # later frame — persistent objects re-emit every frame from track_history.
+    priority, tier, confidence, label, zone, phrase = max(candidates, key=lambda c: c[0])
+    payload = {
+        "label": label,
+        "zone": zone,
+        "confidence": confidence,
+        "priority": priority,
+        "tier": tier,
+    }
     # "Multiple" composes with whatever phrase would otherwise be used —
     # including "leaving to X"/"still X" — the same way det_labels' overlay
     # text does; it must not only apply to the one-time first announcement,
@@ -335,10 +367,9 @@ def _process_real_detections(element, buffer, user_data):
     elif phrase:
         payload["phrase"] = phrase
 
-    try:
-        user_data.tts_queue.put_nowait(payload)
-    except queue.Full:
-        pass  # TTS busy — drop, don't block pipeline
+    # offer() never blocks or raises: the mailbox keeps the higher-priority of
+    # {pending, this}, so a busy TTS worker gets the most urgent item, not a stale one.
+    user_data.tts_queue.offer(payload)
 
 
 def _draw_detection_overlay(element, buffer, user_data, active_zones: set, det_labels: dict, fps: float) -> None:
