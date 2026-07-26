@@ -30,11 +30,10 @@ def config_reader_worker(user_data, config, port_path, app):
             elif prefix == "M" and len(parts) == 2:
                 new_mode = parts[1]
                 if new_mode in ("detection", "depth", "both"):
-                    import queue as q
-                    try:
-                        user_data.tts_queue.put_nowait({"announce": f"{new_mode} mode"})
-                    except q.Full:
-                        pass
+                    # tts_queue is a PriorityMailbox. Mode announcements carry no
+                    # priority/tier, so item_priority()/item_tier() treat them as
+                    # +inf / urgent — a physical mode switch is always heard.
+                    user_data.tts_queue.offer({"announce": f"{new_mode} mode"})
                     config.update(pipeline_mode=new_mode)
                     if app:
                         app.trigger_rebuild()

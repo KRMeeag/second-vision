@@ -16,6 +16,7 @@ import time
 
 try:
     import cv2
+    # pyrefly: ignore [missing-import]
     import hailo
     import numpy as np
     from hailo_apps.python.core.common.buffer_utils import get_caps_from_pad, get_numpy_from_buffer
@@ -24,9 +25,23 @@ try:
 except ImportError:
     HAILO_AVAILABLE = False
 
+# priority.py is pure-Python (no hailo/gi) so it imports in mock mode too. It
+# owns the scoring/preemption tunables; this module only computes per-detection
+# priority/tier and offers the winner to the PriorityMailbox (user_data.tts_queue).
+from second_vision.core.priority import (
+    TIER_URGENT,
+    compute_priority,
+    compute_tier,
+)
+
 # ---- Object detection tuning ----
 CONFIDENCE_THRESHOLD = 0.70
-STATIONARY_ANNOUNCE_SECONDS = 10.0   # Minimum gap between repeated "still there" reminders
+MIN_REPEAT_INTERVAL = 10.0   # Hard floor: min gap between repeated "still there"
+                             # reminders for a track. Urgent-tier objects bypass it.
+MIN_CONFIRMATION_SECONDS = 0.3       # A track must persist this long before its first
+                                      # announcement — filters 1-2 frame tracker/NMS
+                                      # glitches that would otherwise get announced as
+                                      # a "first sighting" before disappearing
 STALE_TRACK_FRAMES = 15              # Frames of tracker silence before a track is forgotten
 HEAD_TURN_DELTA = 0.02               # Per-frame center_x shift (fraction of width) counted as movement
 HEAD_TURN_RATIO = 0.7                # Fraction of tracked objects that must shift together
@@ -106,11 +121,6 @@ def _get_track_id(det) -> int:
     track = det.get_objects_typed(hailo.HAILO_UNIQUE_ID)
     return track[0].get_id() if len(track) == 1 else 0
 
-
-# user_app_callback_class subclasses the real app_callback_class, which is
-# only bound above when the hailo/gi import succeeded — define it inside the
-# same guard so mock-mode environments still import this module cleanly
-# instead of hitting a NameError partway through module load.
 if HAILO_AVAILABLE:
     class user_app_callback_class(app_callback_class):
         def __init__(self):
@@ -121,11 +131,26 @@ if HAILO_AVAILABLE:
             # Set of track_ids that have moved from center to a side zone
             self.IDs_changed_zones = set()
             self.head_turn_cooldown_until = 0.0
+            self.depth_frame_count = 0
+            self.depth_fps_start_time = time.monotonic()
 
-        def get_fps(self):
+        def get_det_fps(self):
             elapsed = time.monotonic() - self.fps_start_time
             if elapsed > 0:
                 return self.get_count() / elapsed
+            return 0.0
+
+        def increment_depth(self):
+            """Call this once per processed depth frame — mirrors the base class's increment()."""
+            self.depth_frame_count += 1
+
+        def get_depth_count(self):
+            return self.depth_frame_count
+
+        def get_depth_fps(self):
+            elapsed = time.monotonic() - self.depth_fps_start_time
+            if elapsed > 0:
+                return self.depth_frame_count / elapsed
             return 0.0
 
 
@@ -167,8 +192,9 @@ def _process_real_detections(element, buffer, user_data):
     Extract detections from the hailo buffer, update per-track zone/timing
     state, and queue the single most salient event for the TTS worker.
 
-    Priority when multiple detections qualify: higher confidence first,
-    then larger bbox (closer object).
+    When multiple detections qualify, the single most salient one is chosen by
+    the composite priority score (see core/priority.py) and offered to the
+    PriorityMailbox with its priority/tier for the TTS worker to act on.
     """
     roi = hailo.get_roi_from_buffer(buffer)
     detections = list(roi.get_objects_typed(hailo.HAILO_DETECTION))
@@ -201,25 +227,37 @@ def _process_real_detections(element, buffer, user_data):
         bbox = det.get_bbox()
         track_id = _get_track_id(det)
         center_x = bbox.xmin() + (bbox.width() / 2.0)
+        area = _bbox_area(bbox)
 
         prev = track_history.get(track_id)
         previous_zone = prev["zone"] if prev else None
         zone = _get_detection_zone(bbox, previous_zone)
 
         zone_since = now
-        last_announced = 0.0
+        first_seen = now
+        last_announced = None
         phrase = None
         should_announce = True
-        announced_stationary = False
         display_phrase = None
         display_phrase_until = 0.0
 
         if prev is not None and prev["label"] == label:
             zone_since = prev.get("zone_since", now)
-            last_announced = prev.get("last_announced", 0.0)
+            # Unlike zone_since, first_seen must NOT reset on a zone change —
+            # it tracks how long this track_id has existed at all, so a real
+            # object walking center -> left doesn't get re-treated as "new".
+            first_seen = prev.get("first_seen", now)
+            last_announced = prev.get("last_announced")
             display_phrase = prev.get("display_phrase")
             display_phrase_until = prev.get("display_phrase_until", 0.0)
 
+        # Priority + urgency tier for this detection. Computed for every
+        # detection (the frame's single winner is chosen by priority below), and
+        # the tier decides whether an urgent object may bypass the repeat floor.
+        priority = compute_priority(confidence, area, zone, label, last_announced, now)
+        tier = compute_tier(priority, label, zone)
+
+        if prev is not None and prev["label"] == label:
             if prev["zone"] != zone:
                 # Direction changed — restart the "how long has it been here" timer.
                 zone_since = now
@@ -230,38 +268,35 @@ def _process_real_detections(element, buffer, user_data):
                         user_data.IDs_changed_zones.add(track_id)
                 elif zone == "center":
                     user_data.IDs_changed_zones.discard(track_id)
-            else:
-                stationary_for = now - zone_since
-                if stationary_for > STATIONARY_ANNOUNCE_SECONDS:
-                    if now - last_announced < STATIONARY_ANNOUNCE_SECONDS:
-                        # Already reminded recently about this stationary object — stay quiet.
-                        should_announce = False
-                    else:
-                        phrase = f"{label} still {zone}"
-                        announced_stationary = True
+            elif (last_announced is not None
+                  and now - last_announced < MIN_REPEAT_INTERVAL
+                  and tier != TIER_URGENT):
+                # Hard cooldown floor — suppress a too-soon "still there" repeat,
+                # unless the object has escalated to the urgent tier.
+                should_announce = False
+            elif last_announced is not None:
+                phrase = f"{label} still {zone}"
+                should_announce = True
 
         if phrase:
             display_phrase = phrase
             display_phrase_until = now + DISPLAY_PHRASE_HOLD_SECONDS
+
+        if now - first_seen < MIN_CONFIRMATION_SECONDS:
+            should_announce = False
 
         track_history[track_id] = {
             "zone": zone,
             "label": label,
             "last_frame": frame_count,
             "zone_since": zone_since,
+            "first_seen": first_seen,
             "center_x": center_x,
-            # Only the stationary reminder needs its own cooldown clock — a
-            # plain per-frame sighting must not keep refreshing this, or the
-            # very first reminder would always find itself "just announced".
-            "last_announced": now if announced_stationary else last_announced,
+            "last_announced": now if should_announce else last_announced,
             "display_phrase": display_phrase,
             "display_phrase_until": display_phrase_until,
         }
 
-        area = _bbox_area(bbox)
-        # Event phrases (leaving/still) only fire for the one frame they're
-        # decided on — hold them on screen for a bit instead of instantly
-        # reverting to the generic text before anyone can read them.
         showing_event_phrase = display_phrase is not None and now < display_phrase_until
         display_text = display_phrase if showing_event_phrase else f"{label} {zone}"
         key = (zone, label)
@@ -278,7 +313,7 @@ def _process_real_detections(element, buffer, user_data):
         active_zones.add(zone)
 
         if should_announce:
-            candidates.append((confidence, area, label, zone, phrase))
+            candidates.append((priority, tier, confidence, label, zone, phrase))
 
     # Forget tracks the tracker hasn't updated recently, so zone hysteresis and
     # cooldown state don't leak onto an unrelated object that later reuses the ID.
@@ -290,24 +325,54 @@ def _process_real_detections(element, buffer, user_data):
         track_history.pop(track_id, None)
         user_data.IDs_changed_zones.discard(track_id)
 
+    # (zone, label) -> count of confirmed, still-tracked objects in that group
+    # — feeds the "multiple X" TTS wording. Built from track_history (after
+    # stale cleanup above), NOT from this frame's raw detections: a track the
+    # detector momentarily misses for a frame or two is still present here
+    # (it isn't evicted until STALE_TRACK_FRAMES of absence), so one flickered
+    # frame can't undercount a group that's genuinely still there. Also why
+    # this can't be tallied inline in the loop above — the same information
+    # isn't available per-detection, only once every live track is known.
+    confirmed_zone_label_counts = {}
+    for hist in track_history.values():
+        if now - hist["first_seen"] >= MIN_CONFIRMATION_SECONDS:
+            group_key = (hist["zone"], hist["label"])
+            confirmed_zone_label_counts[group_key] = confirmed_zone_label_counts.get(group_key, 0) + 1
+
     if user_data.use_frame:
-        _draw_detection_overlay(element, buffer, user_data, active_zones, det_labels)
+        _draw_detection_overlay(element, buffer, user_data, active_zones, det_labels, user_data.get_det_fps())
 
     if not candidates:
         return
 
-    confidence, _area, label, zone, phrase = max(candidates, key=lambda c: (c[0], c[1]))
-    payload = {"label": label, "zone": zone, "confidence": confidence}
-    if phrase:
+    # One winner per frame, now chosen by composite priority (was confidence,
+    # then bbox area). Cross-frame competition is handled downstream by the
+    # PriorityMailbox + the worker's preemption, so a runner-up simply wins on a
+    # later frame — persistent objects re-emit every frame from track_history.
+    priority, tier, confidence, label, zone, phrase = max(candidates, key=lambda c: c[0])
+    payload = {
+        "label": label,
+        "zone": zone,
+        "confidence": confidence,
+        "priority": priority,
+        "tier": tier,
+    }
+    # "Multiple" composes with whatever phrase would otherwise be used —
+    # including "leaving to X"/"still X" — the same way det_labels' overlay
+    # text does; it must not only apply to the one-time first announcement,
+    # or a persistent multi-object scene would say "multiple" exactly once
+    # and go singular for every reminder after that.
+    if confirmed_zone_label_counts.get((zone, label), 0) >= 2:
+        payload["phrase"] = f"multiple {phrase or f'{label} {zone}'}"
+    elif phrase:
         payload["phrase"] = phrase
 
-    try:
-        user_data.tts_queue.put_nowait(payload)
-    except queue.Full:
-        pass  # TTS busy — drop, don't block pipeline
+    # offer() never blocks or raises: the mailbox keeps the higher-priority of
+    # {pending, this}, so a busy TTS worker gets the most urgent item, not a stale one.
+    user_data.tts_queue.offer(payload)
 
 
-def _draw_detection_overlay(element, buffer, user_data, active_zones: set, det_labels: dict) -> None:
+def _draw_detection_overlay(element, buffer, user_data, active_zones: set, det_labels: dict, fps: float) -> None:
     """
     Debug visualization: tint active zones, draw zone-divider lines, and draw
     a labeled bounding box per (zone, label) group.
@@ -354,6 +419,9 @@ def _draw_detection_overlay(element, buffer, user_data, active_zones: set, det_l
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
         cv2.putText(frame_bgr, f"ID: {track_id}", (x1, y1 + 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+    cv2.putText(frame_bgr, f"FPS: {fps:.1f}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
     user_data.set_frame(frame_bgr)
 

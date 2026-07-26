@@ -22,15 +22,19 @@ def mock_detection_generator(user_data):
         
         n_objects = random.randint(0, 3)
         for _ in range(n_objects):
+            zone = random.choice(MOCK_ZONES)
+            confidence = round(random.uniform(0.5, 0.99), 2)
             det = {
                 "label": random.choice(MOCK_LABELS),
-                "zone": random.choice(MOCK_ZONES),
-                "confidence": round(random.uniform(0.5, 0.99), 2),
+                "zone": zone,
+                "confidence": confidence,
+                # Nominal priority/tier so the PriorityMailbox can rank mock items;
+                # center nudged up to loosely mirror the real zone weighting.
+                "priority": round(confidence + (0.5 if zone == "center" else 0.0), 2),
+                "tier": "normal",
             }
-            try:
-                user_data.tts_queue.put_nowait(det)
-            except queue.Full:
-                pass
+            # tts_queue is a PriorityMailbox now — offer() never blocks or raises.
+            user_data.tts_queue.offer(det)
 
 
 def mock_depth_generator(user_data):

@@ -22,6 +22,7 @@ os.environ["GST_PLUGIN_FEATURE_RANK"] = "vaapidecodebin:NONE"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from second_vision.core.config import SystemConfig
+from second_vision.core.priority import PriorityMailbox
 
 # Conditional imports — don't crash if hailo isn't installed (mock mode)
 HAILO_AVAILABLE = True
@@ -65,7 +66,9 @@ class SecondVisionUserData(_UserDataBase):
     def __init__(self, config: SystemConfig):
         super().__init__()
         self.config = config
-        self.tts_queue = queue.Queue(maxsize=1)
+        # TTS uses a priority mailbox (offer/take/peek), not a FIFO queue — see
+        # core/priority.py. Serial stays a plain FIFO stream.
+        self.tts_queue = PriorityMailbox()
         self.serial_queue = queue.Queue(maxsize=10)
         self.shutdown_event = threading.Event()
 
