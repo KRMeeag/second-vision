@@ -1,7 +1,10 @@
 # ARCHITECTURE.md — System Architecture
 
-> Consolidated from architecture analysis v1–v8.  
+> **Last synced: 2026-07-27.** Verified against source.
 > This is the single source of truth for how the system is built.
+>
+> The depth post-processing section is deliberately kept high-level: that design is still
+> moving. See [PLAN.md](PLAN.md#2-depth-estimation-callbacks).
 
 ---
 
@@ -70,7 +73,10 @@
 | 5 | Serial Writer | `threading.Thread` daemon | `serial_queue` | Binary packets to ESP32 | App lifetime |
 | 6 | Config Reader | `threading.Thread` daemon | Arduino serial text | `SystemConfig` updates | App lifetime |
 | 7 | *(opt)* Watchdog | `threading.Thread` daemon | Frame count | Restart on stall | If `--enable-watchdog` |
-| 8 | *(opt)* Debug Display | `threading.Thread` daemon | All queues | OpenCV composite window | If `--debug-display` |
+
+The debug overlay is **not** a separate thread. It is drawn with cv2 inline inside the
+detection callback, gated on `user_data.use_frame`. A separate composite debug window
+(`--debug-display`) is a planned task, not current behaviour.
 
 ### Shutdown sequence
 
@@ -87,18 +93,31 @@
 
 ### Detection → TTS
 
+`tts_queue` is a **`PriorityMailbox`**, not a `queue.Queue`. It exposes
+`offer()` / `take()` / `peek()` — there is no `put_nowait` / `get`. It holds one slot and
+keeps the **higher-priority** of {stored, incoming}, ties going to the newer item, so a
+busy TTS worker receives the most urgent item rather than a stale one. `offer()` never
+blocks and never raises.
+
 ```
-GStreamer det_callback → user_data.tts_queue.put_nowait({
+GStreamer det_callback → user_data.tts_queue.offer({
     "label": "person",          # str: YOLO class label
     "zone": "left",             # str: "left" | "center" | "right"
     "confidence": 0.87,         # float: 0.0-1.0
+    "priority": 2.45,           # float: composite score, higher = surface first
+    "tier": "normal",           # str: "normal" | "urgent"
+    "phrase": "person still left",   # str, OPTIONAL: overrides "{label} {zone}"
 })
 
 # Mode announcement (special):
-user_data.tts_queue.put_nowait({
+user_data.tts_queue.offer({
     "announce": "detection mode"  # str: spoken as-is
 })
 ```
+
+Items arriving without `priority` / `tier` (mock data, mode announcements) are defaulted by
+`item_priority()` / `item_tier()` in `core/priority.py`. Announcements get `+inf` priority
+and urgent tier, so a physical mode switch is always heard.
 
 ### Depth → Serial
 
@@ -179,53 +198,81 @@ Frame width:
    (Motor L)       (Motor C)               (Motor R)
 ```
 
-### Proximity → intensity mapping
+Stable: the frame is split L/C/R with a wider centre, each zone producing one 0–255 intensity for the `serial_queue` contract. Closer must map to stronger along a non-linear curve — linear feels unnatural to users.
 
-```
-Depth (meters)     Intensity     User perception
-> 3.0              0 (off)       Clear path
-2.0 - 3.0          50-100        Gentle hum
-1.0 - 2.0          100-180       Moderate
-0.5 - 1.0          180-230       Strong
-< 0.5              255 (max)     Urgent — stop/turn
-```
+### Units — relative, not metres
 
-Uses an exponential/inverse curve — linear feels unnatural to users.
+The SC-DepthV3 postprocess `.so` emits **relative model units**, not metres. Any constant carrying an `_M` suffix in prototype code is still in those relative units despite the name. Porting metric-looking thresholds without preserving that semantics produces plausible but wrong motor output — a silent failure on an assistive device, which is worse than a loud one.
 
-### Ground hazard detection
+### Edge cases the design must handle
 
-Analyzes the bottom 25% of the depth map for gradient spikes. A sudden depth increase (> 5x median gradient) indicates a potential drop-off (stairs, ledge).
+These come from the requirements, so they outlive any particular algorithm:
 
-```python
-gradient = np.diff(row_depths)     # row-to-row depth change
-ratio = max(gradient) / median(gradient)
-hazard = ratio > HAZARD_THRESHOLD  # default: 5.0
-```
+| Edge case | Why raw depth is not enough |
+|---|---|
+| Thin objects (poles, cables, chair legs) | Networks smooth them away; a whole-zone aggregate averages them out |
+| Blank / textureless walls | No texture → scale ambiguity → washed-out, uncertain output |
+| Near walls the model renders as *far* | Same ambiguity, but failing dangerously rather than noisily |
+| Drop-offs and descending stairs | A drop reads as "far", indistinguishable from open space |
+
+### Current state in this repo
+
+`_process_real_depth` in `pipeline/callbacks.py` is a **placeholder awaiting replacement**, not the intended design. It emits `hazard=False` unconditionally, so the hazard path in `serial_worker.py` has never executed with a real `True` value.
+
+**Open interface question:** the prototype's ground-hazard detection distinguishes a drop-off (`"down"`) from a step-up/curb (`"up"`), but the `serial_queue` contract has no field for direction and `HAZARD_ALERT`'s payload is severity + pattern. The depth and firmware owners need to settle this jointly; the return-arity difference is also a port-time `ValueError` risk.
 
 ---
 
-## TTS Cooldown
+## TTS Prioritization and Suppression
 
-### Cooldown key: `"{label}-{zone}"`
+> The per-`"{label}-{zone}"` `CooldownManager` this section used to describe **no longer
+> exists** — it was deleted in the priority revamp. Suppression now lives in one layer
+> (callback + `core/priority.py`), not two competing ones.
 
-Each unique label-zone combination has an independent cooldown timer (default 3 seconds):
+### Choosing what to say
 
-```
-"person-center" → announced at T=0 → blocked until T=3
-"person-left"   → announced at T=0 → blocked until T=3 (independent)
-"car-center"    → announced at T=1 → blocked until T=4 (independent)
-```
+Every qualifying detection gets a composite **priority** score — confidence + bbox area +
+zone weight + class weight, minus a decaying recency penalty — and an urgency **tier**
+(`normal` / `urgent`). One winner per frame is chosen by priority and offered to the
+mailbox. Nothing is lost by reducing to one: persistent objects re-emit every frame from
+`track_history`, so a runner-up simply wins on a later frame.
+
+### Three layers of suppression
+
+| Layer | Mechanism | Urgent bypasses? |
+|---|---|---|
+| Hard repeat floor | `MIN_REPEAT_INTERVAL` (10 s) between repeat announcements for a track | **Yes** |
+| Soft recency penalty | Just-spoken items lose priority, decaying back over `RECENCY_DECAY_SECONDS` | No — it is a ranking term, not a gate |
+| Inter-utterance gap | `MIN_UTTERANCE_GAP` (0.5 s) of silence after each utterance | **Yes** |
+
+**Urgent deliberately bypasses both the floor and the gap.** An approaching car in the
+centre must be able to re-announce and cut in even if that object spoke moments ago. If you
+find a gate muting an urgent escalation, the gate is the bug — the bypass is intended.
+
+### Preemption
+
+While speaking, the worker polls the mailbox every ~50 ms. A pending item preempts if it is
+urgent-tier **or** beats the current item's priority by more than `PREEMPT_MARGIN`. The
+`PREEMPT_USE_TIER` flag flips this to pure relative-margin; both paths are kept live for
+on-device A/B comparison.
+
+All tunables live in `core/priority.py`, plus the detection-side constants in
+`pipeline/callbacks.py`. See [FIELD-TESTING.md](FIELD-TESTING.md) for the symptom → parameter
+tuning map.
 
 ### Zone boundary hysteresis
 
 To prevent jitter when objects sit at zone boundaries:
 
 ```
-Enter left:    center_x < 0.30
-Enter center:  center_x > 0.36 AND center_x < 0.64
-Enter right:   center_x > 0.70
-Hysteresis:    0.30-0.36 and 0.64-0.70 = keep previous zone
+Enter left:    center_x < 0.22
+Enter center:  center_x > 0.25 AND center_x < 0.75
+Enter right:   center_x > 0.78
+Hysteresis:    0.22-0.25 and 0.75-0.78 = keep previous zone
 ```
+
+The hysteresis bands **hold the previous zone** rather than dropping the detection, and the
+state is tracked per tracker ID, not per label.
 
 ---
 
@@ -246,17 +293,46 @@ Hysteresis:    0.30-0.36 and 0.64-0.70 = keep previous zone
 ```
 src/second_vision/
 ├── main.py                 ← Orchestrator: creates config, starts workers, runs pipeline
+├── main2.py                ← Temporary smoke-test script (deletion pending — see TASKS.md)
 ├── pipeline/
-│   ├── app.py              ← SecondVisionApp: extends GStreamerParallelApp
-│   └── callbacks.py        ← on_det_frame, on_depth_frame: fast, non-blocking
+│   ├── app.py              ← SecondVisionApp: extends GStreamerApp (NOT GStreamerParallelApp)
+│   ├── callbacks.py        ← on_det_frame (built), on_depth_frame (placeholder)
+│   └── TBR-*.py            ← Draft/staging files, unwired. Not imported by anything
 ├── workers/
-│   ├── tts_worker.py       ← espeak-ng + CooldownManager
-│   ├── serial_worker.py    ← binary protocol + ACK handling
-│   └── config_reader.py    ← text protocol + pipeline rebuild trigger
+│   ├── tts_worker.py       ← espeak-ng, serialized + interruptible
+│   ├── serial_worker.py    ← packet packing built; serial I/O still stubbed
+│   └── config_reader.py    ← text protocol parsing built; serial I/O still stubbed
 ├── core/
 │   ├── config.py           ← SystemConfig: thread-safe shared state
-│   ├── protocol.py         ← struct.pack/unpack for binary packets
-│   └── depth_utils.py      ← zone splitting, proximity curves, hazard detection
+│   ├── priority.py         ← PriorityMailbox + all TTS scoring/preemption tunables
+│   ├── protocol.py         ← PLANNED — packing currently lives in serial_worker.py
+│   └── depth_utils.py      ← Placeholder; real approach still in the prototyping repo
 └── mock/
     └── data_generator.py   ← fake detections + depth for --mock mode
+
+tests/
+└── test_priority.py        ← 19 tests: mailbox, scoring, tiers, preemption, worker
 ```
+
+`SecondVisionApp` extends **`GStreamerApp`**. `GStreamerParallelApp` exists only in the
+prototyping repo and is **not importable** from the installed `hailo_apps` library, so the
+dual-branch pipeline is built inline here.
+
+---
+
+## Shared files — expect concurrent edits
+
+Five workstreams run in parallel and legitimately touch the same files. This map exists so
+you know *who else is in here*, so you can coordinate before and after a change.
+
+**This is not an ownership gate.** Any member's agent may edit any of these files; the team
+coordinates directly on what lands and how it affects the other side.
+
+| File | Workstreams that touch it |
+|---|---|
+| `pipeline/callbacks.py` | depth (`_process_real_depth`), detection (`_process_real_detections`), TTS (tuning constants) |
+| `pipeline/app.py` | control (`get_pipeline_string`, `_connect_callback`), depth (branch wiring), detection (tracker params) |
+| `core/config.py`, `workers/config_reader.py` | control |
+| `workers/serial_worker.py`, `core/protocol.py` | firmware, depth (hazard fields) |
+| `core/priority.py` | TTS |
+| `main.py` | all — worker startup and `user_data` construction |
