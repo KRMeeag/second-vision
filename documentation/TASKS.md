@@ -1,193 +1,173 @@
-# TASKS.md — Task Breakdown & Assignments
+# TASKS.md — Status Board
 
-> Granular task list derived from the implementation plan.  
-> Update status as work progresses.
+> **Last synced: 2026-07-27.** This file is the **source of truth for status**.
+> Tick boxes here as work lands. `.agents/*.md` handoffs remain the narrative record —
+> the why, the decisions, the instructive failures — but they are local to one machine and
+> are not the status board.
+>
+> Organised by the five workstreams in [PLAN.md](PLAN.md), which run concurrently.
 
----
-
-## Status Legend
+## Status legend
 
 - `[ ]` Not started
 - `[/]` In progress
 - `[x]` Complete
-- `[~]` Blocked / waiting on dependency
+- `[~]` Blocked / waiting on a dependency
 
 ---
 
-## Phase 1: Scaffolding
+## Foundation (done)
 
-- [ ] Create `src/second_vision/__init__.py`
-- [ ] Create `src/second_vision/core/__init__.py`
-- [ ] Create `src/second_vision/workers/__init__.py`
-- [ ] Create `src/second_vision/pipeline/__init__.py`
-- [ ] Create `src/second_vision/mock/__init__.py`
-- [ ] Implement `src/second_vision/core/config.py` — `SystemConfig` class
-- [ ] Implement `src/second_vision/mock/data_generator.py` — mock detection + depth generators
-- [ ] Create `src/second_vision/workers/tts_worker.py` — stub version (prints to console)
-- [ ] Create `src/second_vision/workers/serial_worker.py` — stub version (prints hex packets)
-- [ ] Create `src/second_vision/workers/config_reader.py` — stub version (no-op loop)
-- [ ] Create `src/second_vision/pipeline/callbacks.py` — stub pass-through
-- [ ] Create `src/second_vision/main.py` — orchestrator with `--mock` support
-- [ ] Create `scripts/run.sh` — venv activation + env setup + launch
-- [ ] Test: `./scripts/run.sh --mock` runs end-to-end with stub output
+- [x] Package layout under `src/second_vision/`
+- [x] `core/config.py` — thread-safe `SystemConfig`
+- [x] `mock/data_generator.py` — fake detections + depth for `--mock`
+- [x] `main.py` — orchestrator, worker startup, mock/pipeline split
+- [x] `pipeline/app.py` — `SecondVisionApp`, dual-branch pipeline, `_connect_callback`
+- [x] `scripts/run.sh` — venv + Hailo env + `PYTHONPATH`, passes args through
+- [x] `--mock` runs end-to-end with no hardware
+
+> Note: `SecondVisionApp` extends `GStreamerApp`, **not** `GStreamerParallelApp` — that
+> class exists only in the prototyping repo and is not importable from the installed
+> library. The dual-branch pipeline is built inline here.
 
 ---
 
-## Phase 2: Pipeline Subclass
+## 1. Object detection callbacks — *detection owner*
 
-- [ ] Create `src/second_vision/pipeline/app.py` — `SecondVisionApp` class
-  - [ ] Extend `GStreamerParallelApp`
-  - [ ] Add custom CLI arguments (`--serial-port`, `--config-port`, `--headless`, `--debug-display`)
-  - [ ] Override `get_pipeline_string()` (initially just call super)
-  - [ ] Override `_connect_callback()` (initially just call super)
-- [ ] Update `main.py` to use `SecondVisionApp` in pipeline mode
-- [ ] Test: `./scripts/run.sh --input usb` shows two display windows (matches current behavior)
-
----
-
-## Phase 3: Callbacks
-
-- [ ] Implement `on_det_frame()` in `callbacks.py`
-  - [ ] Extract hailo detections from buffer
-  - [ ] Compute zone from bbox center (left/center/right)
-  - [ ] `put_nowait()` detection dict into `tts_queue`
-- [ ] Implement `on_depth_frame()` in `callbacks.py`
-  - [ ] Extract depth mask from buffer
-  - [ ] Compute basic zone averages (stub — later replaced by `depth_utils`)
-  - [ ] `put_nowait()` depth dict into `serial_queue`
-- [ ] Wire callbacks in `SecondVisionApp._connect_callback()`
-- [ ] Test: `./scripts/run.sh --input usb` prints `[TTS STUB]` and `[SERIAL STUB]` messages
+- [x] Extract detections, compute zone from bbox centre
+- [x] Zone hysteresis `0.22 / 0.25 / 0.75 / 0.78`, holding previous zone in the bands
+- [x] Per-track history keyed by tracker ID
+- [x] Stale-track cleanup (`STALE_TRACK_FRAMES = 15`), including on empty frames
+- [x] Head-turn suppression, gated by `HEAD_TURN_MIN_TRACKED = 3`
+- [x] "leaving to X" / "still X" event phrasing
+- [x] False-positive confirmation gate (`MIN_CONFIRMATION_SECONDS = 0.3`, `first_seen`)
+- [x] "multiple X" wording, tallied from `track_history` after stale cleanup
+- [x] "multiple X" composes with all phrase types, not just first sightings
+- [x] cv2 debug overlay: zone tints, dividers, boxes, track IDs, FPS
+- [x] Per-detection priority/tier, one winner per frame → TTS mailbox
+- [ ] **Validate on real hardware**: confirmation gate, "multiple X", flicker-tolerant tally
+      (all three verified only against mocked-hailo harnesses)
+- [ ] Decide whether to tune `CONFIDENCE_THRESHOLD` / NMS thresholds at the source
+- [ ] Settle the final detection class list
+- [ ] Pluralization (`person` → `people`) — deferred until the class list is settled
+- [ ] Remove or repurpose `zone_since` (computed and stored every frame, read by nothing)
 
 ---
 
-## Phase 4: TTS Worker (Can develop with `--mock`)
+## 2. Depth estimation callbacks — *depth owner*
 
-- [ ] Replace `_speak()` stub with real espeak-ng call
-  - [ ] Option A: `subprocess.Popen(["espeak-ng", "-s", "160", text])`
-  - [ ] Option B: `pyttsx3.init()` + `engine.say()` + `engine.runAndWait()`
-- [ ] Add zone boundary hysteresis (prevent jitter at 33%/66% boundaries)
-- [ ] Add detection priority ordering (closer/higher confidence first)
-- [ ] Test: `./scripts/run.sh --mock` produces audio from speaker
-- [ ] Test: `./scripts/run.sh --input usb` announces real detections
-- [ ] Tune cooldown duration (start at 3s, adjust based on testing)
+> The approach is **under active design in the prototyping repo** and changing rapidly.
+> Tasks here cover the port into this repo, not the algorithm design — see
+> [PLAN.md](PLAN.md#2-depth-estimation-callbacks).
 
----
-
-## Phase 5: Depth Utilities
-
-- [ ] Create `src/second_vision/core/depth_utils.py`
-  - [ ] `compute_zone_intensities(depth_data, width)` — 25/50/25 split
-  - [ ] `compute_proximity(zone_slice)` — inverse/exponential curve → 0-255
-  - [ ] Apply outlier filtering (percentile-based)
-- [ ] Update `on_depth_frame()` to use `depth_utils` instead of inline stub
-- [ ] Test: Serial stub shows varying L/C/R values that respond to scene changes
-- [ ] Tune proximity curve (exponential vs inverse-square)
+- [x] Placeholder `_process_real_depth` keeping the `serial_queue` interface alive
+- [x] Depth-branch FPS scaffolding on `user_app_callback_class`
+- [/] Design and validate the post-processing in the prototyping repo
+- [ ] Port into this repo — verify imports resolve here
+- [ ] Ensure it coexists cleanly with the haptic/serial path
+- [ ] Apply this repo's coding standards before it lands
+- [ ] Replace the placeholder `_process_real_depth`
+- [ ] Wire real hazard output (currently `hazard=False` unconditionally)
+- [ ] Port/author unit tests for the depth math in this repo
+- [ ] Tune parameters against real captures
+- [ ] Decide where depth post-processing state lives across a pipeline rebuild
+- [ ] **After the port lands and is accepted: update the documentation immediately**
+      (PLAN.md, ARCHITECTURE.md depth section, DECISIONS.md, this file)
 
 ---
 
-## Phase 6: Serial Protocol + Writer (Protocol testable without hardware)
+## 3. TTS — *TTS owner*
 
-- [ ] Create `src/second_vision/core/protocol.py`
-  - [ ] `pack_motor_update(left, center, right) → bytes`
-  - [ ] `pack_hazard_alert(severity, pattern) → bytes`
-  - [ ] `pack_heartbeat() → bytes`
-  - [ ] `parse_ack(data) → bool`
-  - [ ] `compute_checksum(data) → int`
-- [ ] Write unit tests for protocol encoding/decoding (`tests/test_protocol.py`)
-- [ ] Replace serial stubs in `serial_worker.py`
-  - [ ] `_open_serial_port()` — real `serial.Serial()`
-  - [ ] `_send_packet()` — real `port.write()`
-  - [ ] `_check_ack()` — real `port.read()` with 10ms timeout
-  - [ ] `_close_port()` — real `port.close()`
-- [ ] Add heartbeat sending during idle periods
-- [ ] Add consecutive ACK failure tracking (warn at 5 failures)
-- [ ] Test with ESP32: motors respond to depth data
-
----
-
-## Phase 7: Config Reader (Can develop with `--mock`)
-
-- [ ] Replace serial stubs in `config_reader.py`
-  - [ ] `_open_config_port()` — real `serial.Serial(port, 9600)`
-  - [ ] `_read_line()` — real `port.readline()`
-  - [ ] `_close_config_port()` — real `port.close()`
-- [ ] Test text protocol parsing with Arduino serial monitor
-- [ ] Test: potentiometer changes `motor_strength` → serial worker applies multiplier
-- [ ] Test: toggle switch changes `tts_enabled` → TTS stops/starts
-- [ ] Test: mode switch sends `M:detection\n` → pipeline rebuild triggered
+- [x] `PriorityMailbox` — `offer` / `take` / `peek`, keep-higher, ties to newer
+- [x] Composite priority score (confidence, area, zone, class, recency penalty)
+- [x] Urgency tier model (`normal` / `urgent`)
+- [x] `preempts()` — tier-OR-margin, with `PREEMPT_USE_TIER` flag for on-device A/B
+- [x] Serialized interruptible speech (~50 ms preempt poll while speaking)
+- [x] Minimum inter-utterance gap, skipped by an urgent pending item
+- [x] Hard repeat floor (`MIN_REPEAT_INTERVAL = 10.0`) with urgent bypass
+- [x] Removed the old `CooldownManager`; suppression now lives in one layer
+- [x] espeak-ng primary, pyttsx3 fallback for dev machines
+- [x] All tunables consolidated as named constants in `core/priority.py`
+- [x] `tests/test_priority.py` — **19 tests passing**
+- [ ] Wire the `W_APPROACH` approach-velocity hook (reserved, currently `0.0`)
+- [ ] Confirm on-device that the layering fix holds under real load
+- [~] Tune weights / margins / gap by ear — **scheduled last**, see the field-testing gate
 
 ---
 
-## Phase 8: Dynamic Pipeline Switching
+## 4. ESP32 vibration motors — *firmware owner*
 
-- [ ] Implement `_build_detection_only()` in `app.py`
-- [ ] Implement `_build_depth_only()` in `app.py`
-- [ ] Implement `_build_dual()` in `app.py` (refactor from current `get_pipeline_string()`)
-- [ ] Make `get_pipeline_string()` mode-aware (reads `config.pipeline_mode`)
-- [ ] Make `_connect_callback()` mode-aware (only connects active callbacks)
-- [ ] Implement `trigger_rebuild()` — `GLib.idle_add(self._rebuild_pipeline)`
-- [ ] Wire config reader mode change to `app.trigger_rebuild()`
-- [ ] Test: TTS announces mode, pipeline rebuilds within ~1.2s, new mode active
+### ESP32 side — complete
 
----
+- [x] Parse the binary protocol (start byte, type, payload, checksum)
+- [x] Validate the XOR checksum
+- [x] `MOTOR_UPDATE` → 3× PWM
+- [x] `HAZARD_ALERT` → pulsing pattern override
+- [x] `HEARTBEAT` → watchdog reset
+- [x] Send ACK on a valid packet
+- [x] 3-second watchdog → all motors to 0
 
-## Phase 9: Hazard Detection
+### RPi side — **UART comms still being built**
 
-- [ ] Add `detect_ground_hazard(depth_map, frame_height)` to `depth_utils.py`
-  - [ ] Extract ground strip (bottom 25% of frame)
-  - [ ] Compute row-wise average depth
-  - [ ] Compute depth gradient (row-to-row change)
-  - [ ] Detect gradient spike > threshold (default 5x median)
-  - [ ] Return `(hazard_detected: bool, severity: float)`
-- [ ] Call `detect_ground_hazard()` in `on_depth_frame()` callback
-- [ ] Set `hazard=True` and `hazard_severity` in serial queue dict
-- [ ] Serial worker sends `HAZARD_ALERT` packet when hazard detected
-- [ ] Test: point camera at staircase → hazard detected → distinct motor pattern
-- [ ] Tune gradient threshold
-
----
-
-## Phase 10: Headless + Debug Display
-
-- [ ] Add `--headless` logic to `get_pipeline_string()` — replace `DISPLAY_PIPELINE` with `fakesink`
-- [ ] Create `src/second_vision/debug/__init__.py`
-- [ ] Create `src/second_vision/debug/display.py` — OpenCV composite debug window
-  - [ ] Side-by-side depth map (colorized) + detection view (bbox overlay)
-  - [ ] Text overlay: motor values, TTS log, FPS, ACK status
-- [ ] Add `--debug-display` flag to CLI
-- [ ] Test: `--headless` runs without any display windows
-- [ ] Test: `--debug-display` shows single composite window
+- [x] `_pack_motor_update()` and `_pack_hazard_alert()` implemented and reached
+- [ ] Register a `--serial-port` CLI argument (**does not exist** — currently only in a
+      `main.py` docstring)
+- [ ] Plumb the port path through to the worker (`SystemConfig` has no `serial_port` field,
+      so `_open_serial_port(config)` has nothing to open)
+- [ ] Extract packing into `core/protocol.py` (testable without hardware)
+- [ ] `tests/test_protocol.py` — pack/unpack/checksum for every message type
+- [ ] Real `pyserial` open / write / read
+- [ ] Wire the orphaned `_pack_heartbeat()` — **it currently has zero callers**, so no
+      heartbeat is ever sent and the ESP32 watchdog would fire on every quiet period
+- [ ] Real ACK reading (`_check_ack` returns `True` unconditionally today)
+- [ ] Decide and implement the ACK-failure policy (the handler is a `TODO` print)
+- [ ] Restore observable send logging (`_send_packet`'s print is commented out)
+- [ ] Joint UART bring-up: Pi ↔ ESP32 end to end, motors responding to real depth
 
 ---
 
-## ESP32 Firmware (Teammate)
+## 5. Control panel + mode switching — *control owner*
 
-- [ ] Parse binary protocol (start byte, msg type, payload, checksum)
-- [ ] Validate checksum (XOR)
-- [ ] Handle MOTOR_UPDATE: set 3× PWM via `ledcWrite()`
-- [ ] Handle HAZARD_ALERT: override motors with pulsing pattern
-- [ ] Handle HEARTBEAT: reset watchdog timer
-- [ ] Send ACK: `0xAA 0xFF acked_type checksum`
-- [ ] Implement 3-second watchdog: if no packets → all motors to 0
-- [ ] Test with RPi5: motors respond correctly to binary commands
+### Config reader
+
+- [x] Text protocol parsing (`S:key:value`, `M:mode`, `B:event`) and type casting
+- [ ] **Fix the `config.udpate(...)` typo** (should be `update`) — would `AttributeError`
+      on the first real `S:` line
+- [ ] Register a `--config-port` CLI argument — **does not exist**, so
+      `getattr(app.options_menu, "config_port", None)` is always `None` and the config
+      reader thread never starts
+- [ ] Real `pyserial` reads (`_open_config_port` / `_read_line` / `_close_config_port`)
+- [~] Verify a potentiometer changes `motor_strength` live — blocked on panel hardware
+- [~] Verify a toggle changes `tts_enabled` live — blocked on panel hardware
+
+### Mode switching
+
+- [x] `trigger_rebuild()` defers correctly through `GLib.idle_add`
+- [ ] Make `get_pipeline_string()` branch on `config.pipeline_mode`
+- [ ] Make `_connect_callback()` branch on `config.pipeline_mode`
+- [ ] Detection-only / depth-only / both pipeline builders
+- [ ] Verify the mode announcement is heard before the rebuild blackout
+- [ ] Decide where depth post-processing state is reset across a rebuild (with depth owner)
 
 ---
 
-## Arduino Control Panel (Teammate)
+## Cross-cutting / not owned by one stream
 
-- [ ] Wire toggle switches (pipeline mode, TTS on/off, hazard on/off)
-- [ ] Wire potentiometers (motor strength, cooldown duration)
-- [ ] Wire momentary button (status announce)
-- [ ] Implement text serial protocol: `"S:key:value\n"`, `"M:mode\n"`, `"B:event\n"`
-- [ ] Add debouncing for switches/buttons
-- [ ] Add smoothing for potentiometer readings (prevent jitter)
-- [ ] Test with serial monitor: verify correct messages sent
+- [ ] `--headless` flag → `fakesink` (documented in older plans, never implemented)
+- [ ] `--debug-display` composite OpenCV window (the current overlay is in-callback cv2)
+- [ ] `tests/test_config.py` — `SystemConfig` thread safety
+- [ ] `tests/test_depth_utils.py` — lands with the depth port
+- [ ] Decide whether to delete `main2.py` (temporary smoke-test script)
+- [ ] Decide whether to trim the `TBR-*` draft files
+- [ ] **Open interface question**: hazard *direction*. The prototype's ground-hazard
+      detection distinguishes `"down"` (drop-off) from `"up"` (curb), but the `serial_queue`
+      contract has no field for it and `HAZARD_ALERT`'s payload is severity + pattern.
+      Needs a joint decision between the depth and firmware owners; note the return-arity
+      mismatch is a port-time `ValueError` risk.
 
 ---
 
-## Tests
+## Field testing — **last**
 
-- [ ] `tests/test_config.py` — SystemConfig thread safety, update/get/snapshot
-- [ ] `tests/test_protocol.py` — pack/unpack/checksum for all message types
-- [ ] `tests/test_depth_utils.py` — zone splitting, proximity curves, hazard detection
-- [ ] `tests/test_cooldown.py` — CooldownManager per-label-zone logic
+- [~] Run the scenarios in [FIELD-TESTING.md](FIELD-TESTING.md) and tune by ear.
+      Blocked by design: this is the final activity, after the four build streams converge.
