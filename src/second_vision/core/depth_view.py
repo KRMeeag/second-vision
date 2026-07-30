@@ -97,22 +97,6 @@ def draw_subgrid_overlay(frame, small, view_w=VIEW_W, view_h=VIEW_H):
     return frame
 
 
-def draw_thin_mask(frame, thin_mask, view_w=VIEW_W, view_h=VIEW_H):
-    """
-    Outline the pixels the thin-structure detector fired on, in cyan.
-
-    Without this the detector is unfalsifiable by eye: a cable is invisible in
-    the colourized depth map (that is exactly why the magnitude detectors miss
-    it), so "did it see the wire?" could only be answered from numbers. Drawn as
-    contours rather than a fill so a 1-2 px structure stays visible.
-    """
-    mask = cv2.resize(thin_mask.astype(np.uint8) * 255, (view_w, view_h),
-                      interpolation=cv2.INTER_NEAREST)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(frame, contours, -1, (255, 255, 0), 2)
-    return frame
-
-
 def draw_depth_fps(frame, fps, view_w=VIEW_W):
     """
     Draw the DEPTH branch's frame rate in the top-right corner.
@@ -132,7 +116,7 @@ def draw_depth_fps(frame, fps, view_w=VIEW_W):
 
 
 def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="none",
-                   thin=None, thin_mask=None, fps=None):
+                   thin=None, fps=None):
     """
     Render the post-processing state as a BGR image: colorized depth map
     (hot = close), zone dividers, optional sub-grid overlay, per-zone intensity
@@ -142,6 +126,16 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
 
     `fps` is optional so off-device replay tools, which have no frame rate to
     report, can call this unchanged — the counter is simply omitted then.
+
+    NOTE: this used to also draw a cyan contour around every pixel the
+    thin-structure detector fired on. It was removed on field evidence: the
+    top-hat is a SHAPE test with no notion of what a shape means, so table
+    edges, chair backs, door frames and depth-map noise outlined as readily as
+    cables did, and testers could not tell a real wire from an artifact. An
+    overlay that is wrong as often as it is right is worse than none — it lends
+    the detector a credibility the model cannot support. The `thin` numbers and
+    the T tag remain, so the reading is still auditable; it is only the
+    pixel-level claim that is gone.
     """
     view_w, view_h = VIEW_W, VIEW_H
 
@@ -157,9 +151,6 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
 
     if SHOW_SUBGRID_OVERLAY:
         frame = draw_subgrid_overlay(frame, small, view_w, view_h)
-
-    if thin_mask is not None and np.any(thin_mask):
-        frame = draw_thin_mask(frame, thin_mask, view_w, view_h)
 
     # Zone dividers (25/50/25 split used by compute_zone_intensities)
     q1, q3 = view_w // 4, 3 * view_w // 4
@@ -239,8 +230,8 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
     cv2.putText(frame,
-                "active: T=thin obj (cyan outline)  C=concentrated near  N=near surface  "
-                "W=blank-wall BOOST (close+flat)  F=floor-to-wall",
+                "active: T=thin obj  C=concentrated near  "
+                "N=near surface  W=blank-wall F=floor-to-wall",
                 (8, view_h - 48), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
 
     return frame

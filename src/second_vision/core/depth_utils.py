@@ -2,10 +2,11 @@
 Depth Utilities — Zone splitting, proximity curves, and ground hazard detection.
 
 Post-processing pipeline (per SV-Docu/depth_estimation_handoff.md):
-    thin-structure ridge pass [cables/poles/branches, at native resolution] ->
+    thin-structure ridge pass [cables/poles/branches, at native resolution —
+    DIAGNOSTIC ONLY, see DepthPostProcessor.process] ->
     downsample -> zone split -> per zone max(sub-grid pooling [near clusters],
-    blank-wall detection [flat surfaces], floor-to-wall [walls read as far],
-    thin structures) -> safe-zone threshold -> non-linear curve -> EMA smoothing
+    blank-wall detection [flat surfaces], floor-to-wall [walls read as far])
+    -> safe-zone threshold -> non-linear curve -> EMA smoothing
     -> 0-255 motor intensity.
 
 All math is vectorized NumPy on a downsampled grid; safe to run every frame
@@ -614,22 +615,12 @@ def compute_thin_intensities(depth_map: np.ndarray) -> dict[str, float]:
     return thin_zone_intensities(depth_map, thin_structure_mask(depth_map))
 
 
-def thin_overlay_mask(mask: np.ndarray, size: Tuple[int, int] = DOWNSAMPLE_SIZE) -> np.ndarray:
-    """
-    Shrink a native-resolution thin mask onto the display grid, keeping every
-    cell a structure touched.
-
-    A cable is one or two pixels wide, so INTER_NEAREST would sample most of it
-    away and the overlay would show gaps where the detector actually fired.
-    INTER_AREA averages the block, so any coverage at all survives as non-zero —
-    the overlay then shows what was detected rather than a decimated guess.
-    """
-    target_w, target_h = size
-    if mask.shape == (target_h, target_w):
-        return mask.astype(bool)
-    shrunk = cv2.resize(mask.astype(np.uint8) * 255, (target_w, target_h),
-                        interpolation=cv2.INTER_AREA)
-    return shrunk > 0
+# NOTE: thin_overlay_mask() and DepthPostProcessor.overlay_mask() lived here to
+# feed the view's cyan thin-structure outline. Both were removed with it — the
+# top-hat is a pure SHAPE test, so it outlined table edges, chair backs, door
+# frames and depth noise as confidently as cables, and a per-pixel claim that
+# wrong misrepresents what the model can actually resolve. The detector still
+# runs and still drives the motors; only the pixel-level display is gone.
 
 
 def zone_warning(zone_slice: np.ndarray) -> float:
@@ -723,7 +714,6 @@ class DepthPostProcessor:
         self.alpha = alpha
         self._smoothed: dict[str, float] | None = None
         self.last_thin: dict[str, float] = {zone: 0.0 for zone in ZONE_NAMES}
-        self._last_mask: np.ndarray | None = None
 
     def process(self, depth_map: np.ndarray) -> dict[str, int]:
         """
@@ -736,21 +726,25 @@ class DepthPostProcessor:
         Hand this the CROPPED but NOT yet downsampled map. The thin-structure
         pass has to run before the 64x48 decimation — a 3 px cable does not
         survive it — while everything after is unchanged, because
-        downsample_depth() is a no-op on an already-downsampled grid. The thin
-        reading is combined with max(), so like every other detector here it can
-        only raise a warning, never soften one.
+        downsample_depth() is a no-op on an already-downsampled grid.
+
+        THIN IS DIAGNOSTIC ONLY, and does NOT reach the motors. It used to be
+        combined in with `max(raw[zone], thin[zone])`. Measured on a flat scene
+        containing no thin object at all, the ridge mask fires on 7% of the frame
+        at depth noise sigma=1.0 and 50% at sigma=1.5 — THIN_MIN_CONTRAST (2.0)
+        sits at roughly the noise amplitude of a real depth map, so at that point
+        the "structure" being graded is the background. Field testing saw the
+        same thing: table edges, chair backs and door frames flagged as readily
+        as cables. A haptic that fires on furniture teaches its user to ignore
+        it, and that costs the warnings from the detectors that DO work. The
+        reading is still computed and still shown (t0.00 and the T tag), so the
+        detector stays auditable while its thresholds are calibrated against real
+        captures — re-enable this line when they are, not before.
         """
-        mask = thin_structure_mask(depth_map)
-        thin = thin_zone_intensities(depth_map, mask)
-        self.last_thin = thin
-        # Kept at native resolution; shrinking it is display-only work, so the
-        # caller pays for it on preview frames via overlay_mask() rather than
-        # every frame on the streaming thread.
-        self._last_mask = mask
+        self.last_thin = thin_zone_intensities(depth_map, thin_structure_mask(depth_map))
 
         small = downsample_depth(depth_map)
         raw = compute_zone_intensities(small, small.shape[1])
-        raw = {zone: max(raw[zone], thin[zone]) for zone in ZONE_NAMES}
 
         if self._smoothed is None:
             self._smoothed = dict(raw)
@@ -762,36 +756,10 @@ class DepthPostProcessor:
 
         return {zone: to_motor_intensity(self._smoothed[zone]) for zone in ZONE_NAMES}
 
-    def overlay_mask(self, size: Tuple[int, int] = DOWNSAMPLE_SIZE) -> np.ndarray | None:
-        """
-        The last frame's thin mask, shrunk to the display grid.
-
-        Zones the detector did NOT act on are cleared first, so the outline means
-        "this raised a warning" and nothing else. The raw mask keeps every ridge
-        pixel that clears THIN_MIN_CONTRAST, but a zone only counts once the
-        ridge also covers THIN_MIN_AREA_FRAC of it — without this the view drew
-        cyan around specks and texture fragments while the HUD read t0.00 and the
-        motors did nothing, which is exactly the HUD-disagrees-with-the-device
-        trap this module already learned once.
-
-        Display-only, and small enough to hand to another process (~3 KB vs the
-        ~70 KB native mask). Call it only on frames you actually preview.
-        """
-        if self._last_mask is None:
-            return None
-        mask = self._last_mask
-        if any(v <= 0.0 for v in self.last_thin.values()):
-            mask = mask.copy()
-            for zone, (x0, x1) in _zone_bounds(mask.shape[1]).items():
-                if self.last_thin.get(zone, 0.0) <= 0.0:
-                    mask[:, x0:x1] = False
-        return thin_overlay_mask(mask, size)
-
     def reset(self) -> None:
         """Clear EMA state (e.g., after a pipeline rebuild or mode switch)."""
         self._smoothed = None
         self.last_thin = {zone: 0.0 for zone in ZONE_NAMES}
-        self._last_mask = None
 
 
 def detect_ground_hazard(
