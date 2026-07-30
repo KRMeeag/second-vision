@@ -14,7 +14,7 @@ import os
 import cv2
 import numpy as np
 
-from hailo_apps.python.pipeline_apps.custom_depth_detection.depth_utils import (
+from second_vision.core.depth_utils import (
     DANGER_CELL,
     MIN_DEPTH_M,
     SUBGRID_SHAPE,
@@ -113,14 +113,35 @@ def draw_thin_mask(frame, thin_mask, view_w=VIEW_W, view_h=VIEW_H):
     return frame
 
 
+def draw_depth_fps(frame, fps, view_w=VIEW_W):
+    """
+    Draw the DEPTH branch's frame rate in the top-right corner.
+
+    Deliberately its own number, in its own window, in the opposite corner from
+    the detection overlay's top-left "FPS:". The depth and detection branches run
+    independently off the tee and do NOT keep step — depth inference is the
+    heavier of the two — so reading one rate as if it were the other misreports
+    exactly the thing this is here to show. Right-aligned via getTextSize so the
+    label stays pinned to the corner as the digits change width.
+    """
+    text = f"DEPTH FPS: {fps:.1f}"
+    (text_w, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+    cv2.putText(frame, text, (view_w - text_w - 8, 24),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+    return frame
+
+
 def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="none",
-                   thin=None, thin_mask=None):
+                   thin=None, thin_mask=None, fps=None):
     """
     Render the post-processing state as a BGR image: colorized depth map
     (hot = close), zone dividers, optional sub-grid overlay, per-zone intensity
     bars tagged with the active detectors, ground-hazard strip (with step
-    direction: DOWN = fall hazard, UP = trip hazard), and raw depth stats for
-    calibration.
+    direction: DOWN = fall hazard, UP = trip hazard), raw depth stats for
+    calibration, and the depth branch's own FPS (top right).
+
+    `fps` is optional so off-device replay tools, which have no frame rate to
+    report, can call this unchanged — the counter is simply omitted then.
     """
     view_w, view_h = VIEW_W, VIEW_H
 
@@ -201,6 +222,11 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
     # Raw depth stats — the numbers needed to calibrate MIN/MAX_DEPTH_M
     cv2.putText(frame, f"depth p1/p50/p99: {d_lo:.2f} / {d_med:.2f} / {d_hi:.2f}",
                 (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+    # Depth-branch frame rate, top right — separate from the detection overlay's
+    # top-left FPS, which counts the user/detection frames in the other window.
+    if fps is not None:
+        frame = draw_depth_fps(frame, fps, view_w)
     if hazard_detected:
         # DOWN = drop-off / descending stairs (fall) — red.
         # UP   = curb / step-up (trip) — orange.
