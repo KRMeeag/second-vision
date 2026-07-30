@@ -4,6 +4,9 @@ These run in GStreamer streaming threads. They MUST be fast.
 Rule: extract data, put_nowait into queue, return. No blocking.
 """
 
+import atexit
+import multiprocessing
+import os
 import queue
 import time
 
@@ -24,6 +27,29 @@ try:
     HAILO_AVAILABLE = True
 except ImportError:
     HAILO_AVAILABLE = False
+
+# Depth post-processing (core/depth_utils.py and friends) needs only numpy/cv2 —
+# no hailo, no gi — so it gets its OWN import guard rather than riding on
+# HAILO_AVAILABLE. Folding it into the block above would mean a missing depth
+# module silently switched the *detection* path off too, which is exactly the
+# kind of quiet degradation this project keeps getting bitten by.
+_DEPTH_IMPORT_ERROR = None
+try:
+    from second_vision.core.calibration import CalibrationLogger
+    from second_vision.core.capture import FrameCapture
+    from second_vision.core.depth_utils import (
+        DepthPostProcessor,
+        crop_border,
+        detect_ground_hazard,
+        downsample_depth,
+    )
+    # Rendering lives in core/depth_view.py (no hardware deps) so the identical
+    # view can be reproduced off-device from a captured .npy frame.
+    from second_vision.core.depth_view import cv2_draw_depth
+    DEPTH_POSTPROC_AVAILABLE = True
+except ImportError as exc:  # pragma: no cover — mock machines without cv2/numpy
+    DEPTH_POSTPROC_AVAILABLE = False
+    _DEPTH_IMPORT_ERROR = exc
 
 # priority.py is pure-Python (no hailo/gi) so it imports in mock mode too. It
 # owns the scoring/preemption tunables; this module only computes per-detection
@@ -51,6 +77,15 @@ DISPLAY_PHRASE_HOLD_SECONDS = 2.0    # How long an event phrase stays on the deb
                                       # falling back to the generic "{label} {zone}" text — event
                                       # phrases only fire for one frame otherwise, too brief to read
 
+# ---- Depth post-processing tuning ----
+# All the depth *math* tunables live in core/depth_utils.py; these only govern
+# how often the callback talks to the console and the preview process.
+DEPTH_LOG_EVERY = 15                 # Frames between throttled [DEPTH] console lines
+DEPTH_PREVIEW_EVERY = 2              # Only ship every Nth frame to the viewer process — the
+                                     # EMA-smoothed values barely move frame to frame
+DEPTH_ERROR_LOG_SECONDS = 5.0        # Floor on repeat error logging; a bad frame at 30 FPS
+                                     # must not bury the console in tracebacks
+
 # ---- Zone boundaries (fractions of frame width) ----
 LEFT_BOUNDARY = 0.22          # Below this -> "left"
 CENTER_LEFT_BOUNDARY = 0.25   # Between this and CENTER_RIGHT_BOUNDARY -> "center"
@@ -74,9 +109,68 @@ def on_depth_frame(element, buffer, user_data):
         return
 
     if HAILO_AVAILABLE:
-        _process_real_depth(buffer, user_data)
+        if not DEPTH_POSTPROC_AVAILABLE:
+            _log_depth_error(_DEPTH_IMPORT_ERROR)
+            return
+        # Convention (AGENTS.md): a callback catches, logs and returns — one bad
+        # frame must never take the pipeline down with it.
+        try:
+            _process_real_depth(buffer, user_data)
+        except Exception as exc:
+            _log_depth_error(exc)
     else:
         pass  # Mock mode — mock_depth_generator handles this
+
+
+_last_depth_error_at = 0.0
+
+
+def _log_depth_error(exc) -> None:
+    """Report a depth-callback failure at most once every DEPTH_ERROR_LOG_SECONDS."""
+    global _last_depth_error_at
+    now = time.monotonic()
+    if now - _last_depth_error_at < DEPTH_ERROR_LOG_SECONDS:
+        return
+    _last_depth_error_at = now
+    print(f"[DEPTH] post-processing error (throttled): {exc!r}")
+
+
+def _has_display() -> bool:
+    """
+    Is there a GUI to draw the depth preview on?
+
+    cv2.imshow() with no X/Wayland session doesn't raise — Qt aborts the whole
+    process — so on a plain ssh run the viewer would die instantly and leave a
+    confusing "Qt platform plugin" wall of text. Checking first keeps a headless
+    run quiet; post-processing and haptics are unaffected either way.
+    """
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def _depth_view_worker(view_queue) -> None:
+    """
+    Runs in a SEPARATE PROCESS: renders and shows the depth post-processing view.
+
+    PERF: rendering happens here, not in the GStreamer callback. The callback
+    only ships the small (64x48) depth grid plus the already-computed values, so
+    the streaming thread stays free for inference — depth and YOLO share the CPU,
+    and drawing on the callback thread visibly blurred the camera preview.
+    """
+    while True:
+        try:
+            payload = view_queue.get(timeout=1.0)
+        except queue.Empty:
+            continue
+        try:
+            small, intensities, hazard, severity, direction, thin, thin_mask, fps = payload
+            cv2.imshow(
+                "Depth Post-Processing",
+                cv2_draw_depth(small, intensities, hazard, severity, direction, thin, thin_mask,
+                               fps=fps),
+            )
+            cv2.waitKey(1)
+        except Exception as exc:  # never let the viewer process die on one frame
+            print(f"[DEPTH VIEW] render error: {exc!r}")
 
 def _bbox_area(bbox) -> float:
     """Bounding-box area as a proximity proxy (larger = closer)."""
@@ -133,6 +227,82 @@ if HAILO_AVAILABLE:
             self.head_turn_cooldown_until = 0.0
             self.depth_frame_count = 0
             self.depth_fps_start_time = time.monotonic()
+
+            # ---- Depth post-processing state ----
+            # Built here rather than in the callback because __init__ runs once,
+            # before the pipeline exists and before any worker thread starts —
+            # which is also the only safe moment to fork the viewer process.
+            self.depth_processor = None
+            self.depth_view_queue = None
+            self.calibration = None
+            self.capture = None
+            self._depth_viewer = None
+            if DEPTH_POSTPROC_AVAILABLE:
+                self._init_depth_state()
+
+        def _init_depth_state(self):
+            """
+            Wire up the depth post-processing chain and its optional side modes.
+
+            Three modes, all independent and all headless-safe:
+              * normal      — post-process + haptics + (unless SV_DEPTH_VIEW=0) a
+                              preview window rendered in its own process
+              * SV_CALIBRATE=1 — log raw per-zone stats to CSV for threshold tuning
+                              and skip post-processing entirely (see core/calibration.py)
+              * SV_CAPTURE=1   — dump labelled raw depth frames to .npy for offline
+                              re-scoring (see core/capture.py); composes with either
+                              of the above
+            """
+            self.depth_processor = DepthPostProcessor()
+
+            calibrating = os.environ.get("SV_CALIBRATE") == "1"
+
+            # Fork the viewer FIRST, while this process is still single-threaded
+            # and free of Hailo/GStreamer state: the child inherits everything
+            # alive at fork time, and the capture/calibration writer threads below
+            # do not survive into it anyway. Skipped in calibration mode, which is
+            # deliberately headless and never sends a preview payload.
+            if not calibrating and os.environ.get("SV_DEPTH_VIEW", "1") != "0":
+                if _has_display():
+                    self.depth_view_queue = multiprocessing.Queue(maxsize=2)
+                    self._depth_viewer = multiprocessing.Process(
+                        target=_depth_view_worker, args=(self.depth_view_queue,),
+                        daemon=True, name="depth-view",
+                    )
+                    self._depth_viewer.start()
+                else:
+                    print("[DEPTH] no DISPLAY — preview window disabled "
+                          "(post-processing and haptics still run)")
+
+            self.calibration = CalibrationLogger() if calibrating else None
+            self.capture = FrameCapture() if os.environ.get("SV_CAPTURE") == "1" else None
+
+            # Both hold a background writer thread and an open file. main.py exits
+            # by returning from main() (Ctrl-C is swallowed in _run_pipeline_mode),
+            # so atexit is what guarantees a hand-stopped run still leaves a
+            # complete CSV / corpus manifest behind.
+            if self.calibration is not None or self.capture is not None:
+                atexit.register(self.close_depth_capture)
+
+        def close_depth_capture(self):
+            """Flush and close the calibration CSV / capture corpus. Idempotent."""
+            if self.capture is not None:
+                self.capture.close()
+                self.capture = None
+            if self.calibration is not None:
+                self.calibration.close()
+                self.calibration = None
+
+        def reset_depth_state(self):
+            """
+            Drop the EMA history after a pipeline rebuild or mode switch.
+
+            Without it, smoothed intensities from the mode that just went away
+            bleed into the first frames of the new one — the depth-side twin of
+            the tracker-ID reset in app.py's _on_pipeline_rebuilt().
+            """
+            if self.depth_processor is not None:
+                self.depth_processor.reset()
 
         def get_det_fps(self):
             elapsed = time.monotonic() - self.fps_start_time
@@ -428,40 +598,100 @@ def _draw_detection_overlay(element, buffer, user_data, active_zones: set, det_l
 
 def _process_real_depth(buffer, user_data):
     """
-    STUB — Extract depth and compute zone proximities.
+    Run the depth post-processing chain (core/depth_utils.py) on one frame and
+    publish the per-zone motor intensities to serial_queue.
 
-    Replace the zone splitting and proximity math as needed,
-    but keep the queue.put_nowait interface.
+        raw mask
+          -> [SV_CAPTURE: dump the RAW frame to .npy]
+          -> crop_border            (drop the model's unreliable edge ring)
+          -> downsample             (64x48 grid for the cheap zone math)
+          -> [SV_CALIBRATE: log raw stats and STOP — headless tuning mode]
+          -> DepthPostProcessor.process(cropped, NATIVE resolution)
+          -> detect_ground_hazard(small)
+          -> serial_queue + throttled preview payload
+
+    The processor is deliberately handed the CROPPED but NOT downsampled map:
+    its thin-structure pass (cables, poles, railings) has to see those before the
+    64x48 decimation erases them. Everything downstream of it re-downsamples
+    internally, so every other detector still sees the same `small` grid.
     """
+    # Count every delivered frame, including ones we bail on below, so
+    # get_depth_fps() reports what the pipeline is actually delivering.
+    user_data.increment_depth()
+    frame_count = user_data.get_depth_count()
+
     roi = hailo.get_roi_from_buffer(buffer)
     depth_masks = roi.get_objects_typed(hailo.HAILO_DEPTH_MASK)
 
     if not depth_masks:
         return
 
-    depth_data = np.array(depth_masks[0].get_data())
+    mask = depth_masks[0]
+    try:
+        depth_data = np.array(mask.get_data()).reshape((mask.get_height(), mask.get_width()))
+    except Exception:
+        # Fallback if get_height/get_width is unavailable on this mask type.
+        depth_data = np.array(mask.get_data())
 
-    # STUB: Simple zone splitting (replace with real depth_utils)
-    if depth_data.ndim == 2:
-        h, w = depth_data.shape
-        left_avg   = float(np.mean(depth_data[:, :w//4]))
-        center_avg = float(np.mean(depth_data[:, w//4:3*w//4]))
-        right_avg  = float(np.mean(depth_data[:, 3*w//4:]))
-    else:
-        left_avg = center_avg = right_avg = 0.0
+    if depth_data.ndim != 2:
+        if frame_count % DEPTH_LOG_EVERY == 0:
+            print(f"[DEPTH] Frame {frame_count} | unusable mask shape {depth_data.shape} — skipped")
+        return
 
-    # STUB: Linear proximity (replace with exponential curve)
-    def to_intensity(avg, max_depth=5.0):
-        clamped = max(0.0, min(avg, max_depth))
-        return int((1.0 - clamped / max_depth) * 255)
+    # Capture the RAW frame before crop/downsample, so the corpus holds exactly
+    # what the model emitted and stays valid if this chain changes.
+    if user_data.capture is not None:
+        user_data.capture.maybe_save(depth_data, frame_count)
 
+    depth_data = crop_border(depth_data)
+    small = downsample_depth(depth_data)
+
+    if user_data.calibration is not None:
+        # Calibration mode measures the model's raw output; running the detectors
+        # here would only measure the placeholder thresholds we are trying to set.
+        user_data.calibration.log(small, frame_count)
+        return
+
+    intensities = user_data.depth_processor.process(depth_data)
+    hazard, severity, direction = detect_ground_hazard(small, small.shape[0])
+
+    # Haptics first, preview second — the device output must not queue behind a
+    # display frame. Note the serial contract carries severity but no direction
+    # field: "down" (drop-off) and "up" (step-up) currently reach the motors as
+    # the same alert. That is an open question for the depth + firmware owners
+    # (ARCHITECTURE.md "Depth Processing"), so nothing is invented here.
     try:
         user_data.serial_queue.put_nowait({
-            "left":   to_intensity(left_avg),
-            "center": to_intensity(center_avg),
-            "right":  to_intensity(right_avg),
-            "hazard": False,  # STUB: replace with hazard detection
-            "hazard_severity": 0,
+            "left":   intensities["left"],
+            "center": intensities["center"],
+            "right":  intensities["right"],
+            "hazard": hazard,
+            "hazard_severity": severity,
         })
     except queue.Full:
         pass
+
+    # The thin readings ride along so the HUD tags what the MOTORS actually got,
+    # rather than a weaker value the display process would recompute from 64x48.
+    # The FPS rides along for the same reason: it is the DEPTH branch's own rate
+    # (get_depth_fps, counted in this callback), which is not the detection/user
+    # frame rate the other overlay shows — the two branches run independently off
+    # the tee and drift apart, so one number cannot stand for both.
+    if user_data.depth_view_queue is not None and frame_count % DEPTH_PREVIEW_EVERY == 0:
+        try:
+            user_data.depth_view_queue.put_nowait((
+                small, intensities, hazard, severity, direction,
+                user_data.depth_processor.last_thin,
+                user_data.depth_processor.overlay_mask(),
+                user_data.get_depth_fps(),
+            ))
+        except queue.Full:
+            pass  # viewer busy — drop the frame, never stall the streaming thread
+
+    if frame_count % DEPTH_LOG_EVERY == 0:
+        d_lo, d_med, d_hi = np.percentile(small, [1, 50, 99])
+        print(f"[DEPTH] Frame {frame_count} | "
+              f"L={intensities['left']} C={intensities['center']} R={intensities['right']} | "
+              f"Hazard: {hazard} ({direction}, sev {severity}) | "
+              f"raw p1/p50/p99: {d_lo:.2f}/{d_med:.2f}/{d_hi:.2f} | "
+              f"{user_data.get_depth_fps():.1f} FPS")
