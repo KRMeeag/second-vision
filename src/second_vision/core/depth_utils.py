@@ -323,12 +323,14 @@ def detect_blank_wall(zone_slice: np.ndarray, variance_max: float = WALL_VARIANC
     stepping into frame) flipped the motors between the two. Now the response is
     monotonic in distance and degrades smoothly as a surface stops looking flat.
 
-    Returns 0.0 for scenes too textured to call a wall and for smooth-but-far
-    surfaces (near cluster beyond the safe-zone cutoff). Combined via max() with
-    the other detectors, so it can only raise a warning, never suppress one —
-    fail-safe. (At the confidence boundary the returned value equals the plain
-    curve, which the sub-grid detector already meets or exceeds, so dropping it
-    to 0.0 there cannot change what the device does.)
+    Returns 0.0 for scenes too textured to call a wall, for smooth-but-far
+    surfaces (near cluster beyond the safe-zone cutoff), AND for smooth surfaces
+    close enough to read but too far to correct (below WALL_BOOST_FROM) — there
+    the correction is the identity, so a non-zero return would only shadow the
+    sub-grid reading and claim a detection that never happened. A non-zero result
+    now means one thing: this zone is a confirmed solid surface near enough that
+    the reading was pushed UP. Combined via max() with the other detectors, so it
+    can only raise a warning, never suppress one — fail-safe.
 
     NOTE: variance_max is in relative model units and is a PLACEHOLDER pending
     the metric-calibration measurement. Walls whose readings land entirely
@@ -342,7 +344,20 @@ def detect_blank_wall(zone_slice: np.ndarray, variance_max: float = WALL_VARIANC
 
     base = subgrid_cell_proximities(zone_slice)
     corrected = base + conf * (_wall_boost(base) - base)
-    return float(corrected[conf > 0.0].max())
+    # Report ONLY where the correction actually changed something. Below
+    # WALL_BOOST_FROM the boost is the identity, so this used to return exactly
+    # the sub-grid reading and the HUD lit "W" on every smooth surface within the
+    # safe-zone cutoff — a floor, a door across the room, a wall metres away all
+    # tagged "blank wall" while the detector contributed nothing (field report:
+    # "it always says W, even when the wall is far"). Dropping those to 0.0 cannot
+    # change the motors: zone_warning() takes a max() with subgrid_proximity,
+    # which is the max over ALL cells and so already meets or exceeds the
+    # unboosted value. `corrected` is monotone in `base` among confident cells, so
+    # restricting the max to boosted cells returns the same number when any fires.
+    fired = (conf > 0.0) & (corrected > base)
+    if not np.any(fired):
+        return 0.0
+    return float(corrected[fired].max())
 
 
 def _wall_boost(base: np.ndarray | float):

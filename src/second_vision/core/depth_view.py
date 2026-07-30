@@ -207,6 +207,9 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
             active += "T"
         if p["sub"] > 0.01:
             active += "N" if bd["shape"] == "broad" else "C"
+        # W means the blank-wall CORRECTION fired, not merely "this looks flat".
+        # detect_blank_wall now returns 0.0 unless it actually pushed the reading
+        # up, so this tag no longer lights on every smooth surface in the room.
         if p["wall"] > 0.01:
             active += "W"
         if p["f2w"] > 0.01:
@@ -237,7 +240,7 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
 
     cv2.putText(frame,
                 "active: T=thin obj (cyan outline)  C=concentrated near  N=near surface  "
-                "W=blank-wall  F=floor-to-wall",
+                "W=blank-wall BOOST (close+flat)  F=floor-to-wall",
                 (8, view_h - 48), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
 
     return frame
