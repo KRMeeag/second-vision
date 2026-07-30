@@ -170,7 +170,23 @@ def _run_pipeline_mode(user_data, config, workers, cli_args):
         )
         config_thread.start()
         workers.append(config_thread)
-    
+
+    # DEBUG ONLY (--cycle-modes): stand in for the not-yet-built Arduino mode
+    # switch by cycling pipeline_mode on a timer. Without the flag this block is
+    # skipped entirely and the pipeline stays in "both".
+    cycle_seconds = getattr(app.options_menu, "cycle_modes", 0.0)
+    if cycle_seconds:
+        from second_vision.mock.mode_cycler import mode_cycler_worker
+
+        cycler_thread = threading.Thread(
+            target=mode_cycler_worker,
+            args=(user_data, config, app, cycle_seconds),
+            daemon=True, name="mode-cycler"
+        )
+        cycler_thread.start()
+        workers.append(cycler_thread)
+        app.start_mode_monitor()
+
     print("[MAIN] Starting pipeline...")
     try:
         app.run()
