@@ -162,11 +162,10 @@ def _depth_view_worker(view_queue) -> None:
         except queue.Empty:
             continue
         try:
-            small, intensities, hazard, severity, direction, thin, thin_mask, fps = payload
+            small, intensities, hazard, severity, direction, thin, fps = payload
             cv2.imshow(
                 "Depth Post-Processing",
-                cv2_draw_depth(small, intensities, hazard, severity, direction, thin, thin_mask,
-                               fps=fps),
+                cv2_draw_depth(small, intensities, hazard, severity, direction, thin, fps=fps),
             )
             cv2.waitKey(1)
         except Exception as exc:  # never let the viewer process die on one frame
@@ -682,7 +681,6 @@ def _process_real_depth(buffer, user_data):
             user_data.depth_view_queue.put_nowait((
                 small, intensities, hazard, severity, direction,
                 user_data.depth_processor.last_thin,
-                user_data.depth_processor.overlay_mask(),
                 user_data.get_depth_fps(),
             ))
         except queue.Full:
