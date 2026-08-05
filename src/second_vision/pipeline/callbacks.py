@@ -39,6 +39,7 @@ try:
     from second_vision.core.capture import FrameCapture
     from second_vision.core.depth_utils import (
         DepthPostProcessor,
+        HazardDebouncer,
         crop_border,
         detect_ground_hazard,
         downsample_depth,
@@ -232,6 +233,7 @@ if HAILO_AVAILABLE:
             # before the pipeline exists and before any worker thread starts —
             # which is also the only safe moment to fork the viewer process.
             self.depth_processor = None
+            self.hazard_debouncer = None
             self.depth_view_queue = None
             self.calibration = None
             self.capture = None
@@ -253,6 +255,12 @@ if HAILO_AVAILABLE:
                               of the above
             """
             self.depth_processor = DepthPostProcessor()
+            # Debounces detect_ground_hazard, whose gate divides by the ground
+            # strip's own noise median and so flickers on a marginal break. Held
+            # here rather than inside DepthPostProcessor because the hazard strip
+            # is a separate signal from the zone intensities and is reset on the
+            # same events but graded on its own timebase.
+            self.hazard_debouncer = HazardDebouncer()
 
             calibrating = os.environ.get("SV_CALIBRATE") == "1"
 
@@ -299,9 +307,17 @@ if HAILO_AVAILABLE:
             Without it, smoothed intensities from the mode that just went away
             bleed into the first frames of the new one — the depth-side twin of
             the tracker-ID reset in app.py's _on_pipeline_rebuilt().
+
+            The hazard debouncer is reset for the stronger reason: it LATCHES.
+            A hazard still asserted when the pipeline was torn down would other-
+            wise stay asserted across the rebuild and need HAZARD_OFF_FRAMES of
+            the new mode to clear — i.e. the device would warn about a drop-off
+            belonging to a scene it is no longer looking at.
             """
             if self.depth_processor is not None:
                 self.depth_processor.reset()
+            if self.hazard_debouncer is not None:
+                self.hazard_debouncer.reset()
 
         def get_det_fps(self):
             elapsed = time.monotonic() - self.fps_start_time
@@ -652,7 +668,14 @@ def _process_real_depth(buffer, user_data):
         return
 
     intensities = user_data.depth_processor.process(depth_data)
-    hazard, severity, direction = detect_ground_hazard(small, small.shape[0])
+    # Debounced, not raw: detect_ground_hazard is memoryless and its gate divides
+    # by the strip's own noise median, so on a marginal break it alternates
+    # true/false frame to frame (131 flips in 400 frames on a static scene). The
+    # motors must not be driven off that — a ~10 Hz stutter reads as a broken
+    # device, not as a warning.
+    hazard, severity, direction = user_data.hazard_debouncer.update(
+        *detect_ground_hazard(small, small.shape[0])
+    )
 
     # Haptics first, preview second — the device output must not queue behind a
     # display frame. Note the serial contract carries severity but no direction

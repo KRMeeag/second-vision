@@ -95,6 +95,20 @@ HAZARD_MIN_STEP = 2.0
 # noise, which made severity flap 26<->255 on a completely static scene (live
 # finding). PLACEHOLDER pending calibration.
 HAZARD_MAX_JUMP = 20.0
+# Hazard debounce, in frames at ~30 FPS. The severity grade was moved off the
+# noise-driven ratio, but the DETECTION GATE still divides by that same wandering
+# median, so whether the warning exists at all still flickers: measured on a
+# static 2.2-unit break at sigma=1.0, the boolean flipped 131 times in 400 frames
+# — a ~10 Hz stutter on the motors, which reads as a broken device rather than as
+# information.
+#
+# Asymmetric on purpose. Turning ON costs ~0.1 s of latency and buys silence on
+# single-frame blips (gait bounce, a reflective tile). Turning OFF is slower
+# still, so a hazard that momentarily drops out keeps warning instead of
+# stuttering — the fail-safe direction for a drop-off, which is the one hazard
+# here that can put someone on the floor.
+HAZARD_ON_FRAMES = 3
+HAZARD_OFF_FRAMES = 5
 # Thin-structure (ridge) detection — cables, cords, ropes, poles, branches,
 # railing bars. Measured on the live Pi: these do NOT read as "near" at all. A
 # cable lying 1-8 model units in front of the surface behind it moved the zone's
@@ -760,6 +774,68 @@ class DepthPostProcessor:
         """Clear EMA state (e.g., after a pipeline rebuild or mode switch)."""
         self._smoothed = None
         self.last_thin = {zone: 0.0 for zone in ZONE_NAMES}
+
+
+class HazardDebouncer:
+    """
+    Temporal gate over detect_ground_hazard, so the motors get a decision rather
+    than a per-frame opinion.
+
+    detect_ground_hazard is memoryless and its gate divides by the strip's own
+    noise median, so on a marginal break it alternates true/false frame to frame
+    (measured: 131 flips in 400 frames on a completely static scene). Haptics
+    driven straight off that buzz at ~10 Hz, which a wearer reads as a fault.
+
+    Asserts only after HAZARD_ON_FRAMES consecutive detections and releases only
+    after HAZARD_OFF_FRAMES consecutive clears. While latched, severity is
+    EMA-smoothed with the same alpha as the zone intensities, so the intensity a
+    user feels changes at the same rate everywhere in the device.
+
+    Call once per depth frame, in the same callback as DepthPostProcessor.
+    """
+
+    def __init__(self, on_frames: int = HAZARD_ON_FRAMES,
+                 off_frames: int = HAZARD_OFF_FRAMES, alpha: float = EMA_ALPHA):
+        self.on_frames = max(int(on_frames), 1)
+        self.off_frames = max(int(off_frames), 1)
+        self.alpha = alpha
+        self._on = False
+        self._streak = 0            # consecutive frames agreeing with the CHALLENGER
+        self._severity = 0.0
+        self._direction = "none"
+
+    def update(self, detected: bool, severity: int, direction: str) -> Tuple[bool, int, str]:
+        """Feed one frame's raw verdict; get the debounced one back."""
+        if detected == self._on:
+            self._streak = 0                     # agrees with current state, nothing to prove
+        else:
+            self._streak += 1
+            needed = self.on_frames if detected else self.off_frames
+            if self._streak >= needed:
+                self._on = detected
+                self._streak = 0
+                if detected:
+                    # Latch on at the observed severity rather than ramping from
+                    # 0 — a drop-off must be felt at full strength immediately,
+                    # not faded in over a third of a second.
+                    self._severity = float(severity)
+
+        if self._on:
+            if detected:
+                self._severity += self.alpha * (float(severity) - self._severity)
+                self._direction = direction
+        else:
+            self._severity = 0.0
+            self._direction = "none"
+
+        return self._on, int(round(self._severity)), self._direction
+
+    def reset(self) -> None:
+        """Clear state (e.g. after a pipeline rebuild or mode switch)."""
+        self._on = False
+        self._streak = 0
+        self._severity = 0.0
+        self._direction = "none"
 
 
 def detect_ground_hazard(
