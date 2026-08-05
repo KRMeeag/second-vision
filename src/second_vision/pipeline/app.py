@@ -411,9 +411,13 @@ class SecondVisionApp(GStreamerApp):
         if hasattr(user_data, "depth_frame_count"):
             user_data.depth_frame_count = 0
 
-        # NOTE for the depth owner: this is where DepthPostProcessor.reset() belongs
-        # once depth post-processing lands, so EMA-smoothed readings from the previous
-        # mode don't bleed into the first frames of the new one.
+        # Depth-side equivalent of the track_history clear above: drops the EMA
+        # history and the latched ground hazard, so neither the smoothed
+        # intensities nor an asserted drop-off from the mode that just went away
+        # carries into the first frames of the new one. Same getattr guard as the
+        # rest of this method — mock and standalone user_data don't have it.
+        if hasattr(user_data, "reset_depth_state"):
+            user_data.reset_depth_state()
 
         hailo_logger.info("Pipeline rebuilt — mode=%s, per-pipeline state reset", self.current_mode())
 
