@@ -6,10 +6,27 @@ import time
 
 # ============================================================
 # INTERFACE CONTRACT (do not change):
-#   Input:  user_data.serial_queue (dict with "left", "center", "right", optional "hazard")
+#   Input:  user_data.serial_queue — dict with FIVE always-present fields:
+#             left / center / right  int 0-255  MOTOR DUTY (see below)
+#             hazard                 bool       debounced + latched ground break
+#             hazard_severity        int 0-255  break SIZE; 0 when hazard is False
 #   Output: Binary packets to ESP32 via USB serial
 #   Config: config.motor_strength
+#
+#   The zone values arrive as PWM DUTY, already shaped by core/haptics.py — they
+#   are not perception scores for this worker to interpret. This worker is
+#   TRANSPORT: it must not add a curve, a floor or a threshold of its own.
+#
+#   Corrects an earlier version of this block that listed only four fields and
+#   called "hazard" optional while the code below indexed "hazard_severity"
+#   directly. The fields, types and ranges are unchanged; only the description
+#   was wrong.
 # ============================================================
+# CAUTION — config.motor_strength multiplies these duties on the way out (below),
+# which can push a shaped value back UNDER the motors' start threshold and undo
+# the PWM floor. Scaling belongs in the haptic stage, where the floor is known.
+# Left as-is for now: it is the existing behaviour and changing it is a UX
+# decision, not a transport one.
 
 def serial_worker(user_data, config):
     """Main serial writer loop."""

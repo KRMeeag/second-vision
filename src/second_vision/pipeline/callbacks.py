@@ -14,6 +14,20 @@ import time
 # INTERFACE CONTRACT (do not change):
 #   on_det_frame:   reads hailo detections → puts dict into tts_queue
 #   on_depth_frame: reads hailo depth mask → puts dict into serial_queue
+#
+#   serial_queue item (5 fields, all always present):
+#     left/center/right  int 0-255  MOTOR DUTY, not a perception score. Already
+#                                   deadbanded, quantized, floored above the
+#                                   motors' start threshold and pulse-gated by
+#                                   core/haptics.py. 0 means "hold still"; any
+#                                   non-zero value is meant to be felt.
+#     hazard             bool       ground break, debounced and LATCHED
+#     hazard_severity    int 0-255  break SIZE, not a distance — a different
+#                                   scale from the zone values, never compare
+#                                   the two. 0 whenever hazard is False.
+#
+#   Every exit path publishes. A frame is never silently skipped, because the
+#   ESP32 holds its last command for 3 s and a stale "clear" reads as open space.
 # ============================================================
 # Try importing hailo — in mock mode this won't be available
 
@@ -44,6 +58,11 @@ try:
         detect_ground_hazard,
         downsample_depth,
     )
+    # The perception -> motor-duty stage. Kept out of depth_utils.py because it
+    # answers a different question (what the wearer should FEEL, not what is in
+    # front of them) and out of serial_worker.py because it must stay testable
+    # without a serial port.
+    from second_vision.core.haptics import HapticMapper
     # Rendering lives in core/depth_view.py (no hardware deps) so the identical
     # view can be reproduced off-device from a captured .npy frame.
     from second_vision.core.depth_view import cv2_draw_depth
@@ -119,6 +138,15 @@ def on_depth_frame(element, buffer, user_data):
             _process_real_depth(buffer, user_data)
         except Exception as exc:
             _log_depth_error(exc)
+            # A swallowed exception must not also swallow the motors' last
+            # command. Whatever went wrong, we no longer know what is in front
+            # of the wearer, and the only defensible thing to keep vibrating for
+            # is nothing. Guarded because publishing must not be able to raise
+            # out of the exception handler and kill the pipeline after all.
+            try:
+                _publish_silence(user_data)
+            except Exception:
+                pass
     else:
         pass  # Mock mode — mock_depth_generator handles this
 
@@ -163,10 +191,12 @@ def _depth_view_worker(view_queue) -> None:
         except queue.Empty:
             continue
         try:
-            small, intensities, hazard, severity, direction, thin, fps = payload
+            (small, intensities, hazard, severity, direction, thin, fps,
+             motors, levels) = payload
             cv2.imshow(
                 "Depth Post-Processing",
-                cv2_draw_depth(small, intensities, hazard, severity, direction, thin, fps=fps),
+                cv2_draw_depth(small, intensities, hazard, severity, direction, thin,
+                               fps=fps, motors=motors, levels=levels),
             )
             cv2.waitKey(1)
         except Exception as exc:  # never let the viewer process die on one frame
@@ -234,6 +264,7 @@ if HAILO_AVAILABLE:
             # which is also the only safe moment to fork the viewer process.
             self.depth_processor = None
             self.hazard_debouncer = None
+            self.haptics = None
             self.depth_view_queue = None
             self.calibration = None
             self.capture = None
@@ -261,6 +292,10 @@ if HAILO_AVAILABLE:
             # is a separate signal from the zone intensities and is reset on the
             # same events but graded on its own timebase.
             self.hazard_debouncer = HazardDebouncer()
+            # Last stage before the queue: deadband, level quantization, PWM
+            # floor and the anti-habituation pulse. Everything upstream of it
+            # measures the scene; it alone decides what the motors do.
+            self.haptics = HapticMapper()
 
             calibrating = os.environ.get("SV_CALIBRATE") == "1"
 
@@ -313,11 +348,18 @@ if HAILO_AVAILABLE:
             wise stay asserted across the rebuild and need HAZARD_OFF_FRAMES of
             the new mode to clear — i.e. the device would warn about a drop-off
             belonging to a scene it is no longer looking at.
+
+            The haptic mapper is reset for both reasons at once: it holds a
+            per-zone level (hysteresis) and a per-zone clock (pulse phase), and
+            carrying either across a rebuild means the first frames of the new
+            scene are graded against a scene that is gone.
             """
             if self.depth_processor is not None:
                 self.depth_processor.reset()
             if self.hazard_debouncer is not None:
                 self.hazard_debouncer.reset()
+            if self.haptics is not None:
+                self.haptics.reset()
 
         def get_det_fps(self):
             elapsed = time.monotonic() - self.fps_start_time
@@ -611,10 +653,54 @@ def _draw_detection_overlay(element, buffer, user_data, active_zones: set, det_l
     user_data.set_frame(frame_bgr)
 
 
+def _publish_motors(user_data, motors, hazard=False, severity=0) -> None:
+    """
+    Put one frame of MOTOR DUTIES on serial_queue.
+
+    Drop-OLDEST on a full queue, not drop-newest. The queue is a real-time
+    stream of "what should the motors be doing right now", so when the consumer
+    falls behind, the frame worth keeping is the newest one — silently dropping
+    it (the previous behaviour) meant that under load the device was driven by
+    the stalest reading in the buffer rather than the freshest.
+    """
+    packet = {
+        "left":   motors["left"],
+        "center": motors["center"],
+        "right":  motors["right"],
+        "hazard": hazard,
+        "hazard_severity": severity,
+    }
+    try:
+        user_data.serial_queue.put_nowait(packet)
+    except queue.Full:
+        try:
+            user_data.serial_queue.get_nowait()
+            user_data.serial_queue.put_nowait(packet)
+        except (queue.Empty, queue.Full):
+            pass
+
+
+def _publish_silence(user_data) -> None:
+    """
+    Emit an explicit all-zero frame after a bail-out.
+
+    Every early return in the depth callback used to send NOTHING, which is not
+    the same as sending zero: the ESP32 holds its last commanded duty until the
+    3-second watchdog fires, so a dropped frame leaves the motors running on a
+    reading that may no longer be true. Both directions of that are bad, but the
+    dangerous one is a stale "clear" — the wearer feels nothing and infers open
+    space. Zeroing is the honest failure: it says "no information", and no
+    information is what we actually have.
+    """
+    if getattr(user_data, "haptics", None) is None:
+        return
+    _publish_motors(user_data, user_data.haptics.silence(time.monotonic()))
+
+
 def _process_real_depth(buffer, user_data):
     """
     Run the depth post-processing chain (core/depth_utils.py) on one frame and
-    publish the per-zone motor intensities to serial_queue.
+    publish per-zone MOTOR DUTIES to serial_queue.
 
         raw mask
           -> [SV_CAPTURE: dump the RAW frame to .npy]
@@ -623,12 +709,22 @@ def _process_real_depth(buffer, user_data):
           -> [SV_CALIBRATE: log raw stats and STOP — headless tuning mode]
           -> DepthPostProcessor.process(cropped, NATIVE resolution)
           -> detect_ground_hazard(small)
+          -> HapticMapper.shape()   (perception -> what the motors do)
           -> serial_queue + throttled preview payload
 
     The processor is deliberately handed the CROPPED but NOT downsampled map:
     its thin-structure pass (cables, poles, railings) has to see those before the
     64x48 decimation erases them. Everything downstream of it re-downsamples
     internally, so every other detector still sees the same `small` grid.
+
+    WHAT LEAVES THIS FUNCTION. The values on serial_queue are PWM duties, not
+    perception scores: post-deadband, quantized, floored at the motors' start
+    threshold and pulse-gated. `serial_worker.py` is transport and applies
+    `config.motor_strength`; nothing else between here and the ESP32 reinterprets
+    them. The distinction matters because a zone perceiving 60 and driving 0 is
+    correct behaviour here, not a lost signal.
+
+    Every exit path emits a frame. See _publish_silence().
     """
     # Count every delivered frame, including ones we bail on below, so
     # get_depth_fps() reports what the pipeline is actually delivering.
@@ -639,6 +735,7 @@ def _process_real_depth(buffer, user_data):
     depth_masks = roi.get_objects_typed(hailo.HAILO_DEPTH_MASK)
 
     if not depth_masks:
+        _publish_silence(user_data)
         return
 
     mask = depth_masks[0]
@@ -651,6 +748,7 @@ def _process_real_depth(buffer, user_data):
     if depth_data.ndim != 2:
         if frame_count % DEPTH_LOG_EVERY == 0:
             print(f"[DEPTH] Frame {frame_count} | unusable mask shape {depth_data.shape} — skipped")
+        _publish_silence(user_data)
         return
 
     # Capture the RAW frame before crop/downsample, so the corpus holds exactly
@@ -664,7 +762,11 @@ def _process_real_depth(buffer, user_data):
     if user_data.calibration is not None:
         # Calibration mode measures the model's raw output; running the detectors
         # here would only measure the placeholder thresholds we are trying to set.
+        # Still emit zeros: calibration is a bench mode, the motors should be
+        # still, and an explicit zero says so rather than leaving the board to
+        # time out into it.
         user_data.calibration.log(small, frame_count)
+        _publish_silence(user_data)
         return
 
     intensities = user_data.depth_processor.process(depth_data)
@@ -677,21 +779,17 @@ def _process_real_depth(buffer, user_data):
         *detect_ground_hazard(small, small.shape[0])
     )
 
+    # Perception -> what the wearer feels. Everything above this line measures
+    # the scene; this line decides the device's behaviour, and it is the only
+    # place that knows about deadbands, motor start thresholds or habituation.
+    motors = user_data.haptics.shape(intensities, time.monotonic())
+
     # Haptics first, preview second — the device output must not queue behind a
     # display frame. Note the serial contract carries severity but no direction
     # field: "down" (drop-off) and "up" (step-up) currently reach the motors as
     # the same alert. That is an open question for the depth + firmware owners
     # (ARCHITECTURE.md "Depth Processing"), so nothing is invented here.
-    try:
-        user_data.serial_queue.put_nowait({
-            "left":   intensities["left"],
-            "center": intensities["center"],
-            "right":  intensities["right"],
-            "hazard": hazard,
-            "hazard_severity": severity,
-        })
-    except queue.Full:
-        pass
+    _publish_motors(user_data, motors, hazard, severity)
 
     # The thin readings ride along so the HUD tags what the MOTORS actually got,
     # rather than a weaker value the display process would recompute from 64x48.
@@ -705,14 +803,25 @@ def _process_real_depth(buffer, user_data):
                 small, intensities, hazard, severity, direction,
                 user_data.depth_processor.last_thin,
                 user_data.get_depth_fps(),
+                # The duties and levels this exact frame produced. Recomputing
+                # them in the viewer is not an option: the mapper is stateful
+                # (hysteresis, pulse phase), so a second instance fed the same
+                # numbers would drift out of step with the real one and the HUD
+                # would quietly stop describing the device.
+                motors, dict(user_data.haptics.last_levels),
             ))
         except queue.Full:
             pass  # viewer busy — drop the frame, never stall the streaming thread
 
     if frame_count % DEPTH_LOG_EVERY == 0:
         d_lo, d_med, d_hi = np.percentile(small, [1, 50, 99])
+        # Both rows on purpose: perception (what was seen) and motor (what the
+        # wearer got). They are allowed to disagree, and when the device "does
+        # nothing" the only way to tell a dead detector from a working deadband
+        # is to see the pair side by side.
         print(f"[DEPTH] Frame {frame_count} | "
               f"L={intensities['left']} C={intensities['center']} R={intensities['right']} | "
+              f"motor L={motors['left']} C={motors['center']} R={motors['right']} | "
               f"Hazard: {hazard} ({direction}, sev {severity}) | "
               f"raw p1/p50/p99: {d_lo:.2f}/{d_med:.2f}/{d_hi:.2f} | "
               f"{user_data.get_depth_fps():.1f} FPS")
