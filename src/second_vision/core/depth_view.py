@@ -116,7 +116,7 @@ def draw_depth_fps(frame, fps, view_w=VIEW_W):
 
 
 def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="none",
-                   thin=None, fps=None):
+                   thin=None, fps=None, motors=None, levels=None):
     """
     Render the post-processing state as a BGR image: colorized depth map
     (hot = close), zone dividers, optional sub-grid overlay, per-zone intensity
@@ -126,6 +126,15 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
 
     `fps` is optional so off-device replay tools, which have no frame rate to
     report, can call this unchanged — the counter is simply omitted then.
+
+    `motors` / `levels` are the post-haptics duty and level per zone (see
+    core/haptics.py). They are drawn as a second line under each zone because
+    they are the only numbers on this display the WEARER actually experiences:
+    `intensities` is what the detectors perceived, and after the deadband,
+    quantizer and PWM floor the two routinely disagree — a zone can read a
+    healthy 60 and correctly drive nothing at all. Debugging the device off the
+    perception numbers alone means debugging something nobody feels. Both are
+    optional so replay tools that only have a depth frame still work.
 
     NOTE: this used to also draw a cyan contour around every pixel the
     thin-structure detector fired on. It was removed on field evidence: the
@@ -205,13 +214,27 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
             active += "W"
         if p["f2w"] > 0.01:
             active += "F"
-        cv2.putText(frame, f"{zone[0].upper()}={val} [{active or '-'}]", (x0 + 8, view_h - 30),
+        cv2.putText(frame, f"{zone[0].upper()}={val} [{active or '-'}]", (x0 + 8, view_h - 48),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         cv2.putText(frame,
                     f"t{p['thin']:.2f} s{p['sub']:.2f} w{p['wall']:.2f} f{p['f2w']:.2f} "
                     f"cov{bd['coverage']:.0%}",
-                    (x0 + 8, view_h - 10),
+                    (x0 + 8, view_h - 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, (230, 230, 230), 1, cv2.LINE_AA)
+
+        # What the motor is actually doing. Green when driving, grey when the
+        # haptic stage deliberately silenced a non-zero perception — the second
+        # case is the one worth being able to see at a glance, because from the
+        # outside it is indistinguishable from a detector that failed.
+        if motors is not None:
+            duty = motors.get(zone, 0)
+            lvl = None if levels is None else levels.get(zone)
+            tag = f"MOTOR {duty}" + ("" if lvl is None else f"  L{lvl}")
+            if duty == 0 and val > 0:
+                tag += "  (silenced)"
+            cv2.putText(frame, tag, (x0 + 8, view_h - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        (0, 255, 0) if duty > 0 else (170, 170, 170), 1, cv2.LINE_AA)
 
     # Raw depth stats — the numbers needed to calibrate MIN/MAX_DEPTH_M
     cv2.putText(frame, f"depth p1/p50/p99: {d_lo:.2f} / {d_med:.2f} / {d_hi:.2f}",
