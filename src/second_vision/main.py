@@ -2,9 +2,14 @@
 Second Vision — Main Entry Point
 
 Usage:
-  python3 src/second_vision/main.py --input usb                    # Real pipeline, stub consumers
+  python3 src/second_vision/main.py --input usb                    # Real pipeline, no board attached
   python3 src/second_vision/main.py --mock                         # Full mock mode (no hardware)
-  python3 src/second_vision/main.py --input usb --serial-port /dev/ttyUSB0  # Real serial
+  python3 src/second_vision/main.py --input usb --serial-port /dev/ttyUSB0   # ESP32 over USB
+  python3 src/second_vision/main.py --input usb --serial-port /dev/serial0   # ESP32 on the GPIO pins
+
+Omit --serial-port to run with no ESP32: everything is still computed and
+packed, it just isn't written anywhere. Opening a port needs membership of the
+`dialout` group (check with `groups`); a re-login is required after adding it.
 """
 
 import os
@@ -79,11 +84,28 @@ def main():
     # Minimal parser for mock mode (full parser comes from pipeline app in real mode)
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--mock", action="store_true", help="Run in full mock mode (no hardware)")
+    # Parsed HERE rather than in the pipeline app's parser because the serial
+    # worker starts before the pipeline is built, and mock mode never builds one
+    # at all — so this is the only place both paths pass through. parse_known_args
+    # leaves everything else in `remaining` for the pipeline parser.
+    pre_parser.add_argument(
+        "--serial-port", default=None, metavar="DEV",
+        help="Serial device for the ESP32, e.g. /dev/ttyUSB0 (USB) or "
+             "/dev/serial0 (GPIO pins). Omit to run with no board attached.",
+    )
+    pre_parser.add_argument(
+        "--serial-baud", type=int, default=None, metavar="RATE",
+        help="Serial baud rate (default 115200; must match the ESP32 firmware)",
+    )
     pre_args, remaining = pre_parser.parse_known_args()
-    
+
     # 1. Shared config
     config = SystemConfig()
-    
+    if pre_args.serial_port:
+        config.update(serial_port=pre_args.serial_port)
+    if pre_args.serial_baud:
+        config.update(serial_baudrate=pre_args.serial_baud)
+
     # 2. Shared user data
     user_data = SecondVisionUserData(config)
     
@@ -153,7 +175,13 @@ def _run_mock_mode(user_data, config, workers):
 def _run_pipeline_mode(user_data, config, workers, cli_args):
     """Run the real GStreamer pipeline."""
     from second_vision.pipeline.app import SecondVisionApp
-    
+
+    # SecondVisionApp builds its own parser and reads sys.argv directly, so the
+    # flags main() already consumed (--mock, --serial-port, --serial-baud) would
+    # reach it as unrecognized arguments and abort the run. cli_args is exactly
+    # what parse_known_args left over, so hand the app that and nothing else.
+    sys.argv = [sys.argv[0]] + list(cli_args)
+
     app = SecondVisionApp(
         app_callback=None,
         user_data=user_data,
