@@ -29,6 +29,16 @@ READ_TIMEOUT_SECONDS = 0.01
 # couple us to a detail neither side agreed to.
 ACK_PREFIX = bytes([0xAA, 0xFF])
 
+# The ESP32 zeroes the motors after 3 s without traffic. Send something every
+# second so two heartbeats can be lost — to a dropped write, a busy loop, a
+# scheduling hiccup — before the wearer feels the device cut out. Raising this
+# past ~1.5 s removes that margin; lowering it just spends bandwidth.
+HEARTBEAT_INTERVAL_SECONDS = 1.0
+# How long the loop parks waiting for a depth frame. Must stay comfortably
+# under HEARTBEAT_INTERVAL_SECONDS: the loop can only notice a heartbeat is due
+# once this returns, so a longer poll would cap how promptly one can be sent.
+QUEUE_POLL_SECONDS = 0.25
+
 # A broken link fails every frame, i.e. ~30 times a second. Without throttling,
 # one unplugged cable buries the depth log — which is exactly the log you need
 # in order to notice the cable.
@@ -70,20 +80,46 @@ def _log_serial_error(message: str) -> None:
 # decision, not a transport one.
 
 def serial_worker(user_data, config):
-    """Main serial writer loop."""
+    """
+    Main serial writer loop.
+
+    Two invariants this loop exists to hold, beyond forwarding packets:
+
+      1. The link is never quiet for longer than HEARTBEAT_INTERVAL_SECONDS, no
+         matter WHY there was nothing to say. Anything else lets the ESP32's
+         watchdog zero the motors mid-use, which reads as a broken device.
+      2. When the motors should not be running, that is said explicitly. Not
+         sending is not the same as sending zero — the board holds its last
+         command, so silence leaves the motors exactly where they were.
+    """
     port = _open_serial_port(config)
     ack_failures = 0
+    # Seeded to now, not 0.0: at 0.0 the loop would fire a heartbeat on its very
+    # first iteration, before anything has had a chance to need one.
+    last_write_at = time.monotonic()
+    vibration_was_enabled = True
 
     while not user_data.shutdown_event.is_set():
         try:
-            depth = user_data.serial_queue.get(timeout=1.0)
+            depth = user_data.serial_queue.get(timeout=QUEUE_POLL_SECONDS)
         except queue.Empty:
-            # Send heartbeat during idle
-            _send_heartbeat(port)
+            last_write_at = _heartbeat_if_due(port, last_write_at)
             continue
 
         if not config.get("vibration_enabled"):
+            # Say "stop" once, then fall back to heartbeats. Previously this
+            # path just `continue`d, which was survivable only because the
+            # watchdog eventually zeroed the motors for us — and now that the
+            # heartbeat keeps that watchdog fed, nothing would ever stop them.
+            # Turning vibration off would have left the motors running forever.
+            if vibration_was_enabled:
+                _send_packet(port, _pack_motor_update(0, 0, 0))
+                last_write_at = time.monotonic()
+                vibration_was_enabled = False
+            last_write_at = _heartbeat_if_due(port, last_write_at)
             continue
+
+        vibration_was_enabled = True
 
         # Apply motor strength multiplier
         strength = config.get("motor_strength")
@@ -94,6 +130,9 @@ def serial_worker(user_data, config):
         # Send motor update
         packet = _pack_motor_update(left, center, right)
         _send_packet(port, packet)
+        # Any packet resets the ESP32's watchdog, so a steady frame rate means
+        # heartbeats are never needed — they exist for the gaps, not the flow.
+        last_write_at = time.monotonic()
 
         # Check for hazard
         if depth.get("hazard"):
@@ -237,6 +276,24 @@ def _send_heartbeat(port) -> bool:
     correct behaviour for a dead Pi and the wrong behaviour for an idle one.
     """
     return _send_packet(port, _pack_heartbeat())
+
+
+def _heartbeat_if_due(port, last_write_at: float) -> float:
+    """
+    Send a heartbeat if the link has been quiet too long. Returns the timestamp
+    of the most recent write, for the caller to carry forward.
+
+    Driven by TIME SINCE THE LAST WRITE rather than by "the queue was empty",
+    because the watchdog does not care why we went quiet. Idle depth, vibration
+    switched off, a run of dropped writes and a stalled producer all look
+    identical to the ESP32, and only some of them used to reach the old
+    queue-empty branch.
+    """
+    now = time.monotonic()
+    if now - last_write_at < HEARTBEAT_INTERVAL_SECONDS:
+        return last_write_at
+    _send_heartbeat(port)
+    return now
 
 
 def _check_ack(port) -> bool:
