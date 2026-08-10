@@ -18,6 +18,7 @@ pipeline has to keep working on development machines with no hardware attached.
 """
 
 import os
+import select
 import time
 import sys
 from pathlib import Path
@@ -252,6 +253,11 @@ def write_to_port(controller, data):
     time.sleep(0.05)  # let the tty deliver before we poll in_waiting
 
 
+def select_readable(fd, timeout=0.1):
+    """True if anything is waiting to be read on the far end of the pty."""
+    return bool(select.select([fd], [], [], timeout)[0])
+
+
 def test_ack_is_recognized(pty_port):
     path, controller = pty_port
     port = sw._open_serial_port(config_with(serial_port=path))
@@ -334,6 +340,49 @@ def test_check_ack_reports_failure_without_raising():
             raise OSError("device went away")
 
     assert sw._check_ack(Exploding()) is False
+
+
+# --- heartbeat timing ------------------------------------------------------
+
+def test_heartbeat_waits_until_it_is_due(pty_port):
+    path, controller = pty_port
+    port = sw._open_serial_port(config_with(serial_port=path))
+    try:
+        now = time.monotonic()
+        assert sw._heartbeat_if_due(port, now) == now  # too soon; timestamp unchanged
+        port.flush()
+        assert not select_readable(controller), "sent a heartbeat that was not due"
+    finally:
+        sw._close_port(port)
+
+
+def test_heartbeat_fires_once_overdue(pty_port):
+    path, controller = pty_port
+    port = sw._open_serial_port(config_with(serial_port=path))
+    try:
+        stale = time.monotonic() - sw.HEARTBEAT_INTERVAL_SECONDS - 0.1
+        assert sw._heartbeat_if_due(port, stale) > stale  # timestamp advanced
+        port.flush()
+        assert os.read(controller, 3) == sw._pack_heartbeat()
+    finally:
+        sw._close_port(port)
+
+
+def test_heartbeat_interval_leaves_watchdog_margin():
+    """
+    The ESP32 zeroes the motors after 3 s of silence. The interval has to leave
+    room for at least one lost heartbeat, or a single dropped write is felt as
+    the device cutting out.
+    """
+    assert sw.HEARTBEAT_INTERVAL_SECONDS <= 1.5
+
+
+def test_queue_poll_is_shorter_than_the_heartbeat_interval():
+    """
+    The loop can only notice a heartbeat is due once the queue poll returns, so
+    a poll longer than the interval would cap how promptly one goes out.
+    """
+    assert sw.QUEUE_POLL_SECONDS < sw.HEARTBEAT_INTERVAL_SECONDS
 
 
 def test_stale_boot_chatter_is_flushed_at_open(pty_port):
