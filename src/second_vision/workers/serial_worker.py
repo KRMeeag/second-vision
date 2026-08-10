@@ -1,8 +1,28 @@
 """Serial Worker — Consumes depth data, sends motor commands to ESP32."""
 
+import errno
 import queue
 import struct
 import time
+
+# Guarded like every other optional dependency in this project: a missing
+# pyserial must degrade to "no board attached", not take the whole pipeline
+# down. The depth and haptics work runs on machines with no ESP32 and
+# sometimes no pyserial at all.
+try:
+    import serial
+    PYSERIAL_AVAILABLE = True
+except ImportError:  # pragma: no cover — exercised only on machines without pyserial
+    PYSERIAL_AVAILABLE = False
+
+# Writes must not be able to wedge the worker thread. If the ESP32 stops
+# draining its buffer the kernel's TX queue fills, and a blocking write() would
+# park this thread forever — the motors would then hold their last command with
+# nothing left running to correct it. A short timeout turns that into a dropped
+# packet, which the next frame replaces anyway.
+WRITE_TIMEOUT_SECONDS = 0.05
+# Reads are polled from the same loop, so they must never block either.
+READ_TIMEOUT_SECONDS = 0.01
 
 # ============================================================
 # INTERFACE CONTRACT (do not change):
@@ -90,18 +110,68 @@ def _pack_heartbeat() -> bytes:
     msg_type = 0xFE
     return struct.pack("BBB", 0xAA, msg_type, msg_type) # checksum = type XOR nothing =type
 
-# ==================== STUBS BELOW ====================
-# Replace these with real pyserial implementation
-
 def _open_serial_port(config):
     """
-    STUB — Replace with:
-        import serial
-        return serial.Serial(port_path, baudrate=115200, timeout=0.01)
+    Open the ESP32 link, or return None to run without a board.
+
+    None is a supported outcome, not a failure path: no --serial-port given, no
+    pyserial installed, device absent, or permission denied all end up here and
+    all leave the rest of the pipeline running normally. The alternative —
+    refusing to start — would mean depth work could not be run on any machine
+    without the hardware plugged in.
+
+    Every None return prints WHY once at startup, with the fix where there is
+    one. A device that silently does nothing is the single most expensive
+    failure mode this project keeps hitting.
     """
-    print("[SERIAL STUB] 📡 Port opened (mock)")
-    return None
-    
+    port_path = config.get("serial_port")
+    if not port_path:
+        print("[SERIAL] No --serial-port given — running without an ESP32 "
+              "(packets are built but not sent)")
+        return None
+
+    if not PYSERIAL_AVAILABLE:
+        print(f"[SERIAL] pyserial not installed — cannot open {port_path}. "
+              "Fix: pip install pyserial")
+        return None
+
+    baudrate = config.get("serial_baudrate") or 115200
+    try:
+        port = serial.Serial(
+            port_path,
+            baudrate=baudrate,
+            timeout=READ_TIMEOUT_SECONDS,
+            write_timeout=WRITE_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        # Dispatch on errno, NOT on exception type. pyserial catches the OSError
+        # the kernel raised and re-raises its own SerialException, so `except
+        # PermissionError` never fires here — it only looks like it would. The
+        # errno survives the re-wrap, so that is what we read.
+        code = getattr(exc, "errno", None)
+        if code == errno.EACCES:
+            # Overwhelmingly the most common first-run failure on the Pi, and
+            # the fix is non-obvious: adding the group is not enough on its own.
+            print(f"[SERIAL] Permission denied opening {port_path} — running without an ESP32. "
+                  "Fix: sudo usermod -aG dialout $USER, then LOG OUT and back in "
+                  "(check with `groups`)")
+        elif code == errno.ENOENT:
+            print(f"[SERIAL] {port_path} does not exist — running without an ESP32. "
+                  "Check the cable, or `ls /dev/tty*` to find the right device")
+        else:
+            # Anything else the driver throws. Caught broadly on purpose: no
+            # serial-port problem is worth killing a running pipeline over.
+            print(f"[SERIAL] Could not open {port_path} ({exc!r}) — running without an ESP32")
+        return None
+
+    print(f"[SERIAL] Connected to ESP32 on {port_path} at {baudrate} baud")
+    return port
+
+
+# ==================== STUBS BELOW ====================
+# Still to do: the send and ACK paths. Opening and closing the port is real
+# (above); nothing yet writes to it.
+
 def _send_packet(port, packet: bytes):
     """
     STUB — Replace with:
@@ -128,11 +198,19 @@ def _check_ack(port) -> bool:
 
 def _close_port(port):
     """
-    STUB — Replace with:
-        if port:
-            port.close()
+    Close the port on shutdown. Safe to call with None, and safe to call twice.
+
+    Guarded because this runs during teardown, where an unhandled exception is
+    both useless (we are exiting anyway) and actively harmful — it would skip
+    the rest of shutdown and leave the device holding whatever it was last told.
     """
-    print("[SERIAL STUB] 📡 Port closed (mock)")
+    if port is None:
+        return
+    try:
+        port.close()
+        print("[SERIAL] Port closed")
+    except Exception as exc:
+        print(f"[SERIAL] Error closing port: {exc!r}")
 
 
 
