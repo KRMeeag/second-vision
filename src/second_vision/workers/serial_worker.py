@@ -24,6 +24,27 @@ WRITE_TIMEOUT_SECONDS = 0.05
 # Reads are polled from the same loop, so they must never block either.
 READ_TIMEOUT_SECONDS = 0.01
 
+# The firmware's acknowledgement, 0xAA 0xFF <byte>. Only the two-byte prefix is
+# matched — the third byte is the firmware's business, and pinning it here would
+# couple us to a detail neither side agreed to.
+ACK_PREFIX = bytes([0xAA, 0xFF])
+
+# A broken link fails every frame, i.e. ~30 times a second. Without throttling,
+# one unplugged cable buries the depth log — which is exactly the log you need
+# in order to notice the cable.
+SERIAL_ERROR_LOG_SECONDS = 5.0
+_last_serial_error_at = 0.0
+
+
+def _log_serial_error(message: str) -> None:
+    """Report a link failure at most once every SERIAL_ERROR_LOG_SECONDS."""
+    global _last_serial_error_at
+    now = time.monotonic()
+    if now - _last_serial_error_at < SERIAL_ERROR_LOG_SECONDS:
+        return
+    _last_serial_error_at = now
+    print(f"[SERIAL] {message} (throttled)")
+
 # ============================================================
 # INTERFACE CONTRACT (do not change):
 #   Input:  user_data.serial_queue — dict with FIVE always-present fields:
@@ -86,8 +107,11 @@ def serial_worker(user_data, config):
         else:
             ack_failures += 1
             if ack_failures > 5:
-                # TODO: To be changed for graceful handling of failed ESP32
-                print("[SERIAL STUB] 5 Consecutive ACK Failures")
+                # TODO: still only reports. The owned decision (see the V1 depth
+                # handoff) is to zero the motors and go quiet on a dead link —
+                # a device sending into a cable nobody is listening to is worse
+                # than one that stops. Not yet implemented.
+                _log_serial_error("5 consecutive ACK failures — ESP32 may be unresponsive")
                 ack_failures = 0
 
     _close_port(port)
@@ -164,37 +188,92 @@ def _open_serial_port(config):
             print(f"[SERIAL] Could not open {port_path} ({exc!r}) — running without an ESP32")
         return None
 
+    # Drop whatever was already sitting in the buffers. Opening the port resets
+    # most ESP32 boards, so the first thing waiting to be read is usually its
+    # boot chatter — and _check_ack() scans for a byte pair rather than reading
+    # fixed-size frames, so leftover noise could read as an acknowledgement of a
+    # packet this process never sent.
+    try:
+        port.reset_input_buffer()
+        port.reset_output_buffer()
+    except Exception as exc:  # non-fatal: a usable port with a dirty buffer
+        print(f"[SERIAL] Could not flush buffers on {port_path}: {exc!r}")
+
     print(f"[SERIAL] Connected to ESP32 on {port_path} at {baudrate} baud")
     return port
 
 
-# ==================== STUBS BELOW ====================
-# Still to do: the send and ACK paths. Opening and closing the port is real
-# (above); nothing yet writes to it.
-
-def _send_packet(port, packet: bytes):
+def _send_packet(port, packet: bytes) -> bool:
     """
-    STUB — Replace with:
-        if port:
-            port.write(packet)
-    """
-    hex_str = packet.hex(" ")
-    # print(f"[SERIAL STUB] → {hex_str}")
+    Write one packet. Returns True if it went out.
 
-def _send_heartbeat(port):
-    """STUB — sends heartbeat packet."""
-    # Don't print heartbeats to avoid console spam
-    pass
+    A None port is not a failure — it is the documented no-board mode, and it
+    returns True so the ACK bookkeeping upstream does not start counting
+    failures on a link that was never supposed to exist.
+
+    Nothing here retries. These packets are a real-time stream: another motor
+    frame is ~33 ms behind this one and describes the world better, so
+    re-sending a stale command is strictly worse than dropping it.
+    """
+    if port is None:
+        return True
+    try:
+        port.write(packet)
+        return True
+    except Exception as exc:
+        # SerialTimeoutException (the ESP32 stopped draining its buffer) plus
+        # anything else the driver raises — an unplugged adapter surfaces here
+        # as an OSError mid-write. Never raises into the worker loop: dropping
+        # this frame keeps the next one coming.
+        _log_serial_error(f"write failed: {exc!r}")
+        return False
+
+
+def _send_heartbeat(port) -> bool:
+    """
+    Tell the ESP32 we are still alive.
+
+    Its watchdog zeroes the motors after 3 s without traffic, which is the
+    correct behaviour for a dead Pi and the wrong behaviour for an idle one.
+    """
+    return _send_packet(port, _pack_heartbeat())
+
 
 def _check_ack(port) -> bool:
     """
-    STUB — Replace with:
-        if port and port.in_waiting >= 3:
-            data = port.read(3)
-            return data[0] == 0xAA and data[1] == 0xFF
-        return False
+    Has the ESP32 acknowledged anything since the last check?
+
+    An ACK is 0xAA 0xFF <byte>. Rather than reading a fixed 3 bytes, this drains
+    whatever has arrived and SCANS it for the 0xAA 0xFF pair, because a fixed
+    read cannot recover from a desync: one spurious byte on the line — a boot
+    message, line noise, a debug print from the firmware — would shift every
+    subsequent read by one and turn a healthy link into a permanent stream of
+    ACK failures. Scanning resynchronizes on its own.
+
+    Bytes that arrive split across two calls are handled by carrying a short
+    remainder on the port object, so an ACK straddling a read boundary is still
+    seen. The buffer is capped: this is a liveness check, not a message queue,
+    and unbounded growth on a chatty board would be a slow leak.
+
+    A None port returns True — no link, so no link to have lost.
     """
-    return True  # Pretend we always get ACK
+    if port is None:
+        return True
+    try:
+        waiting = port.in_waiting
+        chunk = port.read(waiting) if waiting else b""
+    except Exception as exc:
+        _log_serial_error(f"read failed: {exc!r}")
+        return False
+
+    if not chunk:
+        return False
+
+    buffered = getattr(port, "_sv_ack_tail", b"") + chunk
+    found = ACK_PREFIX in buffered
+    # Keep only what could still be the front of a split ACK.
+    port._sv_ack_tail = buffered[-(len(ACK_PREFIX) - 1):]
+    return found
 
 def _close_port(port):
     """
