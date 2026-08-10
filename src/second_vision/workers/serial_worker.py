@@ -39,6 +39,15 @@ HEARTBEAT_INTERVAL_SECONDS = 1.0
 # once this returns, so a longer poll would cap how promptly one can be sent.
 QUEUE_POLL_SECONDS = 0.25
 
+# How long without any acknowledgement before the ESP32 is treated as gone.
+# Measured in TIME, not in consecutive failed checks: ACKs are asynchronous, so
+# a healthy board routinely has not replied yet at the instant we look, and at
+# 30 FPS "5 failures in a row" is a third of a second — well inside normal
+# round-trip jitter. Counting checks would have declared a working link dead.
+# 2.5 s spans two missed heartbeats while still reacting inside the 3 s the
+# board itself would take to notice us.
+ACK_TIMEOUT_SECONDS = 2.5
+
 # A broken link fails every frame, i.e. ~30 times a second. Without throttling,
 # one unplugged cable buries the depth log — which is exactly the log you need
 # in order to notice the cable.
@@ -91,15 +100,31 @@ def serial_worker(user_data, config):
       2. When the motors should not be running, that is said explicitly. Not
          sending is not the same as sending zero — the board holds its last
          command, so silence leaves the motors exactly where they were.
+      3. If the board stops answering, the motors stop. Continuing to stream
+         commands at something that is not listening produces a device the
+         wearer still trusts and which is no longer telling them anything.
     """
     port = _open_serial_port(config)
-    ack_failures = 0
+    link = LinkHealth()
     # Seeded to now, not 0.0: at 0.0 the loop would fire a heartbeat on its very
     # first iteration, before anything has had a chance to need one.
     last_write_at = time.monotonic()
     vibration_was_enabled = True
 
     while not user_data.shutdown_event.is_set():
+        # Link health is judged EVERY iteration, not only on frames we send.
+        # Heartbeats are acknowledged too, so during an idle stretch they are
+        # the only evidence the board is alive — checking solely after a motor
+        # update would declare a perfectly healthy idle link dead.
+        transition = link.update(_check_ack(port), time.monotonic())
+        if transition == "down":
+            print("[SERIAL] ESP32 stopped acknowledging — motors stopped. "
+                  "Check power and cable; will resume automatically if it answers")
+            _send_packet(port, _pack_motor_update(0, 0, 0))
+            last_write_at = time.monotonic()
+        elif transition == "up":
+            print("[SERIAL] ESP32 responding again — resuming motor updates")
+
         try:
             depth = user_data.serial_queue.get(timeout=QUEUE_POLL_SECONDS)
         except queue.Empty:
@@ -121,6 +146,14 @@ def serial_worker(user_data, config):
 
         vibration_was_enabled = True
 
+        if link.down:
+            # Keep heartbeating rather than going fully silent. The heartbeat
+            # doubles as the probe that detects recovery — stop sending
+            # entirely and there is nothing left for the board to answer, so a
+            # link that came back would never be noticed.
+            last_write_at = _heartbeat_if_due(port, last_write_at)
+            continue
+
         # Apply motor strength multiplier
         strength = config.get("motor_strength")
         left    = min(255, int(depth["left"] * strength))
@@ -139,20 +172,14 @@ def serial_worker(user_data, config):
             hazard_pkt = _pack_hazard_alert(depth["hazard_severity"])
             _send_packet(port, hazard_pkt)
 
-        # Non-blocking ACK check
-        ack = _check_ack(port)
-        if ack:
-            ack_failures = 0
-        else:
-            ack_failures += 1
-            if ack_failures > 5:
-                # TODO: still only reports. The owned decision (see the V1 depth
-                # handoff) is to zero the motors and go quiet on a dead link —
-                # a device sending into a cable nobody is listening to is worse
-                # than one that stops. Not yet implemented.
-                _log_serial_error("5 consecutive ACK failures — ESP32 may be unresponsive")
-                ack_failures = 0
+        # The ACK for this packet is read at the TOP of the next iteration, not
+        # here. The board cannot have replied yet — checking immediately after
+        # writing measures the round trip, not the link.
 
+    # Leave the motors off rather than wherever the last frame put them. A
+    # process that exits mid-warning would otherwise leave the wearer with a
+    # vibration that never resolves, until the watchdog happens to clear it.
+    _send_packet(port, _pack_motor_update(0, 0, 0))
     _close_port(port)
 
 def _pack_motor_update(left, center, right) -> bytes:
@@ -276,6 +303,51 @@ def _send_heartbeat(port) -> bool:
     correct behaviour for a dead Pi and the wrong behaviour for an idle one.
     """
     return _send_packet(port, _pack_heartbeat())
+
+
+class LinkHealth:
+    """
+    Is the ESP32 still answering?
+
+    Separated from the worker loop so the policy can be tested by handing it
+    timestamps, with no port, no board and no sleeping.
+
+    update() reports only TRANSITIONS, because the actions taken on a link
+    going down or coming back are one-shot: driving them off the steady state
+    would re-send the stop packet every frame and log it forever.
+    """
+
+    def __init__(self, timeout: float = ACK_TIMEOUT_SECONDS):
+        self.timeout = timeout
+        self.down = False
+        self._last_ack_at = None
+
+    def update(self, ack_seen: bool, now: float):
+        """
+        Feed one observation. Returns "down" or "up" on a change, else None.
+
+        The first call seeds the clock rather than treating "no ACK yet" as a
+        failure: at startup nothing has been sent, so there is nothing for the
+        board to have acknowledged.
+        """
+        if self._last_ack_at is None:
+            self._last_ack_at = now
+
+        if ack_seen:
+            self._last_ack_at = now
+            if self.down:
+                self.down = False
+                return "up"
+            return None
+
+        if not self.down and now - self._last_ack_at > self.timeout:
+            self.down = True
+            return "down"
+        return None
+
+    def reset(self) -> None:
+        self.down = False
+        self._last_ack_at = None
 
 
 def _heartbeat_if_due(port, last_write_at: float) -> float:
