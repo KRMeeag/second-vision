@@ -342,6 +342,91 @@ def test_check_ack_reports_failure_without_raising():
     assert sw._check_ack(Exploding()) is False
 
 
+# --- link health / ACK-failure policy --------------------------------------
+
+def test_link_starts_up():
+    assert sw.LinkHealth().down is False
+
+
+def test_startup_silence_is_not_a_dead_link():
+    """
+    Nothing has been sent yet at t=0, so there is nothing for the board to have
+    acknowledged. Treating that as a failure would declare every run dead
+    before it began.
+    """
+    link = sw.LinkHealth()
+    assert link.update(False, 0.0) is None
+    assert link.down is False
+
+
+def test_link_goes_down_after_the_timeout():
+    link = sw.LinkHealth()
+    link.update(True, 0.0)
+    assert link.update(False, sw.ACK_TIMEOUT_SECONDS + 0.1) == "down"
+    assert link.down is True
+
+
+def test_link_survives_normal_ack_latency():
+    """
+    The regression this policy replaces. ACKs are asynchronous, so at 30 FPS a
+    healthy board routinely has not replied at the instant we look. The old
+    counter declared a dead link after 5 such checks — a third of a second,
+    well inside normal jitter.
+    """
+    link = sw.LinkHealth()
+    link.update(True, 0.0)
+    for i in range(1, 30):          # ~1 s of frames with no reply yet
+        assert link.update(False, i / 30.0) is None
+    assert link.down is False
+
+
+def test_transitions_are_reported_once_not_every_frame():
+    """
+    Both actions are one-shot — sending the stop packet and logging. Driving
+    them off the steady state would re-send and re-log on every frame.
+    """
+    link = sw.LinkHealth()
+    link.update(True, 0.0)
+    assert link.update(False, sw.ACK_TIMEOUT_SECONDS + 0.1) == "down"
+    for i in range(10):
+        assert link.update(False, sw.ACK_TIMEOUT_SECONDS + 0.2 + i) is None
+
+
+def test_link_recovers_when_the_board_answers_again():
+    link = sw.LinkHealth()
+    link.update(True, 0.0)
+    link.update(False, sw.ACK_TIMEOUT_SECONDS + 0.1)
+    assert link.update(True, sw.ACK_TIMEOUT_SECONDS + 0.2) == "up"
+    assert link.down is False
+
+
+def test_recovery_is_also_reported_once():
+    link = sw.LinkHealth()
+    link.update(True, 0.0)
+    link.update(False, sw.ACK_TIMEOUT_SECONDS + 0.1)
+    link.update(True, sw.ACK_TIMEOUT_SECONDS + 0.2)
+    assert link.update(True, sw.ACK_TIMEOUT_SECONDS + 0.3) is None
+
+
+def test_no_board_mode_never_reports_a_dead_link():
+    """
+    _check_ack(None) reports success, so running without an ESP32 must not
+    trip the policy — otherwise every development run would log a dead link.
+    """
+    link = sw.LinkHealth()
+    for i in range(200):
+        assert link.update(sw._check_ack(None), i * 0.1) is None
+    assert link.down is False
+
+
+def test_ack_timeout_spans_more_than_one_heartbeat():
+    """
+    An idle link is only proved alive by heartbeat ACKs. A timeout shorter than
+    the heartbeat interval would declare a healthy idle link dead.
+    """
+    assert sw.ACK_TIMEOUT_SECONDS > sw.HEARTBEAT_INTERVAL_SECONDS
+
+
 # --- heartbeat timing ------------------------------------------------------
 
 def test_heartbeat_waits_until_it_is_due(pty_port):
