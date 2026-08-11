@@ -127,7 +127,6 @@ def on_depth_frame(element, buffer, user_data):
     """Process depth results. Runs in GStreamer thread — must be fast."""
     if buffer is None:
         return
-
     if HAILO_AVAILABLE:
         if not DEPTH_POSTPROC_AVAILABLE:
             _log_depth_error(_DEPTH_IMPORT_ERROR)

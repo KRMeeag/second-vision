@@ -32,7 +32,9 @@ from second_vision.core.priority import PriorityMailbox
 # Conditional imports — don't crash if hailo isn't installed (mock mode)
 HAILO_AVAILABLE = True
 try:
+    # pyrefly: ignore [missing-import]
     from hailo_apps.python.core.common.hailo_logger import get_logger
+    # pyrefly: ignore [missing-import]
     from hailo_apps.python.core.gstreamer.gstreamer_app import app_callback_class
 except ImportError:
     HAILO_AVAILABLE = False
