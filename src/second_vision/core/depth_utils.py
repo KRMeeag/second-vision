@@ -3,7 +3,7 @@ Depth Utilities — Zone splitting, proximity curves, and ground hazard detectio
 
 Post-processing pipeline (per SV-Docu/depth_estimation_handoff.md):
     thin-structure ridge pass [cables/poles/branches, at native resolution —
-    DIAGNOSTIC ONLY, see DepthPostProcessor.process] ->
+    combined into the zone maximum, gated by THIN_DRIVES_MOTORS] ->
     downsample -> zone split -> per zone max(sub-grid pooling [near clusters],
     blank-wall detection [flat surfaces], floor-to-wall [walls read as far])
     -> safe-zone threshold -> non-linear curve -> EMA smoothing
@@ -141,6 +141,30 @@ THIN_MIN_CONTRAST = 2.0
 # PLACEHOLDER pending calibration.
 THIN_MIN_AREA_FRAC = 0.005
 THIN_MIN_AREA_PX = 4         # absolute floor, so tiny grids still need >1 pixel
+# Does the thin-structure reading reach the MOTORS, or is it diagnostic only?
+#
+# It was diagnostic-only for one release on measured evidence: on a flat scene
+# containing no thin object at all, the ridge mask fires on 7% of the frame at
+# depth noise sigma=1.0 and 50% at sigma=1.5 — THIN_MIN_CONTRAST (2.0) sits at
+# roughly the noise amplitude of a real depth map, so at that point the
+# "structure" being graded is the background. Field testing agreed: table edges,
+# chair backs and door frames flagged as readily as cables.
+#
+# It is ON now by decision, ahead of the calibration session that would set
+# THIN_MIN_CONTRAST / THIN_MAX_WIDTH_PX / THIN_MIN_AREA_FRAC from real captures.
+# The trade being accepted: a cable across a doorway is a hazard nothing else in
+# this module can see (every other detector asks "how near is this?", and a cable
+# is barely nearer than the wall behind it), and missing it is worse than
+# over-warning — but the false-positive rate is currently UNMEASURED on real
+# scenes, and a haptic that fires on furniture teaches its wearer to ignore it,
+# which costs the warnings from the detectors that DO work.
+#
+# So this is a flag rather than a code change: if the first wear test is a
+# constant buzz around furniture, set it False and the device returns to the
+# previous, known behaviour without touching any logic. Raising
+# THIN_MIN_CONTRAST above the scene's noise floor is the real fix; that number
+# comes out of the calibration capture.
+THIN_DRIVES_MOTORS = True
 
 ZONE_NAMES = ("left", "center", "right")
 
@@ -742,23 +766,21 @@ class DepthPostProcessor:
         survive it — while everything after is unchanged, because
         downsample_depth() is a no-op on an already-downsampled grid.
 
-        THIN IS DIAGNOSTIC ONLY, and does NOT reach the motors. It used to be
-        combined in with `max(raw[zone], thin[zone])`. Measured on a flat scene
-        containing no thin object at all, the ridge mask fires on 7% of the frame
-        at depth noise sigma=1.0 and 50% at sigma=1.5 — THIN_MIN_CONTRAST (2.0)
-        sits at roughly the noise amplitude of a real depth map, so at that point
-        the "structure" being graded is the background. Field testing saw the
-        same thing: table edges, chair backs and door frames flagged as readily
-        as cables. A haptic that fires on furniture teaches its user to ignore
-        it, and that costs the warnings from the detectors that DO work. The
-        reading is still computed and still shown (t0.00 and the T tag), so the
-        detector stays auditable while its thresholds are calibrated against real
-        captures — re-enable this line when they are, not before.
+        The thin reading is folded in with `max(raw[zone], thin[zone])`, so like
+        every other detector here it can only RAISE a zone's warning, never lower
+        one — the combination stays fail-safe no matter how noisy the ridge pass
+        is. It is gated by THIN_DRIVES_MOTORS, which carries the measured
+        false-positive evidence and the reason it is currently on; when it is
+        off, the reading is still computed and still published on `last_thin`
+        (t0.00 and the T tag in the view), so the detector stays auditable
+        either way.
         """
         self.last_thin = thin_zone_intensities(depth_map, thin_structure_mask(depth_map))
 
         small = downsample_depth(depth_map)
         raw = compute_zone_intensities(small, small.shape[1])
+        if THIN_DRIVES_MOTORS:
+            raw = {zone: max(raw[zone], self.last_thin[zone]) for zone in ZONE_NAMES}
 
         if self._smoothed is None:
             self._smoothed = dict(raw)
