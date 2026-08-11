@@ -39,6 +39,66 @@ USE_RELATIVE_COLOR = os.environ.get("SV_COLOR_RELATIVE", "0") == "1"
 
 VIEW_W, VIEW_H = 640, 480
 
+# HUD: a dedicated text panel BELOW the depth image, not painted on top of it.
+# Everything textual lives there on a fixed row grid, one column per zone. See
+# draw_hud for why the numbers were moved off the colormap.
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+HUD_BG = (30, 30, 30)
+HUD_PAD = 8
+HUD_ROWS = 4            # zone readout, parts (2 lines), motor
+HUD_ROW_H = 19
+HUD_LEGEND_H = 15
+HUD_H = HUD_PAD + HUD_ROWS * HUD_ROW_H + 2 * HUD_LEGEND_H + 14
+
+
+def fit_text(text, max_w, scale, thickness=1, min_scale=0.30):
+    """
+    Return (text, scale) guaranteed to render within `max_w` pixels.
+
+    Shrinks the font first, and only truncates once it has hit the smallest size
+    still readable on the Pi's display. Every string on this view is variable
+    width — intensities are 1-3 digits, the tag list is 0-4 letters, "(silenced)"
+    appears and disappears — so a fixed scale that fits the widest case would be
+    unreadable in the common one, and one that fits the common case spills in the
+    widest. Measuring per string is the only thing that holds for both.
+    """
+    scale = max(scale, min_scale)
+    while True:
+        (w, _), _ = cv2.getTextSize(text, FONT, scale, thickness)
+        if w <= max_w:
+            return text, scale
+        if scale <= min_scale:
+            break
+        scale = max(min_scale, round(scale - 0.02, 2))
+    while text and cv2.getTextSize(text + "..", FONT, scale, thickness)[0][0] > max_w:
+        text = text[:-1]
+    return (text + ".." if text else ""), scale
+
+
+def put_fitted(img, text, org, max_w, scale, color, thickness=1):
+    """putText that cannot overflow `max_w` — clipped text beats invisible text."""
+    text, scale = fit_text(text, max_w, scale, thickness)
+    cv2.putText(img, text, org, FONT, scale, color, thickness, cv2.LINE_AA)
+
+
+def put_plated(frame, text, org, scale, color, thickness=2, pad=4):
+    """
+    Draw text on a darkened plate.
+
+    The colormap runs the full JET range, so a single ink color is illegible
+    somewhere in every frame — white vanishes on yellow, dark vanishes on blue.
+    Dimming the pixels behind the glyphs gives the text a consistent background
+    to sit on regardless of what the depth map is doing underneath it.
+    """
+    (tw, th), base = cv2.getTextSize(text, FONT, scale, thickness)
+    x, y = org
+    x0, y0 = max(0, x - pad), max(0, y - th - pad)
+    x1, y1 = min(frame.shape[1], x + tw + pad), min(frame.shape[0], y + base + pad)
+    roi = frame[y0:y1, x0:x1]
+    if roi.size:
+        frame[y0:y1, x0:x1] = (roi * 0.35).astype(roi.dtype)
+    cv2.putText(frame, text, (x, y), FONT, scale, color, thickness, cv2.LINE_AA)
+
 
 def zone_grid_cells(small, x0, x1, grid=SUBGRID_SHAPE):
     """
@@ -92,8 +152,9 @@ def draw_subgrid_overlay(frame, small, view_w=VIEW_W, view_h=VIEW_H):
     for p0, p1 in rings:
         cv2.rectangle(frame, p0, p1, (255, 255, 255), 2)
 
-    cv2.putText(frame, "subgrid 4x4: red cell=danger  ring=worst", (8, view_h - 40),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+    # The legend for these marks lives in the HUD panel (see draw_hud), not here:
+    # this one used to print at view_h - 40, one baseline away from the zone
+    # readouts, and the two collided on every frame.
     return frame
 
 
@@ -109,10 +170,49 @@ def draw_depth_fps(frame, fps, view_w=VIEW_W):
     label stays pinned to the corner as the digits change width.
     """
     text = f"DEPTH FPS: {fps:.1f}"
-    (text_w, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-    cv2.putText(frame, text, (view_w - text_w - 8, 24),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+    (text_w, _), _ = cv2.getTextSize(text, FONT, 0.6, 2)
+    put_plated(frame, text, (view_w - text_w - 12, 26), 0.6, (0, 255, 255))
     return frame
+
+
+def draw_hud(zone_blocks, legend_lines, view_w=VIEW_W, hud_h=HUD_H):
+    """
+    Render the text panel that sits BELOW the depth image.
+
+    `zone_blocks` is [(x0, x1, [(text, scale, color), ...]), ...] — one column per
+    zone, aligned with that zone's span in the image above it, so a column is read
+    under the zone it describes. `legend_lines` spans the full width underneath.
+
+    The readouts used to be painted onto the colormap at hand-picked offsets, and
+    three things went wrong there that no choice of offset can fix. The tag legend
+    and the left zone's readout were both written at view_h - 48, so they printed
+    through each other. The parts line is wider than the 160px left and right
+    zones, so it ran across its neighbours. And the right zone's MOTOR line starts
+    at x=488 and is longer than the 152px remaining, so it left the frame entirely
+    and could not be read at all. Giving the text its own real estate, on a fixed
+    row grid, with every string measured against its column before it is drawn,
+    makes all three impossible by construction instead of by tuning constants.
+    """
+    hud = np.full((hud_h, view_w, 3), HUD_BG, dtype=np.uint8)
+    grid_bottom = HUD_PAD + HUD_ROWS * HUD_ROW_H
+
+    for x0, x1, lines in zone_blocks:
+        col_w = max(1, (x1 - x0) - 2 * HUD_PAD)
+        for i, (text, scale, color) in enumerate(lines[:HUD_ROWS]):
+            baseline = HUD_PAD + HUD_ROW_H * (i + 1) - 5
+            put_fitted(hud, text, (x0 + HUD_PAD, baseline), col_w, scale, color)
+
+    # Column rules on the zone boundaries, so a reading is unambiguously tied to
+    # its zone even when a shrunken string ends well short of the next column.
+    for x0, _, _ in zone_blocks[1:]:
+        cv2.line(hud, (x0, 2), (x0, grid_bottom), (75, 75, 75), 1)
+    cv2.line(hud, (0, grid_bottom + 2), (view_w, grid_bottom + 2), (75, 75, 75), 1)
+
+    for i, text in enumerate(legend_lines):
+        baseline = grid_bottom + 2 + HUD_LEGEND_H * (i + 1)
+        put_fitted(hud, text, (HUD_PAD, baseline), view_w - 2 * HUD_PAD, 0.42,
+                   (185, 185, 185))
+    return hud
 
 
 def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="none",
@@ -123,6 +223,12 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
     bars tagged with the active detectors, ground-hazard strip (with step
     direction: DOWN = fall hazard, UP = trip hazard), raw depth stats for
     calibration, and the depth branch's own FPS (top right).
+
+    Returns a VIEW_W x (VIEW_H + HUD_H) image: the depth map on top, and the
+    per-zone readouts in a text panel below it (draw_hud). Only the three labels
+    that must be read against the picture — depth stats, FPS, hazard banner —
+    stay on the image itself, each on a darkened plate so they survive whatever
+    color the map puts behind them.
 
     `fps` is optional so off-device replay tools, which have no frame rate to
     report, can call this unchanged — the counter is simply omitted then.
@@ -185,6 +291,7 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
     }
     bar_max_h = view_h // 3
     zone_spans = {"left": (0, q1), "center": (q1, q3), "right": (q3, view_w)}
+    zone_blocks = []
     for zone, (x0, x1) in zone_spans.items():
         val = intensities[zone]
         bar_h = int(bar_max_h * val / 255)
@@ -214,13 +321,15 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
             active += "W"
         if p["f2w"] > 0.01:
             active += "F"
-        cv2.putText(frame, f"{zone[0].upper()}={val} [{active or '-'}]", (x0 + 8, view_h - 48),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(frame,
-                    f"t{p['thin']:.2f} s{p['sub']:.2f} w{p['wall']:.2f} f{p['f2w']:.2f} "
-                    f"cov{bd['coverage']:.0%}",
-                    (x0 + 8, view_h - 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (230, 230, 230), 1, cv2.LINE_AA)
+        # The parts breakdown is split over two rows rather than one long line:
+        # the left and right zones are only a quarter of the width each, and one
+        # line of it can only be made to fit them by shrinking it past legibility.
+        lines = [
+            (f"{zone[0].upper()}={val} [{active or '-'}]", 0.55,
+             (255, 255, 255) if val else (150, 150, 150)),
+            (f"t{p['thin']:.2f} s{p['sub']:.2f} w{p['wall']:.2f}", 0.42, (215, 215, 215)),
+            (f"f{p['f2w']:.2f} cov{bd['coverage']:.0%}", 0.42, (215, 215, 215)),
+        ]
 
         # What the motor is actually doing. Green when driving, grey when the
         # haptic stage deliberately silenced a non-zero perception — the second
@@ -229,16 +338,18 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
         if motors is not None:
             duty = motors.get(zone, 0)
             lvl = None if levels is None else levels.get(zone)
-            tag = f"MOTOR {duty}" + ("" if lvl is None else f"  L{lvl}")
+            tag = f"MOTOR {duty}" + ("" if lvl is None else f" L{lvl}")
             if duty == 0 and val > 0:
-                tag += "  (silenced)"
-            cv2.putText(frame, tag, (x0 + 8, view_h - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                        (0, 255, 0) if duty > 0 else (170, 170, 170), 1, cv2.LINE_AA)
+                tag += " (silenced)"
+            # Grey still reads "not driving", but it is now grey-on-dark-panel
+            # rather than grey-on-colormap, so it can be lifted for legibility
+            # without losing the contrast against green.
+            lines.append((tag, 0.48, (0, 255, 0) if duty > 0 else (190, 190, 190)))
+        zone_blocks.append((x0, x1, lines))
 
     # Raw depth stats — the numbers needed to calibrate MIN/MAX_DEPTH_M
-    cv2.putText(frame, f"depth p1/p50/p99: {d_lo:.2f} / {d_med:.2f} / {d_hi:.2f}",
-                (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    put_plated(frame, f"depth p1/p50/p99: {d_lo:.2f} / {d_med:.2f} / {d_hi:.2f}",
+               (8, 26), 0.6, (255, 255, 255))
 
     # Depth-branch frame rate, top right — separate from the detection overlay's
     # top-left FPS, which counts the user/detection frames in the other window.
@@ -249,12 +360,12 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
         # UP   = curb / step-up (trip) — orange.
         label = {"down": "HAZARD: DROP-OFF", "up": "HAZARD: STEP-UP"}.get(direction, "HAZARD")
         color = (0, 140, 255) if direction == "up" else (0, 0, 255)
-        cv2.putText(frame, f"{label} sev={severity}", (8, 52),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+        put_plated(frame, f"{label} sev={severity}", (8, 60), 0.8, color)
 
-    cv2.putText(frame,
-                "active: T=thin obj  C=concentrated near  "
-                "N=near surface  W=blank-wall F=floor-to-wall",
-                (8, view_h - 48), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
-
-    return frame
+    legend = [
+        "active: T=thin obj  C=concentrated near  N=near surface  "
+        "W=blank-wall  F=floor-to-wall",
+        "subgrid 4x4: red cell=danger  white ring=worst cell  "
+        "red bar=zone intensity  t/s/w/f=detector parts",
+    ]
+    return np.vstack([frame, draw_hud(zone_blocks, legend, view_w)])
