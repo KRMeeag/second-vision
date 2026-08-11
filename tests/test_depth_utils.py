@@ -377,6 +377,51 @@ def test_thin_mask_ignores_contrast_below_the_threshold():
     assert not thin_structure_mask(scene).any()
 
 
+def cable_scene():
+    """A cable at collision range against a background that is safely far.
+
+    Every magnitude-based detector reads this as empty — the background is beyond
+    the safe-zone cutoff and the cable is 3 px of a 256-row frame — so whatever
+    reaches the motors here came from the ridge pass and nothing else.
+    """
+    scene = flat(du.MAX_DEPTH_M + 5, shape=NATIVE)
+    scene[120:123, :] = du.MIN_DEPTH_M
+    return scene
+
+
+def test_a_cable_alone_drives_the_motors():
+    """The reason the detector exists: nothing else in the module sees this."""
+    assert du.THIN_DRIVES_MOTORS, "flag is off — the rest of this test is meaningless"
+    assert DepthPostProcessor().process(cable_scene())["center"] > 0
+
+
+def test_thin_only_ever_raises_a_zone(monkeypatch):
+    """
+    Fail-safe, the same invariant every other detector is held to: folding thin in
+    may never produce a QUIETER zone than leaving it out. This is what keeps the
+    combination safe while THIN_MIN_CONTRAST is still an uncalibrated placeholder
+    — a noisy ridge pass can over-warn, but it cannot mask a real obstacle.
+    """
+    for scene in (cable_scene(), flat(20.0, shape=NATIVE), flat(24.0, shape=NATIVE, sigma=1.0)):
+        monkeypatch.setattr(du, "THIN_DRIVES_MOTORS", False)
+        without = DepthPostProcessor().process(scene)
+        monkeypatch.setattr(du, "THIN_DRIVES_MOTORS", True)
+        with_thin = DepthPostProcessor().process(scene)
+        assert all(with_thin[z] >= without[z] for z in ZONE_NAMES), (without, with_thin)
+
+
+def test_the_flag_off_restores_the_diagnostic_only_behaviour(monkeypatch):
+    """
+    The field-testing escape hatch: if the device buzzes on furniture, one
+    constant returns it to the previous behaviour — motors quiet, reading still
+    published for the HUD.
+    """
+    monkeypatch.setattr(du, "THIN_DRIVES_MOTORS", False)
+    p = DepthPostProcessor()
+    assert p.process(cable_scene())["center"] == 0
+    assert p.last_thin["center"] > 0, "reading must stay auditable when gated off"
+
+
 # ============================================================
 # Motor output contract
 # ============================================================
