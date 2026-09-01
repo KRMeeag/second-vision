@@ -111,12 +111,30 @@ def serial_worker(user_data, config):
     last_write_at = time.monotonic()
     vibration_was_enabled = True
 
+    # Latches on the first ACK ever seen, so the bring-up banner prints once
+    # per run rather than on every packet the board answers.
+    connection_verified = False
+
     while not user_data.shutdown_event.is_set():
+        # Read once per iteration and reuse: the ACK for the packet written at
+        # the BOTTOM of the previous iteration lands here, at the top of the
+        # next one. The board cannot have replied yet at the moment of writing,
+        # so checking immediately after a write would measure the round trip
+        # rather than the link.
+        ack_seen = _check_ack(port)
+
+        if ack_seen and not connection_verified:
+            print("\n=======================================================")
+            print("✅ [TEST SUCCESS] UART Connection to ESP32 is WORKING!")
+            print("=======================================================\n")
+            connection_verified = True
+
         # Link health is judged EVERY iteration, not only on frames we send.
         # Heartbeats are acknowledged too, so during an idle stretch they are
         # the only evidence the board is alive — checking solely after a motor
         # update would declare a perfectly healthy idle link dead.
-        transition = link.update(_check_ack(port), time.monotonic())
+        transition = link.update(ack_seen, time.monotonic())
+
         if transition == "down":
             print("[SERIAL] ESP32 stopped acknowledging — motors stopped. "
                   "Check power and cable; will resume automatically if it answers")
@@ -171,10 +189,6 @@ def serial_worker(user_data, config):
         if depth.get("hazard"):
             hazard_pkt = _pack_hazard_alert(depth["hazard_severity"])
             _send_packet(port, hazard_pkt)
-
-        # The ACK for this packet is read at the TOP of the next iteration, not
-        # here. The board cannot have replied yet — checking immediately after
-        # writing measures the round trip, not the link.
 
     # Leave the motors off rather than wherever the last frame put them. A
     # process that exits mid-warning would otherwise leave the wearer with a
