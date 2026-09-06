@@ -1,3 +1,31 @@
+/*
+ * Second Vision — MOTOR CONTROLLER link check  (env: motorlink)
+ *
+ * ***  DIFFERENT BOARD FROM THE REST OF THIS FOLDER.  ***
+ *
+ * This targets the glasses / vibration-motor ESP32, not the control panel.
+ * Everything else in src/ is panel firmware. They share this PlatformIO project
+ * only because both are esp32dev with the same toolchain and upload quirks —
+ * build_src_filter picks exactly one of them per env.
+ *
+ *   pio run -e motorlink -t upload -t monitor     THIS board
+ *   pio run -e panel     -t upload -t monitor     the control panel
+ *
+ * NOT motor firmware. There is no PWM, no MOSFET driving, no flyback handling,
+ * no protocol beyond the handshake below. It answers one question — is the wire
+ * up and is the Pi's framing right — and is to the motor board what
+ * polarity_test.cpp is to the panel.
+ *
+ * Counterpart on the Pi: workers/serial_worker.py (--serial-port), which sends
+ * 0xAA and matches ACK_PREFIX against the reply. Binary, 115200, BIDIRECTIONAL.
+ * That is a different link from the panel's, which is text, 9600, and one-way;
+ * do not point --config-port at this board or --serial-port at the panel.
+ *
+ * Pin note: GPIO17 is UART2 TX here. On the PANEL firmware GPIO17 is the DETECT
+ * rocker, a pulled-up input. Harmless while each firmware stays on its own
+ * board, but flashing the wrong one turns that pin from an input into a driven
+ * output — worth knowing if a bring-up session starts behaving strangely.
+ */
 #include <Arduino.h>
 
 // Define UART2 pins for ESP32

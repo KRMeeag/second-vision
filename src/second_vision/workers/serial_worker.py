@@ -123,7 +123,13 @@ def serial_worker(user_data, config):
         # rather than the link.
         ack_seen = _check_ack(port)
 
-        if ack_seen and not connection_verified:
+        # `port is not None` matters: _check_ack() returns True for a None port
+        # by design ("no link, so no link to have lost"), which keeps the link
+        # state machine from reporting a phantom outage on a machine with no
+        # board. Without this guard that same True announces a working UART when
+        # nothing was ever opened — the worst kind of message, because it says
+        # the thing you were hoping to confirm.
+        if ack_seen and port is not None and not connection_verified:
             print("\n=======================================================")
             print("✅ [TEST SUCCESS] UART Connection to ESP32 is WORKING!")
             print("=======================================================\n")

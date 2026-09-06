@@ -289,9 +289,21 @@ how the current drift formed.
 `run.sh` activates the venv, sources the Hailo env, sets `PYTHONPATH`, and passes every
 argument through to `main.py`.
 
-> **Flags that do NOT exist yet**: `--serial-port`, `--config-port`, `--headless`,
-> `--debug-display`. They appear in older documentation but were never registered, so
-> passing them fails argparse. Registering them is tracked in
+> **`--serial-port` and `--config-port` exist**, registered on the pre-parser in
+> `main.py` (not on the pipeline app's parser, so they do not appear in
+> `--help`). They are DIFFERENT boards on DIFFERENT UARTs: `--serial-port` is
+> the motor controller (binary, 115200, bidirectional); `--config-port` is the
+> control panel (text, 9600, one-way). Swapping them gives dead motors or a
+> silent panel, with no error either way.
+>
+> `--config-port` was registered on 2026-09-06. Before that the worker-start
+> block *referenced* it via `getattr(app.options_menu, "config_port", None)`,
+> which always returned None because the flag existed nowhere — so the panel
+> reader never started and the panel was silently ignored.
+>
+> **Flags that do NOT exist yet**: `--headless`, `--debug-display`. They appear
+> in older documentation but were never registered, so passing them fails
+> argparse. Registering them is tracked in
 > [documentation/TASKS.md](documentation/TASKS.md).
 
 ---

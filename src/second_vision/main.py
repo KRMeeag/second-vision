@@ -97,6 +97,13 @@ def main():
         "--serial-baud", type=int, default=None, metavar="RATE",
         help="Serial baud rate (default 115200; must match the ESP32 firmware)",
     )
+    pre_parser.add_argument(
+        "--config-port", default=None, metavar="DEV",
+        help="Serial device for the control panel, e.g. /dev/ttyAMA3. A "
+             "DIFFERENT board and UART from --serial-port: the panel speaks "
+             "text at 9600 one-way, the motor board binary at 115200. Omit to "
+             "run with no panel attached.",
+    )
     pre_args, remaining = pre_parser.parse_known_args()
 
     # 1. Shared config
@@ -105,6 +112,8 @@ def main():
         config.update(serial_port=pre_args.serial_port)
     if pre_args.serial_baud:
         config.update(serial_baudrate=pre_args.serial_baud)
+    if pre_args.config_port:
+        config.update(config_port=pre_args.config_port)
 
     # 2. Shared user data
     user_data = SecondVisionUserData(config)
@@ -188,8 +197,11 @@ def _run_pipeline_mode(user_data, config, workers, cli_args):
         config=config,
     )
     
-    # Config reader (if --config-port provided)
-    config_port = getattr(app.options_menu, "config_port", None)
+    # Config reader (if --config-port provided). Read from config, not from
+    # app.options_menu: the flag is registered on the pre-parser — the pipeline
+    # app's parser never sees it — so the old getattr() always returned None and
+    # this worker never started.
+    config_port = config.get("config_port")
     if config_port:
         config_thread = threading.Thread(
             target=config_reader_worker,
