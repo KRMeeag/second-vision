@@ -142,6 +142,12 @@ def main():
     # 4. Start pipeline OR mock generators
     if pre_args.mock or not HAILO_AVAILABLE:
         print("[MAIN] Running in MOCK mode (no hardware)")
+        # The panel is real hardware even when nothing else is, and mock mode
+        # exists precisely to develop without a camera or Hailo (D26). app=None
+        # because there is no pipeline to rebuild — the worker already guards
+        # that, so mode changes update config and announce, they just do not
+        # tear anything down.
+        _start_config_reader(user_data, config, None, workers)
         _run_mock_mode(user_data, config, workers)
     else:
         _run_pipeline_mode(user_data, config, workers, remaining)
@@ -181,6 +187,29 @@ def _run_mock_mode(user_data, config, workers):
         pass
 
 
+def _start_config_reader(user_data, config, app, workers):
+    """
+    Start the control-panel reader, if --config-port was given.
+
+    Read from config, NOT from app.options_menu: the flag is registered on the
+    pre-parser, which the pipeline app's parser never sees. The old
+    getattr(app.options_menu, "config_port", None) therefore always returned
+    None and this worker never started at all.
+
+    `app` may be None (mock mode) — the worker guards trigger_rebuild().
+    """
+    config_port = config.get("config_port")
+    if not config_port:
+        return
+    t = threading.Thread(
+        target=config_reader_worker,
+        args=(user_data, config, config_port, app),
+        daemon=True, name="config-reader",
+    )
+    t.start()
+    workers.append(t)
+
+
 def _run_pipeline_mode(user_data, config, workers, cli_args):
     """Run the real GStreamer pipeline."""
     from second_vision.pipeline.app import SecondVisionApp
@@ -197,19 +226,7 @@ def _run_pipeline_mode(user_data, config, workers, cli_args):
         config=config,
     )
     
-    # Config reader (if --config-port provided). Read from config, not from
-    # app.options_menu: the flag is registered on the pre-parser — the pipeline
-    # app's parser never sees it — so the old getattr() always returned None and
-    # this worker never started.
-    config_port = config.get("config_port")
-    if config_port:
-        config_thread = threading.Thread(
-            target=config_reader_worker,
-            args=(user_data, config, config_port, app),
-            daemon=True, name="config-reader"
-        )
-        config_thread.start()
-        workers.append(config_thread)
+    _start_config_reader(user_data, config, app, workers)
 
     # DEBUG ONLY (--cycle-modes): stand in for the not-yet-built Arduino mode
     # switch by cycling pipeline_mode on a timer. Without the flag this block is

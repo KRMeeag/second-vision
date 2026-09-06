@@ -64,7 +64,11 @@ hailo_logger = get_logger(__name__)
 MODE_BOTH = "both"
 MODE_DETECTION = "detection"
 MODE_DEPTH = "depth"
-VALID_MODES = (MODE_BOTH, MODE_DETECTION, MODE_DEPTH)
+# Both rockers off. Neither speech nor motors are reachable, so running either
+# model would burn Hailo and battery producing output nobody receives. This is
+# "run nothing", NOT "run both and mute" — see PROTOCOL.md, mode truth table.
+MODE_NONE = "none"
+VALID_MODES = (MODE_BOTH, MODE_DETECTION, MODE_DEPTH, MODE_NONE)
 
 # A mode swap is considered healthy if the new pipeline delivers its first frame within
 # this long. Not enforced — exceeding it is logged as SLOW so it gets reported, since the
@@ -294,6 +298,29 @@ class SecondVisionApp(GStreamerApp):
 
         return f"{source_pipeline} ! {depth_pipeline_wrapper} ! {depth_callback} ! {depth_sink}"
 
+    def _build_idle(self):
+        """
+        Camera only — no inference at all.
+
+        The SOURCE stays up deliberately. Tearing it down would save a little
+        idle power, but coming back would then cost a camera cold-start on top
+        of the rebuild blackout (D21), and a rocker is exactly the control a
+        user flips straight back.
+
+        A callback identity is still present with nothing in front of it: the
+        wrapper it gets connected to is what increments the frame counter, and
+        without one --enable-watchdog reads an idle pipeline as a stalled one.
+        It keeps the name "det_callback" so _connect_callback needs no special
+        lookup — see the det_disabled note there.
+        """
+        source_pipeline = self.get_source_pipeline(no_webcam_compression=True)
+        idle_callback = USER_CALLBACK_PIPELINE(name="det_callback")
+
+        return (
+            f"{source_pipeline} ! {idle_callback} "
+            f"! fakesink name=idle_sink sync=false"
+        )
+
     def current_mode(self) -> str:
         """
         The pipeline mode to build for.
@@ -317,6 +344,8 @@ class SecondVisionApp(GStreamerApp):
             pipeline_str = self._build_detection_only()
         elif mode == MODE_DEPTH:
             pipeline_str = self._build_depth_only()
+        elif mode == MODE_NONE:
+            pipeline_str = self._build_idle()
         else:
             pipeline_str = self._build_dual()
 
@@ -346,17 +375,24 @@ class SecondVisionApp(GStreamerApp):
         disable_callback = self.options_menu.disable_callback
         mode = self.current_mode()
 
-        wire_det = mode in (MODE_BOTH, MODE_DETECTION)
+        wire_det = mode in (MODE_BOTH, MODE_DETECTION, MODE_NONE)
         wire_depth = mode in (MODE_BOTH, MODE_DEPTH)
         # Depth is the frame-counting branch only when detection isn't there to do it.
         depth_counts_frames = mode == MODE_DEPTH
+
+        # MODE_NONE wires the identity but not the handler: there is no inference
+        # ahead of it, so on_det_frame would parse metadata that does not exist.
+        # _internal_callback_wrapper still runs and still counts frames when the
+        # callback is disabled — which is the whole reason idle can be told
+        # apart from a stall by --enable-watchdog.
+        det_disabled = disable_callback or mode == MODE_NONE
 
         if wire_det:
             det_identity = self.pipeline.get_by_name("det_callback")
             if det_identity:
                 det_identity.set_property("signal-handoffs", True)
                 det_identity.connect(
-                    "handoff", _internal_callback_wrapper, self.user_data, callbacks.on_det_frame, disable_callback
+                    "handoff", _internal_callback_wrapper, self.user_data, callbacks.on_det_frame, det_disabled
                 )
                 hailo_logger.debug("Connected detection callback.")
             else:

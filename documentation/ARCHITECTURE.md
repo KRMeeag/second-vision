@@ -175,13 +175,16 @@ Flow:     None
 
 ## Pipeline Modes
 
-The system supports three pipeline configurations, switchable at runtime via the Arduino control panel:
+The system supports four pipeline configurations, switchable at runtime via the ESP32 control panel. The mode is not a setting the panel sends independently — it is derived from the positions of the two latching rockers, so the panel can never display a state that is not running.
 
 | Mode | GStreamer Pipeline | Active Callbacks | Use Case |
 |---|---|---|---|
 | `"both"` | Source → tee → (SCDepthV3 + YOLOv8) | Both | Default — full system |
 | `"detection"` | Source → YOLOv8 → tracker | det_callback only | Familiar routes, TTS only |
 | `"depth"` | Source → SCDepthV3 | depth_callback only | Open areas, haptics only |
+| `"none"` | Source → fakesink (no inference) | frame counter only | Both rockers off — run nothing |
+
+`"none"` keeps the camera running on purpose. Tearing the source down would save a little idle power, but returning would cost a camera cold-start on top of the rebuild blackout in D21, and a rocker is exactly the control a user flips straight back. A callback identity stays wired with its handler disabled so the frame counter keeps moving — otherwise `--enable-watchdog` reads idle as a stall.
 
 Switching is done via `GLib.idle_add(app._rebuild_pipeline)`. The ~0.8-1.2s blackout during rebuild is masked by a TTS announcement ("detection mode").
 
