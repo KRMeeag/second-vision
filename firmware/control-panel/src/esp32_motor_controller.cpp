@@ -1,30 +1,32 @@
 #include <Arduino.h>
 
-// Define UART2 pins for ESP32 connecting to Raspberry Pi
+// Define UART pins for ESP32-C3 connecting to Raspberry Pi
 #define RXD2 16
 #define TXD2 17
+
+// Create a HardwareSerial instance for UART 1 on the ESP32-C3
+HardwareSerial PiSerial(1);
 
 void setup() {
   // Serial0 for PC debugging (via USB)
   Serial.begin(115200);
   
-  // Serial2 for Raspberry Pi communication (via UART GPIO)
-  Serial2.begin(115200, SERIAL_8N1, RXD2, TXD2);
+  // Initialize UART1 for Raspberry Pi communication using custom pins 16 and 17
+  PiSerial.begin(115200, SERIAL_8N1, RXD2, TXD2);
   
-  Serial.println("ESP32 Motor Controller Booted.");
+  Serial.println("ESP32-C3 Motor Controller Booted.");
   Serial.println("Waiting for UART packets from Raspberry Pi...");
 }
 
 void loop() {
-  // Wait until we have at least 2 bytes (Start Byte + Message Type)
-  if (Serial2.available() > 1) {
-    uint8_t byteIn = Serial2.read();
+  // Wait until we have at least 2 bytes available on PiSerial
+  if (PiSerial.available() > 1) {
+    uint8_t byteIn = PiSerial.read();
     
     // Look for the 0xAA start byte from the Python worker
     if (byteIn == 0xAA) {
-      uint8_t msgType = Serial2.read(); // Read the next byte
+      uint8_t msgType = PiSerial.read(); // Read the next byte
       
-      // Print exactly what kind of packet the Pi sent us
       if (msgType == 0xFE) {
         Serial.println("✅ Heartbeat received from Pi!");
       } else if (msgType == 0x01) {
@@ -33,9 +35,9 @@ void loop() {
         Serial.printf("📦 Other packet received: 0x%02X\n", msgType);
       }
       
-      // Reply with the ACK prefix the Python script expects: 0xAA 0xFF <msg_type>
+      // Reply with the ACK prefix using PiSerial
       uint8_t ackPacket[] = {0xAA, 0xFF, msgType};
-      Serial2.write(ackPacket, 3);
+      PiSerial.write(ackPacket, 3);
       
       Serial.println("ACK sent back to Pi.");
     }
