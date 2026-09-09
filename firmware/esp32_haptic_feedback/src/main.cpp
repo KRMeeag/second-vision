@@ -5,21 +5,95 @@
 
 // --- CONFIGURATION & MODES ---
 // Set to true for MAC / Standalone testing (cycles incremental test vibrations)
-// Set to false for Deployment mode (listens to UART commands from Raspberry Pi 5)
-bool MAC_MODE = true; 
+// Set to false for Deployment mode (listens for binary UART packets from the
+// Raspberry Pi 5 on the dedicated PiSerial link, see below)
+bool MAC_MODE = true;
 
 // --- Pins for the Motors (Using XIAO ESP32-C3 mappings) ---
-const int leftMotorPin = D0;   
-const int centerMotorPin = D1; 
-const int rightMotorPin = D2;  
+const int leftMotorPin = D0;
+const int centerMotorPin = D1;
+const int rightMotorPin = D2;
+
+// --- UART link to the Raspberry Pi (XIAO ESP32-C3) ---
+// D6 (TX) / D7 (RX) map to GPIO21 / GPIO20 on this board — confirmed wiring,
+// not the default USB debug port. The ESP32-C3's UART peripherals are
+// GPIO-matrix-routable, so binding UART1 to these two pins is a config
+// choice, not a fixed-function requirement; it keeps the Pi link off `Serial`
+// (native USB CDC) entirely, so debug prints never collide with command bytes
+// the way they would if both shared one port.
+#define PI_TX_PIN D6
+#define PI_RX_PIN D7
+HardwareSerial PiSerial(1);
+
+// --- Wire protocol (matches src/second_vision/workers/serial_worker.py) ---
+// Every packet starts with 0xAA. The byte after that selects the type, which
+// fixes how many bytes follow it:
+//
+//   0x01  motor update   left, center, right         + 1 checksum byte
+//   0x04  hazard alert   severity, pattern            + 1 checksum byte
+//   0xFE  heartbeat      (no payload)                 + 1 checksum byte
+//
+// checksum = msgType XOR every payload byte (0 payload bytes for heartbeat,
+// so its checksum is just 0xFE). The board answers every *valid* packet with
+// 0xAA 0xFF <msgType> — that 2-byte prefix is what serial_worker.py scans for.
+const uint8_t START_BYTE = 0xAA;
+const uint8_t ACK_TYPE = 0xFF;
+const uint8_t MSG_MOTOR_UPDATE = 0x01;
+const uint8_t MSG_HAZARD_ALERT = 0x04;
+const uint8_t MSG_HEARTBEAT = 0xFE;
+
+const uint8_t MOTOR_UPDATE_PAYLOAD_LEN = 3;  // left, center, right
+const uint8_t HAZARD_ALERT_PAYLOAD_LEN = 2;  // severity, pattern
+
+// A packet that stops arriving mid-way (cable pulled, Pi crashed while
+// writing) must not wedge the reader forever waiting for bytes that are never
+// coming. Anything slower than this between bytes of the SAME packet is
+// treated as a dead packet, and the reader resyncs on the next 0xAA.
+const unsigned long BYTE_TIMEOUT_MS = 50;
+
+// The Pi treats >2.5 s of no ACK as the board being gone (ACK_TIMEOUT_SECONDS
+// in serial_worker.py) and stops trusting the link. Symmetrically, the board
+// must not keep the motors running on a command the Pi sent a long time ago —
+// mirrors the "ESP32 zeroes the motors after 3 s without traffic" contract
+// serial_worker.py's heartbeat comment documents.
+const unsigned long WATCHDOG_TIMEOUT_MS = 3000;
+
+// How long a hazard alert overrides the per-zone motor duty before the last
+// known-good motor update is restored. Short and blunt on purpose — a ground
+// hazard is meant to read as distinct from the continuous per-zone channel,
+// not as a fourth intensity level on it.
+const unsigned long HAZARD_PULSE_MS = 150;
+
+// --- Reader state machine ---
+enum ReadState {
+  WAIT_START,
+  WAIT_TYPE,
+  READ_PAYLOAD,
+  READ_CHECKSUM,
+};
+
+ReadState readState = WAIT_START;
+uint8_t currentType = 0;
+uint8_t packetPayload[MOTOR_UPDATE_PAYLOAD_LEN];
+uint8_t payloadLen = 0;
+uint8_t payloadIndex = 0;
+unsigned long lastByteAt = 0;
+
+// --- Motor state (shared with DEPLOYMENT mode's binary receiver) ---
+uint8_t motorDuty[3] = {0, 0, 0};  // left, center, right — last valid update
+unsigned long lastPacketAt = 0;
+bool motorsZeroed = true;  // starts true: nothing commanded yet
+
+bool hazardActive = false;
+unsigned long hazardEndsAt = 0;
 
 // --- SAFETY FEATURE: Hardware Governor ---
 // Raised to 255 (100% full power) to maximize vibration intensity
-const int MAX_PWM = 255; 
+const int MAX_PWM = 255;
 
 DFRobot_BMI160 bmi160;
 unsigned long lastSensorTime = 0;
-const int sensorInterval = 200; 
+const int sensorInterval = 200;
 
 // --- INCREMENTAL PULSE VARIABLES (MAC MODE) ---
 unsigned long lastFadeTime = 0;
@@ -29,9 +103,145 @@ const int fadeStep = 15;     // How much the power increases per step
 
 bool imuHealthy = false;
 
+void applyMotorDuty(uint8_t left, uint8_t center, uint8_t right) {
+  analogWrite(leftMotorPin, left);
+  analogWrite(centerMotorPin, center);
+  analogWrite(rightMotorPin, right);
+}
+
+void sendAck(uint8_t msgType) {
+  uint8_t ackPacket[] = {START_BYTE, ACK_TYPE, msgType};
+  PiSerial.write(ackPacket, sizeof(ackPacket));
+}
+
+void resetReader() {
+  readState = WAIT_START;
+  payloadIndex = 0;
+}
+
+// Applies the effect of one fully-received, checksum-valid packet. Any valid
+// packet — including a heartbeat — counts as link traffic and feeds the
+// watchdog; only a motor update changes what the motors are doing.
+void handlePacket(uint8_t msgType, const uint8_t *body, uint8_t bodyLen) {
+  lastPacketAt = millis();
+
+  if (msgType == MSG_MOTOR_UPDATE) {
+    motorDuty[0] = body[0];
+    motorDuty[1] = body[1];
+    motorDuty[2] = body[2];
+    motorsZeroed = false;
+    if (!hazardActive) {
+      applyMotorDuty(motorDuty[0], motorDuty[1], motorDuty[2]);
+    }
+  } else if (msgType == MSG_HAZARD_ALERT) {
+    uint8_t severity = body[0];
+    // `pattern` (body[1]) is reserved on the Pi side for future variants and
+    // is always 1 today — every pattern value drives the same pulse for now,
+    // per the "ignore unknown/future values, don't crash" rule the rest of
+    // this project's protocols already follow.
+    hazardActive = true;
+    hazardEndsAt = millis() + HAZARD_PULSE_MS;
+    applyMotorDuty(severity, severity, severity);
+  }
+  // MSG_HEARTBEAT: nothing to apply beyond the watchdog feed above.
+
+  sendAck(msgType);
+}
+
+void pollPiSerial() {
+  while (PiSerial.available() > 0) {
+    uint8_t byteIn = PiSerial.read();
+    unsigned long now = millis();
+
+    // A byte that shows up after the in-progress packet has gone stale is
+    // treated as the start of a fresh attempt rather than being stitched onto
+    // a dead one.
+    if (readState != WAIT_START && (now - lastByteAt) > BYTE_TIMEOUT_MS) {
+      resetReader();
+    }
+    lastByteAt = now;
+
+    switch (readState) {
+      case WAIT_START:
+        if (byteIn == START_BYTE) {
+          readState = WAIT_TYPE;
+        }
+        // Anything else is noise (boot chatter, line noise) — discard and
+        // keep scanning.
+        break;
+
+      case WAIT_TYPE:
+        currentType = byteIn;
+        if (currentType == MSG_MOTOR_UPDATE) {
+          payloadLen = MOTOR_UPDATE_PAYLOAD_LEN;
+        } else if (currentType == MSG_HAZARD_ALERT) {
+          payloadLen = HAZARD_ALERT_PAYLOAD_LEN;
+        } else if (currentType == MSG_HEARTBEAT) {
+          payloadLen = 0;
+        } else {
+          // Unknown type: its length isn't known, so the packet can't be
+          // framed at all. Drop just this byte and resync on the next 0xAA
+          // rather than guessing a length and misreading everything after.
+          resetReader();
+          break;
+        }
+        payloadIndex = 0;
+        readState = (payloadLen == 0) ? READ_CHECKSUM : READ_PAYLOAD;
+        break;
+
+      case READ_PAYLOAD:
+        packetPayload[payloadIndex++] = byteIn;
+        if (payloadIndex >= payloadLen) {
+          readState = READ_CHECKSUM;
+        }
+        break;
+
+      case READ_CHECKSUM: {
+        uint8_t checksum = currentType;
+        for (uint8_t i = 0; i < payloadLen; i++) {
+          checksum ^= packetPayload[i];
+        }
+        if (byteIn == checksum) {
+          handlePacket(currentType, packetPayload, payloadLen);
+        }
+        // A bad checksum is dropped silently: acting on a corrupted motor
+        // command is worse than a skipped frame, and the next frame is only
+        // ~33 ms behind it.
+        resetReader();
+        break;
+      }
+    }
+  }
+}
+
+void applyWatchdog() {
+  if (motorsZeroed) {
+    return;
+  }
+  if (millis() - lastPacketAt > WATCHDOG_TIMEOUT_MS) {
+    motorDuty[0] = motorDuty[1] = motorDuty[2] = 0;
+    hazardActive = false;
+    applyMotorDuty(0, 0, 0);
+    motorsZeroed = true;
+    Serial.println("[WATCHDOG] No traffic from Pi for 3s — motors zeroed.");
+  }
+}
+
+void applyHazardExpiry() {
+  if (hazardActive && millis() >= hazardEndsAt) {
+    hazardActive = false;
+    applyMotorDuty(motorDuty[0], motorDuty[1], motorDuty[2]);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
-  
+
+  // Dedicated UART to the Pi — separate from the USB `Serial` used for debug
+  // prints and IMU telemetry above, so command bytes never share a port with
+  // log output.
+  PiSerial.begin(115200, SERIAL_8N1, PI_RX_PIN, PI_TX_PIN);
+
   pinMode(leftMotorPin, OUTPUT);
   pinMode(centerMotorPin, OUTPUT);
   pinMode(rightMotorPin, OUTPUT);
@@ -82,35 +292,16 @@ void loop() {
     }
   } 
   // =================================================================
-  // MODE 2: DEPLOYMENT MODE (Connected to RPi5 via UART)
+  // MODE 2: DEPLOYMENT MODE (Connected to RPi5 via PiSerial, D6/D7)
   // =================================================================
+  // Binary protocol matching src/second_vision/workers/serial_worker.py —
+  // see the packet definitions and pollPiSerial() above. Motor duty arrives
+  // pre-shaped (0-255) from the Pi's HapticMapper; this stage applies it
+  // as-is and does not add its own curve or floor.
   else {
-    if (Serial.available() > 0) {
-      String incomingData = Serial.readStringUntil('\n');
-      incomingData.trim(); 
-
-      if (incomingData.length() > 0) {
-        JsonDocument doc; 
-        DeserializationError error = deserializeJson(doc, incomingData);
-
-        if (!error && doc.containsKey("left")) {
-          int rawLeft = doc["left"] | 0;
-          int rawCenter = doc["center"] | 0;
-          int rawRight = doc["right"] | 0;
-
-          // Apply maximum Safety Governor Limit (255)
-          int safeLeft = min(rawLeft, MAX_PWM);
-          int safeCenter = min(rawCenter, MAX_PWM);
-          int safeRight = min(rawRight, MAX_PWM);
-
-          analogWrite(leftMotorPin, safeLeft);
-          analogWrite(centerMotorPin, safeCenter);
-          analogWrite(rightMotorPin, safeRight);
-          
-          Serial.printf("[UART CMD] Applied -> L: %d | C: %d | R: %d\n", safeLeft, safeCenter, safeRight);
-        }
-      }
-    }
+    pollPiSerial();
+    applyHazardExpiry();
+    applyWatchdog();
   }
 
   // =================================================================
