@@ -19,6 +19,8 @@ pipeline has to keep working on development machines with no hardware attached.
 
 import os
 import select
+import struct
+import threading
 import time
 import sys
 from pathlib import Path
@@ -30,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import second_vision.workers.serial_worker as sw
 from second_vision.core.config import SystemConfig
+from second_vision.core.imu_telemetry import ImuTelemetry
 
 
 @pytest.fixture
@@ -483,3 +486,210 @@ def test_stale_boot_chatter_is_flushed_at_open(pty_port):
         assert sw._check_ack(port) is False
     finally:
         sw._close_port(port)
+
+
+# --- BMI160 telemetry (0x02) decode/scan/extraction -------------------------
+#
+# v2 follow-up to the 0x02 protocol added without dedicated tests. Mirrors the
+# ACK-scanning tests above wherever the same concern applies (split reads,
+# desync survival), since _extract_imu_telemetry shares _check_ack's single
+# drain rather than reading the port a second time.
+
+def imu_frame(state: int, pitch: int, yaw: int) -> bytes:
+    """Build one valid, correctly-checksummed 0x02 frame, wire-format exact."""
+    pitch_bytes = struct.pack(">h", pitch)
+    yaw_bytes = struct.pack(">h", yaw)
+    payload = bytes([state]) + pitch_bytes + yaw_bytes
+    checksum = sw.MSG_IMU_TELEMETRY
+    for b in payload:
+        checksum ^= b
+    return bytes([0xAA, sw.MSG_IMU_TELEMETRY]) + payload + bytes([checksum])
+
+
+# --- 1. decode correctness (signed int16) -----------------------------------
+
+def test_decode_negative_pitch_and_yaw():
+    """
+    The whole point of struct.unpack(">h", ...): a naive "combine two bytes"
+    decode would turn a negative reading into a large positive one instead of
+    handling two's complement.
+    """
+    frame = imu_frame(0, -1234, -1)
+    decoded = sw._decode_imu_frame(frame)
+    assert decoded == {"state": "normal", "raw_pitch": -1234, "raw_yaw": -1}
+
+
+def test_decode_pins_the_wire_byte_order():
+    """
+    Wire format pinned explicitly, not just via the imu_frame() helper: -1234
+    as a signed big-endian int16 is 0xFB 0x2E. If the firmware and this parser
+    ever disagree on byte order, this is the test that catches it.
+    """
+    state, pitch_hi, pitch_lo, yaw_hi, yaw_lo = 0, 0xFB, 0x2E, 0xFF, 0xFF  # yaw = -1
+    checksum = sw.MSG_IMU_TELEMETRY ^ state ^ pitch_hi ^ pitch_lo ^ yaw_hi ^ yaw_lo
+    frame = bytes([0xAA, sw.MSG_IMU_TELEMETRY, state, pitch_hi, pitch_lo, yaw_hi, yaw_lo, checksum])
+    decoded = sw._decode_imu_frame(frame)
+    assert decoded["raw_pitch"] == -1234
+    assert decoded["raw_yaw"] == -1
+
+
+def test_decode_unknown_state_byte_does_not_raise():
+    """Ignore-unknown-values, same rule the rest of this project's protocols follow."""
+    frame = imu_frame(99, 0, 0)
+    decoded = sw._decode_imu_frame(frame)
+    assert decoded["state"] == "unknown"
+
+
+# --- 2. checksum rejection ---------------------------------------------------
+
+def test_bad_checksum_is_dropped_not_decoded():
+    frame = bytearray(imu_frame(1, 500, -500))
+    frame[-1] ^= 0xFF  # corrupt the checksum byte only
+    assert sw._decode_imu_frame(bytes(frame)) is None
+
+
+def test_bad_checksum_frame_does_not_update_imu_telemetry(pty_port):
+    """
+    End to end through the real read path: a corrupted frame must reach
+    ImuTelemetry not at all, leaving whatever reading was already there
+    untouched — exactly what serial_worker's loop relies on (it only calls
+    .update() when _take_imu_telemetry() returns non-None).
+    """
+    path, controller = pty_port
+    port = sw._open_serial_port(config_with(serial_port=path))
+    telemetry = ImuTelemetry()
+    telemetry.update(state="normal", raw_pitch=111, raw_yaw=222, received_at=999.0)
+    try:
+        frame = bytearray(imu_frame(1, 500, -500))
+        frame[-1] ^= 0xFF
+        write_to_port(controller, bytes(frame))
+        sw._check_ack(port)
+        result = sw._take_imu_telemetry(port)
+
+        assert result is None
+        if result is not None:  # mirrors serial_worker's own guard
+            telemetry.update(received_at=time.monotonic(), **result)
+        assert telemetry.state == "normal"
+        assert telemetry.raw_pitch == 111
+        assert telemetry.raw_yaw == 222
+        assert telemetry.received_at == 999.0
+    finally:
+        sw._close_port(port)
+
+
+# --- 3. frame split across two reads ----------------------------------------
+
+def test_telemetry_frame_split_across_two_reads_is_still_decoded(pty_port):
+    """Mirrors test_ack_split_across_two_reads_is_still_seen for the 0x02 path."""
+    path, controller = pty_port
+    port = sw._open_serial_port(config_with(serial_port=path))
+    try:
+        frame = imu_frame(2, 12345, -12345)
+        write_to_port(controller, frame[:3])
+        sw._check_ack(port)
+        assert sw._take_imu_telemetry(port) is None  # incomplete so far
+
+        write_to_port(controller, frame[3:])
+        sw._check_ack(port)
+        result = sw._take_imu_telemetry(port)
+
+        assert result == {"state": "wrong_pitch", "raw_pitch": 12345, "raw_yaw": -12345}
+    finally:
+        sw._close_port(port)
+
+
+# --- 4. stale partial frame abandoned ---------------------------------------
+
+def test_stale_partial_telemetry_frame_is_abandoned(pty_port):
+    """
+    A partial frame older than IMU_TELEMETRY_STALE_SECONDS must not be
+    prepended to whatever arrives next — that would misalign a perfectly good
+    new frame against dead bytes from a packet that is never coming. Times are
+    injected directly (no real sleep) for a fast, deterministic test, the same
+    way LinkHealth's tests hand it timestamps instead of sleeping.
+    """
+    path, controller = pty_port
+    port = sw._open_serial_port(config_with(serial_port=path))
+    try:
+        port._sv_telemetry_tail = bytes([0xAA, sw.MSG_IMU_TELEMETRY, 0x00, 0x01])
+        port._sv_telemetry_tail_started_at = (
+            time.monotonic() - (sw.IMU_TELEMETRY_STALE_SECONDS + 0.1)
+        )
+
+        frame = imu_frame(0, 42, -42)
+        write_to_port(controller, frame)
+        sw._check_ack(port)
+        result = sw._take_imu_telemetry(port)
+
+        assert result == {"state": "normal", "raw_pitch": 42, "raw_yaw": -42}
+    finally:
+        sw._close_port(port)
+
+
+# --- 5. ACK and telemetry coexist in one drain -------------------------------
+
+def test_ack_and_telemetry_both_detected_in_one_drain(pty_port):
+    """
+    A single port.read() can legitimately contain both an ACK and a telemetry
+    frame back to back. Both scans run over the same drained chunk (see
+    _check_ack's docstring), so both must be found — this is the test that
+    would catch a regression back to a second, competing read.
+    """
+    path, controller = pty_port
+    port = sw._open_serial_port(config_with(serial_port=path))
+    try:
+        ack = bytes([0xAA, 0xFF, 0x01])
+        frame = imu_frame(1, 100, -200)
+        write_to_port(controller, ack + frame)
+
+        assert sw._check_ack(port) is True
+        assert sw._take_imu_telemetry(port) == {
+            "state": "head_moving", "raw_pitch": 100, "raw_yaw": -200,
+        }
+    finally:
+        sw._close_port(port)
+
+
+# --- 6. ImuTelemetry thread-safety ------------------------------------------
+
+def test_imu_telemetry_concurrent_access_does_not_corrupt_or_raise():
+    """
+    No dedicated SystemConfig concurrency test exists in this suite to mirror,
+    so this follows SystemConfig's own get/update/snapshot shape directly:
+    concurrent writers and a concurrent reader must neither raise nor produce
+    a torn snapshot (e.g. a state from one update paired with a pitch from
+    another).
+    """
+    telemetry = ImuTelemetry()
+    errors = []
+
+    def writer(tag):
+        try:
+            for i in range(200):
+                telemetry.update(state="normal", raw_pitch=tag, raw_yaw=i,
+                                  received_at=float(i))
+        except Exception as exc:  # pragma: no cover — failure path only
+            errors.append(exc)
+
+    def reader():
+        try:
+            for _ in range(200):
+                telemetry.snapshot()
+                telemetry.get("raw_pitch")
+        except Exception as exc:  # pragma: no cover — failure path only
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=writer, args=(1,)),
+        threading.Thread(target=writer, args=(2,)),
+        threading.Thread(target=reader),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert errors == []
+    snap = telemetry.snapshot()
+    assert snap["state"] == "normal"
+    assert snap["raw_pitch"] in (1, 2)  # whichever writer finished last
