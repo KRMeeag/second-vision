@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from second_vision.core.config import SystemConfig
 from second_vision.core.priority import PriorityMailbox
+from second_vision.core.imu_telemetry import ImuTelemetry
 
 # Conditional imports — don't crash if hailo isn't installed (mock mode)
 HAILO_AVAILABLE = True
@@ -76,6 +77,9 @@ class SecondVisionUserData(_UserDataBase):
         self.tts_queue = PriorityMailbox()
         self.serial_queue = queue.Queue(maxsize=10)
         self.shutdown_event = threading.Event()
+        # Latest BMI160 reading off the ESP32, written by serial_worker as
+        # 0x02 packets arrive. "Latest", not a queue — see core/imu_telemetry.py.
+        self.imu_telemetry = ImuTelemetry()
 
 
 def main():

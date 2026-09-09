@@ -29,6 +29,29 @@ READ_TIMEOUT_SECONDS = 0.01
 # couple us to a detail neither side agreed to.
 ACK_PREFIX = bytes([0xAA, 0xFF])
 
+# --- Inbound: BMI160 telemetry, ESP32 -> Pi (0x02) ---------------------------
+# Matches MSG_IMU_TELEMETRY in firmware/esp32_haptic_feedback/src/main.cpp.
+# Unlike the outbound packets above, this direction gets no ACK — nothing here
+# needs to tell the ESP32 a reading was received.
+#
+#   byte 0   0xAA start
+#   byte 1   0x02 (MSG_IMU_TELEMETRY)
+#   byte 2   state: 0=normal, 1=head_moving, 2=wrong_pitch
+#   byte 3-4 raw_pitch, int16, big-endian (high byte first)
+#   byte 5-6 raw_yaw,   int16, big-endian
+#   byte 7   checksum = 0x02 ^ state ^ pitch_hi ^ pitch_lo ^ yaw_hi ^ yaw_lo
+MSG_IMU_TELEMETRY = 0x02
+IMU_TELEMETRY_FRAME_LEN = 8  # start + type + state + pitch(2) + yaw(2) + checksum
+
+IMU_STATE_NAMES = {0: "normal", 1: "head_moving", 2: "wrong_pitch"}
+
+# A partial telemetry frame (0xAA 0x02 seen, payload still incomplete) that
+# never finishes — a dropped byte, a cable pulled mid-packet — must not sit in
+# the carryover buffer forever. Anything older than this is abandoned so the
+# next real bytes can resync cleanly, mirroring BYTE_TIMEOUT_MS on the
+# firmware side of this same link.
+IMU_TELEMETRY_STALE_SECONDS = 0.5
+
 # The ESP32 zeroes the motors after 3 s without traffic. Send something every
 # second so two heartbeats can be lost — to a dropped write, a busy loop, a
 # scheduling hiccup — before the wearer feels the device cut out. Raising this
@@ -122,6 +145,17 @@ def serial_worker(user_data, config):
         # so checking immediately after a write would measure the round trip
         # rather than the link.
         ack_seen = _check_ack(port)
+
+        # Independent of ACK/link-health bookkeeping below: whatever BMI160
+        # reading _check_ack staged from this same drain, publish it for any
+        # consumer holding this user_data. getattr guards user_data variants
+        # that don't carry imu_telemetry (e.g. a minimal stub in a test) —
+        # this worker has no business requiring every caller to have one.
+        telemetry = _take_imu_telemetry(port)
+        if telemetry is not None:
+            imu_telemetry = getattr(user_data, "imu_telemetry", None)
+            if imu_telemetry is not None:
+                imu_telemetry.update(received_at=time.monotonic(), **telemetry)
 
         if ack_seen and not connection_verified:
             print("\n=======================================================")
@@ -382,6 +416,108 @@ def _heartbeat_if_due(port, last_write_at: float) -> float:
     return now
 
 
+def _decode_imu_frame(frame: bytes):
+    """
+    Decode one already-checksum-verified-length, exactly IMU_TELEMETRY_FRAME_LEN
+    byte frame (frame[0] == 0xAA, frame[1] == MSG_IMU_TELEMETRY assumed by the
+    caller). Returns a dict on a valid checksum, None on a bad one — the caller
+    decides what to do with a bad checksum, this function just doesn't act on it.
+
+    struct.unpack(">h", ...) does the signed decoding: ">" is big-endian to
+    match the firmware's byte order, "h" is a signed 16-bit int, so two's
+    complement negative values (e.g. a pitch tipped backward) come out correct
+    without hand-rolled sign-extension logic.
+    """
+    state_byte, pitch_hi, pitch_lo, yaw_hi, yaw_lo, checksum = frame[2:8]
+    expected = MSG_IMU_TELEMETRY ^ state_byte ^ pitch_hi ^ pitch_lo ^ yaw_hi ^ yaw_lo
+    if checksum != expected:
+        return None
+    raw_pitch = struct.unpack(">h", bytes([pitch_hi, pitch_lo]))[0]
+    raw_yaw = struct.unpack(">h", bytes([yaw_hi, yaw_lo]))[0]
+    return {
+        "state": IMU_STATE_NAMES.get(state_byte, "unknown"),
+        "raw_pitch": raw_pitch,
+        "raw_yaw": raw_yaw,
+    }
+
+
+def _scan_imu_telemetry(buf: bytes):
+    """
+    Walk buf for 0x02 telemetry frames. Returns (remaining_tail, latest_or_None).
+
+    Keeps only the LAST successfully decoded frame in this chunk — a "most
+    recent reading" store has no use for intermediate values it would
+    immediately overwrite anyway. A bad checksum is dropped and logged
+    (throttled, like every other link error here), not raised: one corrupted
+    reading is not worth losing the reader loop over, and the next one is
+    ~200ms behind it.
+
+    Any 0xAA that turns out not to start a 0x02 frame (an ACK prefix, noise)
+    is simply stepped past — this scan only cares about its own message type;
+    _check_ack's scan over the same chunk handles ACKs independently.
+    """
+    latest = None
+    i = 0
+    n = len(buf)
+    while i < n:
+        if buf[i] != 0xAA:
+            i += 1
+            continue
+        if i + 1 >= n:
+            break  # type byte hasn't arrived yet — keep from here as the tail
+        if buf[i + 1] != MSG_IMU_TELEMETRY:
+            i += 1
+            continue
+        if i + IMU_TELEMETRY_FRAME_LEN > n:
+            break  # frame not fully arrived yet — keep from here as the tail
+        decoded = _decode_imu_frame(buf[i:i + IMU_TELEMETRY_FRAME_LEN])
+        if decoded is None:
+            _log_serial_error("IMU telemetry checksum mismatch, dropping frame")
+        else:
+            latest = decoded
+        i += IMU_TELEMETRY_FRAME_LEN
+    return buf[i:], latest
+
+
+def _extract_imu_telemetry(port, chunk: bytes, now: float):
+    """
+    Feed this call's already-drained chunk through the telemetry scanner,
+    carrying a partial frame across calls on the port object — same technique
+    _check_ack uses for _sv_ack_tail, just with a longer carryover since an
+    8-byte frame cannot survive being trimmed to 1 byte the way the 2-byte ACK
+    prefix can.
+
+    Does its own I/O: none. `chunk` must come from the SAME drain _check_ack
+    already performed this iteration — reading the port a second time here
+    would consume bytes out from under whichever scan ran first and could
+    split a frame between them.
+    """
+    tail = getattr(port, "_sv_telemetry_tail", b"")
+    tail_started_at = getattr(port, "_sv_telemetry_tail_started_at", now)
+    if tail and (now - tail_started_at) > IMU_TELEMETRY_STALE_SECONDS:
+        tail = b""  # abandon a partial frame that stalled; resync on new bytes only
+
+    new_tail, latest = _scan_imu_telemetry(tail + chunk)
+    port._sv_telemetry_tail = new_tail
+    port._sv_telemetry_tail_started_at = tail_started_at if (new_tail and tail) else now
+
+    if latest is not None:
+        port._sv_pending_telemetry = latest
+
+
+def _take_imu_telemetry(port):
+    """
+    Pop the most recent BMI160 reading _check_ack staged this iteration, or
+    None if nothing new decoded since the last call. Call this once per loop
+    iteration, after _check_ack — it does not read the port itself.
+    """
+    if port is None:
+        return None
+    telemetry = getattr(port, "_sv_pending_telemetry", None)
+    port._sv_pending_telemetry = None
+    return telemetry
+
+
 def _check_ack(port) -> bool:
     """
     Has the ESP32 acknowledged anything since the last check?
@@ -399,6 +535,12 @@ def _check_ack(port) -> bool:
     and unbounded growth on a chatty board would be a slow leak.
 
     A None port returns True — no link, so no link to have lost.
+
+    Side effect: also stages any BMI160 telemetry (0x02) found in the same
+    drained bytes for _take_imu_telemetry() to collect — see that function
+    and _extract_imu_telemetry() below. This function's own return value and
+    ACK-detection behavior are unchanged by that; it is additive scanning
+    over the chunk this function already reads, not a second read.
     """
     if port is None:
         return True
@@ -411,6 +553,15 @@ def _check_ack(port) -> bool:
 
     if not chunk:
         return False
+
+    # Same drained chunk, scanned twice for two independent purposes: this
+    # scan below for the ACK prefix (unchanged from before telemetry
+    # existed), and _extract_imu_telemetry for 0x02 frames. Both run off this
+    # one port.read() rather than each doing their own — a second read here
+    # would consume whatever arrived after this call's read, silently
+    # stealing bytes out from under the other scan and fragmenting frames
+    # unpredictably.
+    _extract_imu_telemetry(port, chunk, time.monotonic())
 
     buffered = getattr(port, "_sv_ack_tail", b"") + chunk
     found = ACK_PREFIX in buffered
