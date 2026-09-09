@@ -39,11 +39,19 @@ HardwareSerial PiSerial(1);
 const uint8_t START_BYTE = 0xAA;
 const uint8_t ACK_TYPE = 0xFF;
 const uint8_t MSG_MOTOR_UPDATE = 0x01;
+const uint8_t MSG_IMU_TELEMETRY = 0x02;  // ESP32 -> Pi, no ACK expected back
 const uint8_t MSG_HAZARD_ALERT = 0x04;
 const uint8_t MSG_HEARTBEAT = 0xFE;
 
 const uint8_t MOTOR_UPDATE_PAYLOAD_LEN = 3;  // left, center, right
 const uint8_t HAZARD_ALERT_PAYLOAD_LEN = 2;  // severity, pattern
+
+// IMU telemetry states, sent as a single byte instead of the JSON string used
+// on the USB debug path — cheap to add a fourth value later, but the Pi side
+// must be updated in lockstep since these are positional, not named.
+const uint8_t IMU_STATE_NORMAL = 0;
+const uint8_t IMU_STATE_HEAD_MOVING = 1;
+const uint8_t IMU_STATE_WRONG_PITCH = 2;
 
 // A packet that stops arriving mid-way (cable pulled, Pi crashed while
 // writing) must not wedge the reader forever waiting for bytes that are never
@@ -112,6 +120,23 @@ void applyMotorDuty(uint8_t left, uint8_t center, uint8_t right) {
 void sendAck(uint8_t msgType) {
   uint8_t ackPacket[] = {START_BYTE, ACK_TYPE, msgType};
   PiSerial.write(ackPacket, sizeof(ackPacket));
+}
+
+// Outbound ESP32 -> Pi. Big-endian (high byte first) for the two int16
+// fields, matching typical wire-protocol convention; the Pi-side parser must
+// agree on this byte order. No ACK is expected back for this message type —
+// unlike the inbound motor/hazard/heartbeat packets, nothing on the ESP32
+// currently needs to know the Pi received it.
+void sendImuTelemetry(uint8_t state, int16_t rawPitch, int16_t rawYaw) {
+  uint8_t pitchHi = (uint8_t)((rawPitch >> 8) & 0xFF);
+  uint8_t pitchLo = (uint8_t)(rawPitch & 0xFF);
+  uint8_t yawHi = (uint8_t)((rawYaw >> 8) & 0xFF);
+  uint8_t yawLo = (uint8_t)(rawYaw & 0xFF);
+  uint8_t checksum = MSG_IMU_TELEMETRY ^ state ^ pitchHi ^ pitchLo ^ yawHi ^ yawLo;
+
+  uint8_t packet[] = {START_BYTE, MSG_IMU_TELEMETRY, state,
+                       pitchHi, pitchLo, yawHi, yawLo, checksum};
+  PiSerial.write(packet, sizeof(packet));
 }
 
 void resetReader() {
@@ -324,13 +349,22 @@ void loop() {
         }
 
         String currentState = "normal";
-        if (abs(gyroYaw) > 20000) { 
+        uint8_t stateByte = IMU_STATE_NORMAL;
+        if (abs(gyroYaw) > 20000) {
           currentState = "head_moving";
-        } else if (abs(accelPitch) > 14000) { 
+          stateByte = IMU_STATE_HEAD_MOVING;
+        } else if (abs(accelPitch) > 14000) {
           currentState = "wrong_pitch";
+          stateByte = IMU_STATE_WRONG_PITCH;
         }
 
-        // Stream telemetry back to the host/RPi
+        // Binary packet to the Pi, over the real PiSerial link (D6/D7) — see
+        // MSG_IMU_TELEMETRY above. Sent every tick regardless of MAC_MODE;
+        // harmless if nothing is listening on the other end.
+        sendImuTelemetry(stateByte, accelPitch, gyroYaw);
+
+        // USB debug mirror — unchanged, still JSON, still on Serial (not the
+        // Pi link).
         JsonDocument outDoc;
         outDoc["state"] = currentState;
         outDoc["raw_pitch"] = accelPitch;
@@ -338,7 +372,7 @@ void loop() {
 
         Serial.print("[IMU TELEMETRY] ");
         serializeJson(outDoc, Serial);
-        Serial.println(); 
+        Serial.println();
       } else {
         imuHealthy = false;
         Serial.println("[ERROR] Lost connection to BMI160 IMU! Telemetry suspended.");
