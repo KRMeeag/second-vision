@@ -158,6 +158,14 @@ void handlePacket(uint8_t msgType, const uint8_t *body, uint8_t bodyLen) {
     if (!hazardActive) {
       applyMotorDuty(motorDuty[0], motorDuty[1], motorDuty[2]);
     }
+    // BENCH-TEST DEBUG — REMOVE AFTER RPi->MOTOR PATH IS VERIFIED. This
+    // packet is normally applied silently (see the file's top-level note on
+    // pollPiSerial()/applyMotorDuty()); this print exists only so the
+    // depth-estimation-to-motor-duty values arriving from the Pi are visible
+    // on the USB debug console during bench testing, without needing to
+    // trust the Pi-side log alone.
+    Serial.printf("[BENCH MOTOR] left=%u center=%u right=%u\n",
+                   motorDuty[0], motorDuty[1], motorDuty[2]);
   } else if (msgType == MSG_HAZARD_ALERT) {
     uint8_t severity = body[0];
     // `pattern` (body[1]) is reserved on the Pi side for future variants and
