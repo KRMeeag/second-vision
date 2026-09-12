@@ -77,10 +77,29 @@ try:
 except ImportError:
     sys.exit("  pyserial missing — activate my_hailo_env first")
 dev, secs = sys.argv[1], float(sys.argv[2])
-p = serial.Serial(dev, 9600, timeout=1)
+R, O = "\033[31m", "\033[0m"
+
+# A serial port takes ONE reader. If main.py (or panel_monitor.py) already has
+# it open, reads here fail in a way that looks like a hardware fault — the
+# laptop agent hit the same thing in panel_monitor.py. Say so plainly instead.
+try:
+    p = serial.Serial(dev, 9600, timeout=1)
+except Exception as exc:
+    sys.exit(f"  {R}FAIL{O}  cannot open {dev}: {exc}")
 end, lines, junk = time.time() + secs, [], 0
-while time.time() < end:
-    raw = p.readline()
+try:
+  while time.time() < end:
+    try:
+        raw = p.readline()
+    except serial.SerialException as exc:
+        p.close()
+        print(f"  {R}FAIL{O}  the port went away mid-read: {exc}")
+        print( "        Almost always ANOTHER PROCESS holding it — the pipeline,")
+        print( "        or panel_monitor.py. Check with:")
+        print(f"           sudo fuser -v {dev}")
+        print( "        Stop that process, or read its output instead of running")
+        print( "        this. A serial port takes one reader at a time.")
+        sys.exit(1)
     if not raw:
         continue
     t = raw.decode(errors="ignore").strip()
@@ -91,7 +110,11 @@ while time.time() < end:
         lines.append(t)
     else:
         junk += 1
-p.close()
+finally:
+  try:
+      p.close()
+  except Exception:
+      pass
 G, R, O = "\033[32m", "\033[31m", "\033[0m"
 if lines:
     print(f"  {G}PASS{O}  {len(lines)} protocol lines" + (f", {junk} discarded" if junk else ""))

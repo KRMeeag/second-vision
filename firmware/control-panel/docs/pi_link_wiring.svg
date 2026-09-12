@@ -15,8 +15,9 @@
 <text x="182" y="263" font-size="8.5" fill="#f9fafb" text-anchor="middle" font-weight="bold">GND</text>
 <text x="118" y="250" font-size="6.5" fill="#9ca3af" text-anchor="middle" font-weight="normal">(VIN on 30-pin)</text>
 <rect x="60" y="368" width="180" height="74" rx="6" fill="#334155"/>
-<text x="150.0" y="402" font-size="12" fill="#f9fafb" text-anchor="middle" font-weight="bold">X1202 UPS</text>
-<text x="150.0" y="420" font-size="8.5" fill="#cbd5e1" text-anchor="middle" font-weight="normal">XH2.54 5V out</text>
+<text x="150.0" y="398" font-size="12" fill="#f9fafb" text-anchor="middle" font-weight="bold">X1202 UPS</text>
+<text x="150.0" y="414" font-size="8.5" fill="#cbd5e1" text-anchor="middle" font-weight="normal">XH2.54 5V out</text>
+<text x="150.0" y="428" font-size="8" fill="#9ca3af" text-anchor="middle" font-weight="normal">→ protoboard rails</text>
 <text x="150.0" y="460" font-size="8" fill="#6b7280" text-anchor="middle" font-weight="normal">powers the Pi → this GND</text>
 <text x="150.0" y="472" font-size="8" fill="#6b7280" text-anchor="middle" font-weight="bold">IS the Pi's GND</text>
 <circle cx="118" cy="368" r="7" fill="#dc2626" stroke="#ffffff" stroke-width="2"/>
@@ -147,12 +148,13 @@
 <text x="250" y="852" font-size="10.5" fill="#111827" text-anchor="start" font-weight="bold">Pi PIN 21  (GPIO9 · uart3-pi5 RX)</text>
 <text x="560" y="852" font-size="9" fill="#6b7280" text-anchor="start" font-weight="normal">panel data → Pi.  NOT pin 10 — that is the motor link</text>
 <rect x="24" y="866" width="388" height="116" rx="6" fill="#fee2e2" stroke="#fca5a5"/>
-<text x="37" y="887" font-size="10" fill="#991b1b" text-anchor="start" font-weight="bold">THIS KILLS PINS</text>
-<text x="37" y="906" font-size="8.4" fill="#991b1b" text-anchor="start" font-weight="normal">• Pi GPIO is 3.3 V and NOT 5 V tolerant. The X1202's 5 V</text>
-<text x="37" y="920" font-size="8.4" fill="#991b1b" text-anchor="start" font-weight="normal">   goes to the ESP32's 5V pin and nowhere else.</text>
-<text x="37" y="934" font-size="8.4" fill="#991b1b" text-anchor="start" font-weight="normal">• Not into the ESP32's 3V3 pin either — that bypasses its</text>
-<text x="37" y="948" font-size="8.4" fill="#991b1b" text-anchor="start" font-weight="normal">   regulator and puts 5 V on the module.</text>
-<text x="37" y="962" font-size="8.4" fill="#991b1b" text-anchor="start" font-weight="normal">• Count from the SQUARE pin 1. Pin 21 is not near pin 1.</text>
+<text x="37" y="887" font-size="10" fill="#991b1b" text-anchor="start" font-weight="bold">THIS KILLS THE BOARD</text>
+<text x="37" y="906" font-size="8.4" fill="#991b1b" text-anchor="start" font-weight="normal">• CHECK POLARITY with a meter before connecting the</text>
+<text x="37" y="920" font-size="8.4" fill="#991b1b" text-anchor="start" font-weight="normal">   XH2.54. Reversed 5 V and GND destroys the ESP32.</text>
+<text x="37" y="934" font-size="8.4" fill="#991b1b" text-anchor="start" font-weight="normal">• 5 V to the ESP32's 5V pin ONLY. Never its 3V3 pin (that</text>
+<text x="37" y="948" font-size="8.4" fill="#991b1b" text-anchor="start" font-weight="normal">   bypasses the regulator), never a Pi GPIO (3.3 V only).</text>
+<text x="37" y="962" font-size="8.4" fill="#991b1b" text-anchor="start" font-weight="normal">• TWO separate protoboard rails: 5V in, and 3V3 out of the</text>
+<text x="37" y="976" font-size="8.4" fill="#991b1b" text-anchor="start" font-weight="normal">   ESP32 feeding the pot. NEVER join them.</text>
 <rect x="428" y="866" width="388" height="116" rx="6" fill="#dbeafe" stroke="#93c5fd"/>
 <text x="441" y="887" font-size="10" fill="#1e3a8a" text-anchor="start" font-weight="bold">WHY GPIO23, NOT GPIO1</text>
 <text x="441" y="906" font-size="8.4" fill="#1e3a8a" text-anchor="start" font-weight="normal">GPIO1 is UART0 TX — the ESP32's USB serial. The ROM</text>

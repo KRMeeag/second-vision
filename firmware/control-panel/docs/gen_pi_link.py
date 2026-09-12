@@ -52,8 +52,9 @@ txt(vin[0], vin[1]-26, "(VIN on 30-pin)", 6.5, "#9ca3af", "middle")
 
 XY = EY + EH + 92
 add(f'<rect x="{EX}" y="{XY}" width="{EW}" height="74" rx="6" fill="#334155"/>')
-txt(EX+EW/2, XY+34, "X1202 UPS", 12, "#f9fafb", "middle", "bold")
-txt(EX+EW/2, XY+52, "XH2.54 5V out", 8.5, "#cbd5e1", "middle")
+txt(EX+EW/2, XY+30, "X1202 UPS", 12, "#f9fafb", "middle", "bold")
+txt(EX+EW/2, XY+46, "XH2.54 5V out", 8.5, "#cbd5e1", "middle")
+txt(EX+EW/2, XY+60, "\u2192 protoboard rails", 8, "#9ca3af", "middle")
 txt(EX+EW/2, XY+92, "powers the Pi → this GND", 8, "#6b7280", "middle")
 txt(EX+EW/2, XY+104, "IS the Pi's GND", 8, "#6b7280", "middle", "bold")
 for (px, lab, col) in ((EX+58, "5V", RED), (EX+122, "GND", BLACK)):
@@ -138,12 +139,13 @@ def box(x, y, w, h, fill, stroke, title, lines, tc):
         txt(x+13, y+40+i*14, l, 8.4, tc)
 
 BY, BH = 866, 116
-box(24, BY, 388, BH, "#fee2e2", "#fca5a5", "THIS KILLS PINS", [
-    "• Pi GPIO is 3.3 V and NOT 5 V tolerant. The X1202's 5 V",
-    "   goes to the ESP32's 5V pin and nowhere else.",
-    "• Not into the ESP32's 3V3 pin either — that bypasses its",
-    "   regulator and puts 5 V on the module.",
-    "• Count from the SQUARE pin 1. Pin 21 is not near pin 1.",
+box(24, BY, 388, BH, "#fee2e2", "#fca5a5", "THIS KILLS THE BOARD", [
+    "• CHECK POLARITY with a meter before connecting the",
+    "   XH2.54. Reversed 5 V and GND destroys the ESP32.",
+    "• 5 V to the ESP32's 5V pin ONLY. Never its 3V3 pin (that",
+    "   bypasses the regulator), never a Pi GPIO (3.3 V only).",
+    "• TWO separate protoboard rails: 5V in, and 3V3 out of the",
+    "   ESP32 feeding the pot. NEVER join them.",
 ], "#991b1b")
 
 box(428, BY, 388, BH, "#dbeafe", "#93c5fd", "WHY GPIO23, NOT GPIO1", [
