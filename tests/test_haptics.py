@@ -101,12 +101,12 @@ def test_uniform_corridor_does_not_buzz_continuously():
     length of every corridor in a mall is one the wearer switches off, and skin
     habituates to a gentle hum exactly as readily as to a strong one.
     """
-    mapper = HapticMapper()
-    corridor = zones(120, 120, 120)
+    mapper = HapticMapper(pulse=True)
+    corridor = zones(120, 0, 120)
     steady(mapper, corridor, frames=30)
     samples = [mapper.shape(corridor, hp.PULSE_AFTER_S + 0.5 + i * 0.05)["left"]
                for i in range(int(hp.PULSE_PERIOD_S / 0.05) + 1)]
-    assert any(s == 0 for s in samples), "hums nonstop down the whole corridor"
+    assert min(samples) < max(samples), "hums flat down the whole corridor"
     assert any(s > 0 for s in samples), "goes silent instead of pulsing"
 
 
@@ -215,19 +215,50 @@ def test_a_real_drop_still_steps_down():
 # --- habituation ------------------------------------------------------------
 
 def test_held_strong_reading_starts_pulsing():
-    mapper = HapticMapper()
+    mapper = HapticMapper(pulse=True)
     strong = zones(255, 0, 0)
     mapper.shape(strong, 0.0)
     # Well past PULSE_AFTER_S, sample a full pulse period.
     samples = [mapper.shape(strong, hp.PULSE_AFTER_S + 0.5 + i * 0.05)["left"]
                for i in range(int(hp.PULSE_PERIOD_S / 0.05) + 1)]
-    assert any(s == 0 for s in samples), "never goes off — the skin will stop feeling it"
-    assert any(s > 0 for s in samples), "never comes back on"
+    assert min(samples) < hp.PWM_MAX, "never dips — the skin will stop feeling it"
+    assert max(samples) == hp.PWM_MAX, "never comes back to full"
+
+
+def test_a_held_strong_reading_dips_but_never_stops():
+    """
+    The field report: "255 one second, 0 the next" overwhelmed the wearer. A
+    held obstacle is modulated, not chopped — above the floor level the motor
+    is never driven to zero, and the dip is a small part of each period.
+    """
+    mapper = HapticMapper(pulse=True)
+    strong = zones(255, 0, 0)
+    mapper.shape(strong, 0.0)
+    samples = [mapper.shape(strong, hp.PULSE_AFTER_S + i * 0.02)["left"]
+               for i in range(int(hp.PULSE_PERIOD_S * 3 / 0.02))]
+    assert min(samples) >= hp.PWM_FLOOR, "a held strong reading went fully silent"
+    dipped = sum(1 for s in samples if s < hp.PWM_MAX) / len(samples)
+    assert dipped <= 1.0 - hp.PULSE_DUTY + 0.02, f"dip occupies {dipped:.0%} of the period"
+
+
+def test_modulation_only_starts_after_a_genuinely_static_hold():
+    """Long enough that a person walking past never sees it start."""
+    assert hp.PULSE_AFTER_S >= 5.0
+
+
+def test_a_floor_level_reading_dips_to_silence_briefly():
+    """Level 1 has nothing lower to dip to, so it ticks instead."""
+    mapper = HapticMapper(pulse=True)
+    faint = zones(int(255 * (hp.DEADBAND + 0.05)), 0, 0)
+    mapper.shape(faint, 0.0)
+    samples = [mapper.shape(faint, hp.PULSE_AFTER_S + i * 0.02)["left"]
+               for i in range(int(hp.PULSE_PERIOD_S / 0.02))]
+    assert 0 in samples and hp.PWM_FLOOR in samples
 
 
 def test_pulse_holds_off_while_the_reading_is_still_changing():
     """A changing reading already re-triggers the skin; chopping it adds nothing."""
-    mapper = HapticMapper()
+    mapper = HapticMapper(pulse=True)
     out = None
     for i in range(int((hp.PULSE_AFTER_S + 2.0) * 30)):
         raw = 200 + (i % 2) * 55           # strong, but never settling
@@ -241,7 +272,7 @@ def test_a_held_reading_is_continuous_until_the_pulse_delay():
     when it carries the most information, and chopping it there would read as a
     flickering detector rather than as an obstacle.
     """
-    mapper = HapticMapper()
+    mapper = HapticMapper(pulse=True)
     strong = zones(255, 0, 0)
     first = mapper.shape(strong, 0.0)["left"]
     assert first > 0
@@ -251,7 +282,7 @@ def test_a_held_reading_is_continuous_until_the_pulse_delay():
 
 def test_silence_is_never_pulsed_into_noise():
     """The pulse gate must not be able to turn a zero into a non-zero."""
-    mapper = HapticMapper()
+    mapper = HapticMapper(pulse=True)
     for i in range(int((hp.PULSE_AFTER_S + hp.PULSE_PERIOD_S * 2) * 30)):
         assert mapper.shape(zones(0, 0, 0), i / 30.0) == {z: 0 for z in ZONE_NAMES}
 
@@ -299,9 +330,141 @@ def test_last_levels_track_the_unpulsed_intent():
     The HUD reads last_levels, not the returned duty: a frame sampled during a
     pulse's off phase must not look like the detector lost the obstacle.
     """
-    mapper = HapticMapper()
+    mapper = HapticMapper(pulse=True)
     strong = zones(255, 0, 0)
     mapper.shape(strong, 0.0)
     for i in range(int(hp.PULSE_PERIOD_S / 0.05) + 1):
         mapper.shape(strong, hp.PULSE_AFTER_S + 0.5 + i * 0.05)
         assert mapper.last_levels["left"] == hp.LEVELS - 1
+
+
+# --- winner-take-most --------------------------------------------------------
+
+def test_winner_take_most_leaves_the_loudest_zone_alone():
+    out = hp.apply_winner_take_most(zones(1.0, 0.6, 0.2), 1.0)
+    assert out["left"] == 1.0
+
+
+def test_winner_take_most_passes_a_uniform_frame_through():
+    """A wall across the whole field is three loud zones, not none."""
+    out = hp.apply_winner_take_most(zones(0.7, 0.7, 0.7), 1.0)
+    assert out == zones(0.7, 0.7, 0.7)
+
+
+def test_winner_take_most_never_goes_negative():
+    out = hp.apply_winner_take_most(zones(1.0, 0.1, 0.0), 2.0)
+    assert all(v >= 0.0 for v in out.values())
+
+
+def test_a_side_obstacle_is_felt_on_that_side_only():
+    """
+    The field report: a person on the right at 255 next to a centre zone at
+    ~200 (something farther, dead ahead) came out at the SAME level on both
+    motors — the wearer felt "centre". The right motor must clearly win.
+    """
+    out = steady(HapticMapper(), zones(0, 200, 255), frames=30)
+    assert out["right"] == hp.PWM_MAX
+    assert out["center"] < out["right"]
+    assert out["left"] == 0
+
+
+def test_a_trailing_zone_that_is_close_behind_still_registers():
+    """Winner-take-most amplifies the difference; it must not erase near-ties."""
+    out = steady(HapticMapper(), zones(0, 240, 255), frames=30)
+    assert out["center"] > 0
+
+
+def test_corridor_still_fires_both_temples():
+    """Two tied walls are two winners: a corridor keeps warning on both sides."""
+    mapper = HapticMapper()
+    out = mapper.shape(zones(200, 40, 200), 0.0)
+    assert out["left"] == out["right"] > 0
+    assert out["center"] == 0
+
+
+# --- centre priority ---------------------------------------------------------
+
+def test_person_across_centre_and_right_is_felt_on_centre_only():
+    """The request: centre + right -> centre alone. The centre is the path."""
+    out = steady(HapticMapper(), zones(0, 255, 240), frames=30)
+    assert out["center"] > 0
+    assert out["left"] == 0 and out["right"] == 0, out
+
+
+def test_person_across_centre_and_left_is_felt_on_centre_only():
+    out = steady(HapticMapper(), zones(240, 255, 0), frames=30)
+    assert out["center"] > 0
+    assert out["left"] == 0 and out["right"] == 0, out
+
+
+def test_wall_across_all_three_zones_is_felt_on_centre_only():
+    """Three motors at once is not a stronger message, it is no message."""
+    out = steady(HapticMapper(), zones(255, 255, 255), frames=30)
+    # (Not PWM_MAX: lateral contrast still takes CONTRAST_FRACTION of the common
+    # component off a uniform frame first — a separate, documented trade-off.)
+    assert out["center"] > 0
+    assert out["left"] == 0 and out["right"] == 0, out
+
+
+def test_a_clearly_nearer_side_is_not_silenced_by_a_far_centre():
+    """
+    The safety guard on the rule above: someone at your shoulder while the
+    centre reads a wall metres ahead keeps the side motor. Silencing the nearer
+    hazard would be the unsafe direction.
+    """
+    out = steady(HapticMapper(), zones(0, 120, 255), frames=30)
+    assert out["right"] > 0, out
+    assert out["right"] > out["center"], out
+
+
+def test_corridor_without_a_centre_reading_is_unaffected():
+    out = steady(HapticMapper(), zones(200, 0, 200), frames=30)
+    assert out["left"] == out["right"] > 0
+    assert out["center"] == 0
+
+
+def test_center_priority_never_raises_a_zone():
+    for vals in (zones(0.0, 0.0, 0.0), zones(1.0, 0.5, 0.2), zones(0.3, 0.9, 0.3)):
+        out = hp.apply_center_priority(vals)
+        assert all(out[z] <= vals[z] for z in ZONE_NAMES)
+
+
+def test_center_priority_can_be_disabled():
+    out = steady(HapticMapper(center_priority=False), zones(0, 255, 255), frames=30)
+    assert out["right"] > 0
+
+
+def test_center_priority_does_not_flicker_on_the_margin():
+    """
+    Live: a surface filling the field read L=255 C=203 R=252 for one frame and
+    all three motors fired for a tick. Once the centre holds priority, a side
+    has to beat it by margin + hysteresis to take it back.
+    """
+    mapper = HapticMapper()
+    steady(mapper, zones(255, 244, 255), frames=30)          # centre holds
+    out = mapper.shape(zones(255, 203, 252), 1.0)             # a hair past the margin
+    assert out["left"] == 0 and out["right"] == 0, out
+    assert out["center"] > 0
+
+
+def test_center_priority_is_released_when_a_side_clearly_wins():
+    mapper = HapticMapper()
+    steady(mapper, zones(255, 244, 255), frames=30)
+    out = steady(mapper, zones(0, 120, 255), frames=30, start=1.0)
+    assert out["right"] > 0 and out["center"] == 0, out
+
+
+def test_a_point_blank_wall_is_felt_at_full_strength():
+    """Live: L=255 C=244 R=255 came out at C=145. The forehead must saturate."""
+    out = steady(HapticMapper(), zones(255, 244, 255), frames=30)
+    assert out["center"] == hp.PWM_MAX, out
+
+
+def test_pulse_is_off_by_default():
+    """Field evidence: testers read the modulation as a fault, twice."""
+    assert not hp.PULSE_ENABLED
+    mapper = HapticMapper()
+    strong = zones(255, 0, 0)
+    mapper.shape(strong, 0.0)
+    for i in range(int(hp.PULSE_PERIOD_S * 3 / 0.05)):
+        assert mapper.shape(strong, hp.PULSE_AFTER_S + i * 0.05)["left"] == hp.PWM_MAX

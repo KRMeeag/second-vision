@@ -389,10 +389,22 @@ def cable_scene():
     return scene
 
 
-def test_a_cable_alone_drives_the_motors():
+def test_a_cable_alone_drives_the_motors_when_enabled(monkeypatch):
     """The reason the detector exists: nothing else in the module sees this."""
-    assert du.THIN_DRIVES_MOTORS, "flag is off — the rest of this test is meaningless"
+    monkeypatch.setattr(du, "THIN_DRIVES_MOTORS", True)
     assert DepthPostProcessor().process(cable_scene())["center"] > 0
+
+
+def test_thin_is_off_by_default_and_still_auditable():
+    """
+    Live decision (2026-09-14): the T tag fired on furniture edges, so the
+    reading no longer reaches the motors — but it must still be computed and
+    published, or the HUD cannot show whether calibration has fixed it.
+    """
+    assert not du.THIN_DRIVES_MOTORS
+    p = DepthPostProcessor()
+    assert p.process(cable_scene())["center"] == 0
+    assert p.last_thin["center"] > 0
 
 
 def test_thin_only_ever_raises_a_zone(monkeypatch):
@@ -499,3 +511,169 @@ def test_a_static_scene_does_not_flap():
         p.process(scene)
     settled = [p.process(scene)["center"] for _ in range(10)]
     assert max(settled) - min(settled) <= 1, settled
+
+
+# ============================================================
+# Floor suppression — the ground plane is not an obstacle
+# ============================================================
+def open_floor(shape=NATIVE, near=16.0, far=45.0, horizon=0.4, sigma=1.0, seed=0):
+    """
+    A forehead-camera view of an empty floor: `near` at the bottom row, receding
+    to `far` at `horizon` (fraction of the height from the top), `far` above it.
+    The scene the device spends most of its life looking at.
+    """
+    h, w = shape
+    yy = np.arange(h)[:, None]
+    hz = int(h * horizon)
+    d = np.where(yy > hz, near + (far - near) * (h - yy) / (h - hz), far)
+    d = np.repeat(d, w, axis=1).astype(np.float32)
+    if sigma:
+        d += np.random.default_rng(seed).normal(0, sigma, shape).astype(np.float32)
+    return d
+
+
+def settled(scene, frames=30):
+    p = DepthPostProcessor()
+    out = None
+    for _ in range(frames):
+        out = p.process(scene)
+    return out, p
+
+
+def test_floor_profile_fits_a_receding_plane():
+    scene = open_floor(shape=SMALL, sigma=0.0)
+    floor = du.floor_profile(scene)
+    bottom = scene.shape[0] - 1
+    assert np.isfinite(floor[bottom])
+    # Within the fit window the profile tracks the measured floor (to within
+    # the margin the mask allows — the synthetic floor is linear in depth, the
+    # fit is linear in 1/depth, so they part slightly at the window edge).
+    fit_rows = range(bottom - int(SMALL[0] * du.FLOOR_FIT_FRACTION) + 1, bottom + 1)
+    for r in fit_rows:
+        assert abs(floor[r] - scene[r, 0]) < du.FLOOR_MARGIN_ABS, (r, floor[r], scene[r, 0])
+    # And above the fit window it keeps growing: the plane recedes.
+    assert floor[bottom - 20] > floor[bottom]
+
+
+def test_floor_profile_refuses_a_flat_scene():
+    """A wall filling the bottom of the frame must NOT be mistaken for a floor."""
+    assert not np.isfinite(du.floor_profile(flat(20.0))).any()
+    assert not np.isfinite(du.floor_profile(flat(20.0, sigma=1.0))).any()
+
+
+def test_floor_profile_refuses_a_floor_that_recedes_too_little():
+    scene = receding_floor(near=20.0, step=0.05)         # 20 -> 20.6 over the fit window
+    assert not np.isfinite(du.floor_profile(scene)).any()
+
+
+def test_empty_floor_drives_nothing():
+    """
+    THE bug behind "the centre rings when the person is on the right": with the
+    floor in the zone math every zone read ~213/255 on an empty floor and the
+    motors ran on the wearer's own feet. Empty floor -> silence.
+    """
+    for sigma in (0.0, 1.0, 1.5):
+        out, _ = settled(open_floor(sigma=sigma, seed=3))
+        assert out == {z: 0 for z in ZONE_NAMES}, (sigma, out)
+
+
+def test_person_on_the_right_lights_only_the_right_zone():
+    scene = open_floor(seed=4)
+    scene[40:, 250:315] = du.MIN_DEPTH_M + 1.0           # inside the right zone (x >= 240)
+    out, _ = settled(scene)
+    assert out["right"] == 255, out
+    assert out["left"] == 0 and out["center"] == 0, out
+
+
+def test_a_person_at_moderate_range_still_raises_their_zone():
+    """
+    The inversion floor contamination produced: a person occluding the near
+    floor behind them made their zone read FARTHER than the empty ones. Now a
+    person in the warning band raises their zone and only their zone.
+    """
+    scene = open_floor(seed=5)
+    scene[40:, 250:315] = 21.0
+    out, _ = settled(scene)
+    assert out["right"] > 100, out
+    assert out["left"] == 0 and out["center"] == 0, out
+
+
+def test_wall_at_the_end_of_the_floor_survives_suppression():
+    """The floor is erased, not the thing it runs into."""
+    scene = open_floor(seed=6)
+    scene[:150, :] = du.MIN_DEPTH_M + 3.0                # wall across the whole width
+    out, _ = settled(scene)
+    assert all(out[z] > 200 for z in ZONE_NAMES), out
+
+
+def test_low_obstacle_on_the_floor_is_kept():
+    """A box on the floor is nearer than the floor at its row — it is kept."""
+    scene = open_floor(seed=7)
+    scene[200:, 250:310] = 17.0                          # bottom 20% of the frame only
+    out, _ = settled(scene)
+    assert out["right"] > 150 and out["center"] == 0, out
+
+
+def test_suppression_leaves_rows_above_the_horizon_alone():
+    """
+    Rows with no floor model (inf) must keep every pixel. `inf - margin` is
+    NaN, and a NaN limit compares False — the bug that would have erased
+    everything above the horizon, which is where head-height hazards live.
+    """
+    scene = open_floor(seed=8)
+    scene[10:40, 100:220] = du.MIN_DEPTH_M               # near thing well above the horizon
+    small = downsample_depth(scene)
+    floor = du.floor_profile(small)
+    assert not np.isfinite(floor[:10]).any(), "horizon rows should have no floor"
+    kept = du.suppress_floor(small, floor)
+    top = slice(0, int(small.shape[0] * 0.15))
+    assert np.array_equal(kept[top], small[top])
+
+
+def test_wide_object_in_the_fit_window_disables_suppression_not_the_object():
+    """
+    A person filling most of the bottom rows bends the row medians flat; the
+    fit is rejected and the frame is processed as before — the person fires.
+    """
+    scene = open_floor(seed=9)
+    scene[40:, 64:256] = du.MIN_DEPTH_M + 1.0
+    out, p = settled(scene)
+    assert not np.isfinite(p.last_floor).any()
+    assert out["center"] == 255, out
+
+
+def test_suppression_can_only_lower_a_zone():
+    """
+    Fail-safe direction, checked the same way as every other stage: erasing the
+    floor may never make a zone LOUDER than leaving it in. (It can make one
+    quieter — that is the point.)
+    """
+    for seed in range(4):
+        scene = open_floor(seed=seed)
+        scene[60:, 200:300] = 19.0
+        small = downsample_depth(crop_border(scene))
+        with_floor = {z: du.zone_warning(small[:, a:b])
+                      for z, (a, b) in du._zone_bounds(small.shape[1]).items()}
+        without = compute_zone_intensities(small, small.shape[1])
+        assert all(without[z] <= with_floor[z] + 1e-9 for z in ZONE_NAMES), (with_floor, without)
+
+
+def test_the_floor_flag_off_restores_the_old_behaviour(monkeypatch):
+    monkeypatch.setattr(du, "FLOOR_SUPPRESSION", False)
+    out, _ = settled(open_floor(seed=10))
+    assert all(out[z] > 150 for z in ZONE_NAMES), out      # the floor is back
+
+
+def test_thin_reading_ignores_ridge_pixels_on_the_floor():
+    """
+    The top-hat fires on floor noise (7% of a flat frame at sigma=1.0) and its
+    near-percentile then graded the floor as a cable in every zone. Gated to
+    pixels in front of the floor, an empty floor reports no thin structure —
+    while a cable ABOVE the floor still does.
+    """
+    _, p = settled(open_floor(sigma=1.0, seed=12))
+    assert all(v == 0.0 for v in p.last_thin.values()), p.last_thin
+    scene = open_floor(sigma=1.0, seed=12)
+    scene[60:63, :] = du.MIN_DEPTH_M + 2.0               # cable above the horizon
+    _, p = settled(scene)
+    assert p.last_thin["center"] > 0.0

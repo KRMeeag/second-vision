@@ -16,10 +16,12 @@ import numpy as np
 
 from second_vision.core.depth_utils import (
     DANGER_CELL,
+    GROUND_HAZARD_ENABLED,
     MIN_DEPTH_M,
     SUBGRID_SHAPE,
     subgrid_cell_edges,
     subgrid_cell_proximities,
+    suppress_floor,
     zone_warning_breakdown,
 )
 
@@ -262,10 +264,18 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
     else:
         norm = np.clip((COLOR_FAR - small) / (COLOR_FAR - MIN_DEPTH_M), 0.0, 1.0)
     colored = cv2.applyColorMap((norm * 255).astype(np.uint8), cv2.COLORMAP_JET)
+
+    # The floor-erased grid is what the near-cluster and wall detectors were
+    # actually fed (depth_utils.suppress_floor). It is NOT painted onto the map
+    # (an earlier version darkened erased pixels; testers read the dark band as
+    # a fault). The erased fraction goes into the stats plate instead, so the
+    # floor model stays auditable without touching the picture.
+    obstacles = suppress_floor(small)
+    floor_frac = float(np.mean(obstacles != small))
     frame = cv2.resize(colored, (view_w, view_h), interpolation=cv2.INTER_NEAREST)
 
     if SHOW_SUBGRID_OVERLAY:
-        frame = draw_subgrid_overlay(frame, small, view_w, view_h)
+        frame = draw_subgrid_overlay(frame, obstacles, view_w, view_h)
 
     # Zone dividers (25/50/25 split used by compute_zone_intensities)
     q1, q3 = view_w // 4, 3 * view_w // 4
@@ -274,12 +284,15 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
 
     # Ground-hazard strip boundary (bottom 25% of the frame).
     # Red = drop-off (fall), orange = step-up (trip), yellow = clear.
-    strip_y = int(view_h * 0.75)
-    if hazard_detected:
-        strip_color = (0, 140, 255) if direction == "up" else (0, 0, 255)
-    else:
-        strip_color = (0, 255, 255)
-    cv2.line(frame, (0, strip_y), (view_w, strip_y), strip_color, 2)
+    # Not drawn at all while the detector is disabled: a yellow "clear" line
+    # would claim the ground was checked when nothing looked.
+    if GROUND_HAZARD_ENABLED:
+        strip_y = int(view_h * 0.75)
+        if hazard_detected:
+            strip_color = (0, 140, 255) if direction == "up" else (0, 0, 255)
+        else:
+            strip_color = (0, 255, 255)
+        cv2.line(frame, (0, strip_y), (view_w, strip_y), strip_color, 2)
 
     # Per-zone intensity bars, tagged with WHICH edge-case detector is active, so
     # blank-wall / floor-to-wall are verifiable too, not just thin objects.
@@ -288,6 +301,11 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
         "left": small[:, :gw // 4],
         "center": small[:, gw // 4: 3 * gw // 4],
         "right": small[:, 3 * gw // 4:],
+    }
+    obstacle_zones = {
+        "left": obstacles[:, :gw // 4],
+        "center": obstacles[:, gw // 4: 3 * gw // 4],
+        "right": obstacles[:, 3 * gw // 4:],
     }
     bar_max_h = view_h // 3
     zone_spans = {"left": (0, q1), "center": (q1, q3), "right": (q3, view_w)}
@@ -307,7 +325,8 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
         # surface) — because it fires on any close thing, wall included; it used
         # to claim "thin object" on a wall, which was misleading (live Pi finding).
         bd = zone_warning_breakdown(grid_zones[zone],
-                                    None if thin is None else thin.get(zone))
+                                    None if thin is None else thin.get(zone),
+                                    obstacle_zones[zone])
         p = bd["parts"]
         active = ""
         if p["thin"] > 0.01:
@@ -350,6 +369,9 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
     # Raw depth stats — the numbers needed to calibrate MIN/MAX_DEPTH_M
     put_plated(frame, f"depth p1/p50/p99: {d_lo:.2f} / {d_med:.2f} / {d_hi:.2f}",
                (8, 26), 0.6, (255, 255, 255))
+    # Own line: appended to the stats it ran under the FPS box (live finding).
+    put_plated(frame, f"floor erased: {floor_frac:.0%} of grid",
+               (8, 50), 0.6, (255, 255, 255))
 
     # Depth-branch frame rate, top right — separate from the detection overlay's
     # top-left FPS, which counts the user/detection frames in the other window.
@@ -366,6 +388,6 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
         "active: T=thin obj  C=concentrated near  N=near surface  "
         "W=blank-wall  F=floor-to-wall",
         "subgrid 4x4: red cell=danger  white ring=worst cell  "
-        "red bar=zone intensity  t/s/w/f=detector parts",
+        "red bar=zone intensity  t/s/w/f=detector parts  floor%=erased as ground",
     ]
     return np.vstack([frame, draw_hud(zone_blocks, legend, view_w)])

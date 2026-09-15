@@ -9,6 +9,7 @@ import random
 import time
 
 from second_vision.core.haptics import HapticMapper
+from second_vision.core.depth_utils import GROUND_HAZARD_ENABLED
 
 
 MOCK_LABELS = ["person", "car", "bicycle", "dog", "chair", "bottle"]
@@ -75,7 +76,9 @@ def mock_depth_generator(user_data):
         # unconditionally (the previous behaviour) put a non-zero break size on
         # a frame reporting no break, which is a contradiction the consumer only
         # tolerates because it happens to read severity inside `if hazard`.
-        hazard = random.random() < 0.02  # 2% chance of hazard
+        # Never while ground-hazard detection is disabled on the real path: the
+        # mock must not exercise a firmware alert the device itself never sends.
+        hazard = GROUND_HAZARD_ENABLED and random.random() < 0.02  # 2% chance of hazard
         try:
             user_data.serial_queue.put_nowait({
                 "left":   motors["left"],

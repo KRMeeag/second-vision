@@ -216,13 +216,26 @@ These come from the requirements, so they outlive any particular algorithm:
 | Thin objects (poles, cables, chair legs) | Networks smooth them away; a whole-zone aggregate averages them out |
 | Blank / textureless walls | No texture → scale ambiguity → washed-out, uncertain output |
 | Near walls the model renders as *far* | Same ambiguity, but failing dangerously rather than noisily |
-| Drop-offs and descending stairs | A drop reads as "far", indistinguishable from open space |
+| Drop-offs and descending stairs | A drop reads as "far", indistinguishable from open space — *stair / drop-off / step-up detection is OUT OF SCOPE (D36). The ground plane itself is still modelled (floor suppression) and obstacles standing on it are still detected* |
+| The floor itself | A forehead camera angled down sees the wearer's own feet in every frame — the *nearest* surface the model reports, and every "how near is this?" detector fires on it |
+
+### The floor is not an obstacle
+
+Measured on the real chain (`depth_utils.py`, Sept 2026) with a synthetic open floor: an **empty** scene drove all three zones to ~213/255 and the motors to 145/145/145; a person at collision range fully inside the right zone changed the motors by nothing — the floor set the level in every zone, and the contrast + quantize stages collapsed the remaining gap. That is the "person on the right, centre rings" field report.
+
+`depth_utils.floor_profile` fits `1/depth = a + b·row` (a plane under a pinhole camera) to the row medians of the bottom `FLOOR_FIT_FRACTION` of the grid, extrapolates it upward, and `suppress_floor` erases every pixel at or beyond that plane before the near-cluster and blank-wall detectors run. The fit is **refused** unless the plane recedes by `FLOOR_MIN_RECESSION` across the window, so a wall filling the bottom of the frame is never mistaken for a floor; rows above the horizon keep everything. `detect_floor_to_wall` and `detect_ground_hazard` still read the raw grid — they need the floor as their ruler. `FLOOR_SUPPRESSION = False` restores the previous behaviour in one line. The HUD darkens erased pixels.
+
+### Direction has to be amplified, not preserved
+
+`haptics.py` runs **winner-take-most** after lateral contrast: each zone is pushed down by `WINNER_SUPPRESSION` × its shortfall from the loudest zone. Tied zones (a wall across the field, a corridor's two walls) pass through unchanged; a zone that is merely trailing is silenced. With three motors the only direction the device can express is *which zone wins*, and a 255-vs-200 pair that lands on the same quantizer level says nothing.
 
 ### Current state in this repo
 
-`_process_real_depth` in `pipeline/callbacks.py` is a **placeholder awaiting replacement**, not the intended design. It emits `hazard=False` unconditionally, so the hazard path in `serial_worker.py` has never executed with a real `True` value.
+`_process_real_depth` in `pipeline/callbacks.py` runs the full chain above (`DepthPostProcessor` → `HapticMapper` → `serial_queue`).
 
-**Open interface question:** the prototype's ground-hazard detection distinguishes a drop-off (`"down"`) from a step-up/curb (`"up"`), but the `serial_queue` contract has no field for direction and `HAZARD_ALERT`'s payload is severity + pattern. The depth and firmware owners need to settle this jointly; the return-arity difference is also a port-time `ValueError` risk.
+**Ground-hazard detection is disabled** (`GROUND_HAZARD_ENABLED = False`, DECISIONS D36): the callback publishes `hazard=False, hazard_severity=0` on every frame *on purpose*: the detector was not trustworthy enough to ship, and the wearer must be told the device does not see stairs (there is no cane fallback — D16). `detect_ground_hazard` / `HazardDebouncer` remain in `depth_utils.py`, tested, and the serial contract keeps both fields, so the firmware's `HAZARD_ALERT` path is unchanged and simply never triggered.
+
+**Open interface question (parked with the feature):** the detector distinguishes a drop-off (`"down"`) from a step-up/curb (`"up"`), but the `serial_queue` contract has no field for direction and `HAZARD_ALERT`'s payload is severity + pattern. Settle it only if the feature is re-enabled.
 
 ---
 

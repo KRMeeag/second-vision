@@ -10,7 +10,7 @@ Second Vision is a head-mounted assistive device that helps visually impaired us
 
 - **🔊 Audio Feedback** — Announces detected objects with spatial position: *"person left"*, *"car center"*, *"bicycle right"*
 - **📳 Haptic Feedback** — Three vibration motors (left, center, right) vibrate proportionally to obstacle proximity
-- **⚠️ Hazard Detection** — Software-based detection of downward hazards (stairs, ledges) via depth map analysis
+- **⚠️ No ground-hazard detection** — The device covers obstacles at body and head height. It does **not** warn about stairs, curbs or ledges: software drop-off detection exists in the code but is disabled as unreliable (`GROUND_HAZARD_ENABLED`, DECISIONS D36). Wearers must know this.
 
 Object detection identifies *known* objects (people, cars, obstacles). Depth estimation detects *all* obstacles, including those the AI can't classify. 
 
