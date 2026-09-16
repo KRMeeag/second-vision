@@ -353,12 +353,16 @@ def cv2_draw_depth(small, intensities, hazard_detected, severity, direction="non
         # What the motor is actually doing. Green when driving, grey when the
         # haptic stage deliberately silenced a non-zero perception — the second
         # case is the one worth being able to see at a glance, because from the
-        # outside it is indistinguishable from a detector that failed.
+        # outside it is indistinguishable from a detector that failed. A zero
+        # duty at a non-zero LEVEL is neither: it is the gap between taps of
+        # the rate-coded pulse, and is labelled as such.
         if motors is not None:
             duty = motors.get(zone, 0)
             lvl = None if levels is None else levels.get(zone)
             tag = f"MOTOR {duty}" + ("" if lvl is None else f" L{lvl}")
-            if duty == 0 and val > 0:
+            if duty == 0 and lvl:
+                tag += " (gap)"
+            elif duty == 0 and val > 0:
                 tag += " (silenced)"
             # Grey still reads "not driving", but it is now grey-on-dark-panel
             # rather than grey-on-colormap, so it can be lifted for legibility

@@ -17,10 +17,11 @@ import time
 #
 #   serial_queue item (5 fields, all always present):
 #     left/center/right  int 0-255  MOTOR DUTY, not a perception score. Already
-#                                   deadbanded, quantized, floored above the
-#                                   motors' start threshold and pulse-gated by
-#                                   core/haptics.py. 0 means "hold still"; any
-#                                   non-zero value is meant to be felt.
+#                                   deadbanded, quantized and rate-coded into
+#                                   taps by core/haptics.py: a fixed strong duty
+#                                   that repeats faster the nearer the obstacle,
+#                                   continuous at point-blank. 0 means "hold
+#                                   still" — between taps as much as when clear.
 #     hazard             bool       ground break, debounced and LATCHED.
 #                                   Always False while depth_utils
 #                                   .GROUND_HAZARD_ENABLED is off (it is —
@@ -298,8 +299,8 @@ if HAILO_AVAILABLE:
             # same events but graded on its own timebase. None while ground-
             # hazard detection is disabled (see GROUND_HAZARD_ENABLED).
             self.hazard_debouncer = HazardDebouncer() if GROUND_HAZARD_ENABLED else None
-            # Last stage before the queue: deadband, level quantization, PWM
-            # floor and the anti-habituation pulse. Everything upstream of it
+            # Last stage before the queue: deadband, level quantization, then
+            # the cycle hold and rate-coded pulse. Everything upstream of it
             # measures the scene; it alone decides what the motors do.
             self.haptics = HapticMapper()
 
@@ -744,8 +745,8 @@ def _process_real_depth(element, buffer, user_data):
     internally, so every other detector still sees the same `small` grid.
 
     WHAT LEAVES THIS FUNCTION. The values on serial_queue are PWM duties, not
-    perception scores: post-deadband, quantized, floored at the motors' start
-    threshold and pulse-gated. `serial_worker.py` is transport and applies
+    perception scores: post-deadband, quantized, held per pulse cycle and
+    rate-coded into taps. `serial_worker.py` is transport and applies
     `config.motor_strength`; nothing else between here and the ESP32 reinterprets
     them. The distinction matters because a zone perceiving 60 and driving 0 is
     correct behaviour here, not a lost signal.
@@ -851,10 +852,14 @@ def _process_real_depth(element, buffer, user_data):
         # Both rows on purpose: perception (what was seen) and motor (what the
         # wearer got). They are allowed to disagree, and when the device "does
         # nothing" the only way to tell a dead detector from a working deadband
-        # is to see the pair side by side.
+        # is to see the pair side by side. The motor row is duty/level: with the
+        # rate-coded pulse a duty of 0 at a non-zero level is the gap between
+        # taps, not a lost obstacle.
+        lv = user_data.haptics.last_levels
         print(f"[DEPTH] Frame {frame_count} | "
               f"L={intensities['left']} C={intensities['center']} R={intensities['right']} | "
-              f"motor L={motors['left']} C={motors['center']} R={motors['right']} | "
+              f"motor L={motors['left']}/L{lv['left']} C={motors['center']}/L{lv['center']} "
+              f"R={motors['right']}/L{lv['right']} | "
               + (f"Hazard: {hazard} ({direction}, sev {severity}) | " if GROUND_HAZARD_ENABLED else "")
               + f"raw p1/p50/p99: {d_lo:.2f}/{d_med:.2f}/{d_hi:.2f} | "
               f"{user_data.get_depth_fps():.1f} FPS | "
