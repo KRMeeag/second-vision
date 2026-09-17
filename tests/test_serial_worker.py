@@ -205,13 +205,21 @@ def test_close_survives_a_broken_port():
 # --- sending ---------------------------------------------------------------
 
 def test_bytes_actually_reach_the_wire(pty_port):
-    """End to end: pack a motor update, send it, read it off the other end."""
+    """
+    End to end: pack a motor update, send it, read it off the other end.
+
+    No port.flush() here: pyserial's write() already performs the blocking
+    OS-level write, so the bytes are in the pty's buffer as soon as
+    _send_packet() returns. flush() (termios tcdrain) additionally waits for
+    the OS to consider the data "transmitted", which on a pty-backed port
+    only happens once the far end (controller, read below) drains it — flush
+    before that read is a real deadlock, not just a slow path.
+    """
     path, controller = pty_port
     port = sw._open_serial_port(config_with(serial_port=path))
     try:
         packet = sw._pack_motor_update(11, 22, 33)
         assert sw._send_packet(port, packet) is True
-        port.flush()
         assert os.read(controller, len(packet)) == packet
     finally:
         sw._close_port(port)
@@ -221,12 +229,14 @@ def test_heartbeat_actually_sends_something(pty_port):
     """
     Regression test with teeth: _pack_heartbeat() previously had zero callers,
     so the ESP32's 3 s watchdog zeroed the motors during every quiet period.
+
+    See test_bytes_actually_reach_the_wire for why there is no port.flush()
+    before this read.
     """
     path, controller = pty_port
     port = sw._open_serial_port(config_with(serial_port=path))
     try:
         assert sw._send_heartbeat(port) is True
-        port.flush()
         assert os.read(controller, 3) == sw._pack_heartbeat()
     finally:
         sw._close_port(port)
@@ -433,24 +443,30 @@ def test_ack_timeout_spans_more_than_one_heartbeat():
 # --- heartbeat timing ------------------------------------------------------
 
 def test_heartbeat_waits_until_it_is_due(pty_port):
+    """
+    See test_bytes_actually_reach_the_wire for why there is no port.flush()
+    here — select_readable() already bounds its own wait.
+    """
     path, controller = pty_port
     port = sw._open_serial_port(config_with(serial_port=path))
     try:
         now = time.monotonic()
         assert sw._heartbeat_if_due(port, now) == now  # too soon; timestamp unchanged
-        port.flush()
         assert not select_readable(controller), "sent a heartbeat that was not due"
     finally:
         sw._close_port(port)
 
 
 def test_heartbeat_fires_once_overdue(pty_port):
+    """
+    See test_bytes_actually_reach_the_wire for why there is no port.flush()
+    before this read.
+    """
     path, controller = pty_port
     port = sw._open_serial_port(config_with(serial_port=path))
     try:
         stale = time.monotonic() - sw.HEARTBEAT_INTERVAL_SECONDS - 0.1
         assert sw._heartbeat_if_due(port, stale) > stale  # timestamp advanced
-        port.flush()
         assert os.read(controller, 3) == sw._pack_heartbeat()
     finally:
         sw._close_port(port)
