@@ -11,8 +11,14 @@ Design (see .agents/handoff_v3.md):
   - A minimum silence gap follows each utterance for a calm cadence; an urgent
     pending item skips the gap.
 
-Cooldown/suppression is NOT here anymore — it moved entirely into the callback +
-priority layer (core/priority.py). This worker just speaks what it is handed.
+Object-priority cooldown/suppression (per-track recency) is NOT here — it
+lives entirely in the callback + priority layer (core/priority.py). This
+worker just speaks what it is handed.
+
+Turn-based muting IS here, and is a different thing: it isn't about any
+object's priority or recency, it's a reaction to a physical body-turn event
+from core/turn_event.py (ESP32 -> serial_worker.py -> TurnEvent). See
+_check_turn_mute() below.
 """
 
 import shutil
@@ -31,6 +37,9 @@ from second_vision.core.priority import (
 #   Input:  user_data.tts_queue — a PriorityMailbox (offer/take/peek), holding
 #           dicts with "label"/"zone"/"confidence"/"priority"/"tier" and an
 #           optional "phrase" override, or {"announce": str} for mode changes.
+#           user_data.turn_event — optional core/turn_event.py TurnEvent;
+#           absent (getattr default None) is tolerated the same way
+#           serial_worker.py tolerates a user_data without one.
 #   Output: Audio announcement via speaker (espeak-ng, pyttsx3 fallback).
 #   Config: config.tts_enabled
 # ============================================================
@@ -40,12 +49,71 @@ _POLL_SECONDS = 0.05    # how often to check for a preempting item while speakin
 _IDLE_SECONDS = 0.02    # nap when the mailbox is empty
 _pyttsx3_engine = None
 
+# --- Turn-based mute -------------------------------------------------------
+# How long to hold off speaking after a 0x03 turn event.
+# PLACEHOLDER — reasoned, not measured against a real wearer, same caveat as
+# every other unmeasured constant in this project (e.g. TURN_EVENT_THRESHOLD_DEG
+# in main.cpp). By the time a 0x03 event reaches here the physical turn has
+# already settled on the ESP32 side — it only fires after
+# TURN_SETTLE_DURATION_MS of steady rate, or the no-settle failsafe — so this
+# window is mostly covering the wearer's brief re-orientation pause and the
+# detection pipeline's first few frames of the new scene, not the turn
+# itself. Too short and a pre-turn object still gets announced into the new
+# scene; too long and the wearer loses real-time obstacle feedback right when
+# they've just re-oriented and need it most.
+TURN_MUTE_SECONDS = 2.0
+
+
+def _check_turn_mute(turn_event, mailbox, now: float, mute_until: float) -> float:
+    """
+    Look for a fresh, not-yet-consumed turn event and return the (possibly
+    updated) mute deadline.
+
+    Pulled out of tts_worker()'s loop so the decision logic — as opposed to
+    the sleep/loop mechanics around it — can be unit-tested directly with a
+    real TurnEvent/PriorityMailbox and no espeak/subprocess/thread involved.
+
+    No event pending: returns `mute_until` unchanged (idempotent to call every
+    iteration).
+
+    A fresh event: unconditionally sets the deadline to `now + TURN_MUTE_SECONDS`
+    — even if a previous window is still active, since a second turn arriving
+    mid-window means the wearer is still reorienting, not done. It also drains
+    (and discards) whatever is currently sitting in `mailbox`: PriorityMailbox's
+    offer() only replaces its stored item with an incoming one of EQUAL OR
+    HIGHER priority, so a high-priority pre-turn item could otherwise survive
+    un-overwritten for the whole window and be the very first thing spoken the
+    instant it ends. The mailbox is deliberately left alone for the rest of the
+    window — the detection pipeline keeps calling offer() on its own,
+    unmodified, so whatever is parked there when the window closes reflects
+    the current scene.
+    """
+    if turn_event is None:
+        return mute_until
+    turn = turn_event.take()
+    if turn is None:
+        return mute_until
+    mailbox.take()
+    return now + TURN_MUTE_SECONDS
+
 
 def tts_worker(user_data, config):
     """Main TTS worker loop."""
     mailbox = user_data.tts_queue
+    turn_event = getattr(user_data, "turn_event", None)
+    mute_until = 0.0
 
     while not user_data.shutdown_event.is_set():
+        mute_until = _check_turn_mute(turn_event, mailbox, time.monotonic(), mute_until)
+        if time.monotonic() < mute_until:
+            # Muted: don't consume from the mailbox at all. Checked once per
+            # outer-loop iteration — the same cadence _IDLE_SECONDS/_POLL_SECONDS
+            # already run at, so this adds no new latency or CPU cost. Does not
+            # interrupt an utterance already in progress (see the report on this
+            # change for why that's an intentional, disclosed scope limit).
+            time.sleep(_IDLE_SECONDS)
+            continue
+
         item = mailbox.take()
         if item is None:
             time.sleep(_IDLE_SECONDS)

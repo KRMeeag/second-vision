@@ -25,6 +25,7 @@ from second_vision.core.priority import (
     item_tier,
     preempts,
 )
+from second_vision.core.turn_event import TurnEvent
 from second_vision.workers import tts_worker as tw
 
 
@@ -252,3 +253,82 @@ def test_worker_not_preempted_by_lower_priority(monkeypatch):
     assert spoken == ["person center"]    # only the current one spoke
     assert procs[0].terminated is False
     assert mb.peek() is pending           # the pending item is still waiting its turn
+
+
+# ============================================================
+# Turn-based mute (_check_turn_mute) — no espeak, no thread, no hardware
+# ============================================================
+def test_turn_mute_no_turn_event_object_is_a_noop():
+    """The getattr(user_data, "turn_event", None) guard case: must not crash."""
+    mb = PriorityMailbox()
+    assert tw._check_turn_mute(None, mb, now=100.0, mute_until=0.0) == 0.0
+
+
+def test_turn_mute_nothing_pending_leaves_deadline_unchanged():
+    te = TurnEvent()
+    mb = PriorityMailbox()
+    assert tw._check_turn_mute(te, mb, now=100.0, mute_until=42.0) == 42.0
+
+
+def test_turn_mute_fresh_event_sets_deadline_ahead_by_mute_seconds():
+    te = TurnEvent()
+    mb = PriorityMailbox()
+    te.push(delta_deg=50, received_at=100.0)
+
+    deadline = tw._check_turn_mute(te, mb, now=100.0, mute_until=0.0)
+
+    assert deadline == 100.0 + tw.TURN_MUTE_SECONDS
+
+
+def test_turn_mute_consumes_the_event_exactly_once():
+    """A second call with no new push() must not re-extend the deadline."""
+    te = TurnEvent()
+    mb = PriorityMailbox()
+    te.push(delta_deg=50, received_at=100.0)
+
+    first = tw._check_turn_mute(te, mb, now=100.0, mute_until=0.0)
+    second = tw._check_turn_mute(te, mb, now=100.5, mute_until=first)
+
+    assert second == first  # nothing new arrived, deadline holds
+
+
+def test_turn_mute_second_turn_restarts_the_window():
+    """A turn arriving mid-window is "still reorienting", not a no-op."""
+    te = TurnEvent()
+    mb = PriorityMailbox()
+    te.push(delta_deg=50, received_at=100.0)
+    first = tw._check_turn_mute(te, mb, now=100.0, mute_until=0.0)
+
+    te.push(delta_deg=-30, received_at=101.0)
+    second = tw._check_turn_mute(te, mb, now=101.0, mute_until=first)
+
+    assert second == 101.0 + tw.TURN_MUTE_SECONDS
+    assert second > first  # window pushed further out, not left alone
+
+
+def test_turn_mute_drops_a_stale_pending_item():
+    """
+    The regression this exists to prevent: PriorityMailbox.offer() only
+    replaces a stored item with an incoming one of EQUAL OR HIGHER priority
+    (see test_mailbox_keeps_higher_priority above), so a high-priority
+    pre-turn item would otherwise survive, un-overwritten, for the whole
+    mute window and be the very first thing spoken the instant it ends.
+    """
+    te = TurnEvent()
+    mb = PriorityMailbox()
+    mb.offer(_item(9.0, label="car", zone="center"))  # high-priority, pre-turn
+    te.push(delta_deg=50, received_at=100.0)
+
+    tw._check_turn_mute(te, mb, now=100.0, mute_until=0.0)
+
+    assert mb.peek() is None  # dropped, not left to win every future offer()
+
+
+def test_turn_mute_does_not_touch_an_already_empty_mailbox():
+    te = TurnEvent()
+    mb = PriorityMailbox()
+    te.push(delta_deg=50, received_at=100.0)
+
+    tw._check_turn_mute(te, mb, now=100.0, mute_until=0.0)
+
+    assert mb.peek() is None
