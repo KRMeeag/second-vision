@@ -303,3 +303,43 @@ def test_each_mode_exposes_only_its_own_callback_identities():
         pipeline = _fake_app(mode).get_pipeline_string()
         assert ("identity name=det_callback" in pipeline) is has_det, mode
         assert ("identity name=depth_callback" in pipeline) is has_depth, mode
+
+
+# ============================================================
+# One frame-rate cap, shared by both branches
+# ============================================================
+def test_dual_pipeline_caps_the_rate_once_before_the_tee(monkeypatch):
+    monkeypatch.delenv("SV_FPS", raising=False)
+    pipeline = _dual()
+    # Exactly one videorate, and it comes BEFORE the tee: both branches are fed
+    # the same frames at the same rate, so their FPS cannot disagree by design.
+    assert pipeline.count("! videorate ") == 1
+    assert pipeline.index("videorate name=rate_videorate") < pipeline.index("tee name=t")
+    assert f"framerate={app_mod.PIPELINE_FPS_DEFAULT}/1" in pipeline
+    assert "drop-only=true" in pipeline
+    assert "queue name=rate_q leaky=downstream max-size-buffers=1" in pipeline
+    # Nothing left of the old per-branch cap.
+    assert "depth_videorate" not in pipeline and "depth_rate_q" not in pipeline
+
+
+def test_single_modes_use_the_same_cap(monkeypatch):
+    monkeypatch.delenv("SV_FPS", raising=False)
+    for pipeline in (_detection_only(), _depth_only()):
+        assert pipeline.count("! videorate ") == 1
+        assert pipeline.index("videorate name=rate_videorate") < pipeline.index("inference_wrapper")
+        assert f"framerate={app_mod.PIPELINE_FPS_DEFAULT}/1" in pipeline
+
+
+def test_sv_fps_overrides_the_cap_without_a_code_change(monkeypatch):
+    monkeypatch.setenv("SV_FPS", "20")
+    assert app_mod.pipeline_fps() == 20
+    assert "framerate=20/1" in _dual()
+    assert "framerate=20/1" in _depth_only()
+    monkeypatch.setenv("SV_FPS", "nonsense")
+    assert app_mod.pipeline_fps() == app_mod.PIPELINE_FPS_DEFAULT
+    monkeypatch.setenv("SV_FPS", "0")
+    assert app_mod.pipeline_fps() == 1
+
+
+def test_default_cap_is_thirty():
+    assert app_mod.PIPELINE_FPS_DEFAULT == 30

@@ -67,19 +67,38 @@ MODE_BOTH = "both"
 MODE_DETECTION = "detection"
 MODE_DEPTH = "depth"
 
-# Frame rate cap on the DEPTH branch, independent of the camera. Deliberately
-# BELOW the camera rate, with margin. Measured on the device, twice:
-#   - fed at the camera rate (30) on an idle Pi, the branch managed 29.7 FPS and
-#     latency was 87-108 ms — but only because it happened to keep up;
+# ONE frame-rate cap for the whole pipeline, applied to the camera stream
+# BEFORE the tee, so the depth and detection branches receive the same frames
+# at the same rate in every mode. It used to sit on the depth branch alone
+# (DEPTH_MAX_FPS = 20) while detection ran at the camera rate — two algorithms
+# at two rates, which is the "FPS mismatch" this removes. Both branches now see
+# identical buffers with identical timestamps; what each branch DROPS under
+# load is still its own business (the leaky branch queues), which is why the
+# [DEPTH] log prints both branches' FPS side by side.
+#
+# 30 by team decision (2026-09-19): higher frame rate. Overridable at launch
+# with SV_FPS=<n> because the 30-vs-20 history is not settled, all measured on
+# the device:
+#   - fed at the camera rate (30) on an idle Pi, the depth branch managed 29.7
+#     FPS and latency was 87-108 ms — but only because it happened to keep up;
 #   - the same setting two days later with a person in frame (tracker + TTS +
 #     overlay loading the CPU): the branch slipped to 27.2 FPS against a 28.6
 #     FPS camera, every buffer between them filled, and latency was 1.0-1.2 s;
-#   - fed at 15 FPS: 122-202 ms, regardless of load.
-# A branch that runs at exactly its input rate sits on a knife edge; the cure
-# is headroom, not matching the camera. 20 keeps ~25% below the worst throughput
-# seen so far. Read the [DEPTH] "lat" figure: if it ever climbs past ~300 ms,
-# drop this to 15. Motors (50 ms spin-up, 4 levels) cannot use more than this.
-DEPTH_MAX_FPS = 20
+#   - fed at 15 FPS: 122-202 ms; at 20: ~120-200 ms, regardless of load.
+# A branch running at exactly its input rate sits on a knife edge. Read the
+# [DEPTH] "lat" figure during every rehearsal: the callback warns when it
+# passes LATENCY_WARN_MS (callbacks.py), and the answer to that warning is
+# `SV_FPS=20 ./scripts/sv-main.sh`, not a code change. Motors (50 ms spin-up,
+# 4 levels, 0.18 s taps) cannot use more than ~20 updates/s either way.
+PIPELINE_FPS_DEFAULT = 30
+
+
+def pipeline_fps() -> int:
+    """The shared cap: SV_FPS from the environment, else PIPELINE_FPS_DEFAULT."""
+    try:
+        return max(1, int(os.environ.get("SV_FPS", PIPELINE_FPS_DEFAULT)))
+    except (TypeError, ValueError):
+        return PIPELINE_FPS_DEFAULT
 # Both rockers off. Neither speech nor motors are reachable, so running either
 # model would burn Hailo and battery producing output nobody receives. This is
 # "run nothing", NOT "run both and mute" — see PROTOCOL.md, mode truth table.
@@ -158,6 +177,20 @@ def _low_latency_queues(fragment: str) -> str:
     dropping happens once, upstream, in the leaky rate-limit queue.
     """
     return fragment.replace("leaky=no max-size-buffers=3", "leaky=no max-size-buffers=1")
+
+
+def _rate_cap(fps: int) -> str:
+    """
+    The shared frame-rate cap, placed once on the camera stream before it
+    fans out. drop-only: never duplicate a frame to pad the rate, only discard
+    to reduce it. The 1-buffer leaky queue in front takes the drop when
+    videorate is momentarily blocked, so the source is never held up.
+    """
+    return (
+        f"{QUEUE(name='rate_q', max_size_buffers=1, leaky='downstream')} ! "
+        f"videorate name=rate_videorate drop-only=true ! "
+        f"video/x-raw, framerate={fps}/1"
+    )
 
 
 class SecondVisionApp(GStreamerApp):
@@ -318,16 +351,9 @@ class SecondVisionApp(GStreamerApp):
             depth_pipeline, name="inference_wrapper_depth"
         ).replace("use-letterbox=true", "use-letterbox=false")
         depth_pipeline_wrapper = _low_latency_queues(depth_pipeline_wrapper)
-        # Rate-limit BEFORE the wrapper (see DEPTH_MAX_FPS). drop-only: never
-        # duplicate a frame to pad the rate, only discard to reduce it. The
-        # leaky queue in front takes the drop when videorate is momentarily
-        # blocked, so the tee is never held up by this branch.
-        depth_rate = (
-            f"{QUEUE(name='depth_rate_q', max_size_buffers=1, leaky='downstream')} ! "
-            f"videorate name=depth_videorate drop-only=true ! "
-            f"video/x-raw, framerate={DEPTH_MAX_FPS}/1"
-        )
-        depth_pipeline_wrapper = f"{depth_rate} ! {depth_pipeline_wrapper}"
+        # No rate cap here any more: the cap sits on the shared stream in front
+        # of the tee (_rate_cap), so this branch is fed at exactly the rate the
+        # detection branch is.
         depth_callback = _low_latency_queues(USER_CALLBACK_PIPELINE(name="depth_callback"))
         # No DISPLAY_PIPELINE here — that opens its own native GStreamer window
         # with hailo's own overlay, on top of the cv2 window callbacks.py
@@ -373,7 +399,7 @@ class SecondVisionApp(GStreamerApp):
 
         # Parallel tee architecture (display handled by cv2 in callbacks.py)
         return (
-            f"{source_pipeline} ! tee name=t "
+            f"{source_pipeline} ! {_rate_cap(pipeline_fps())} ! tee name=t "
             f"t. ! {QUEUE(name='depth_branch_q', leaky='downstream')} ! {depth_pipeline_wrapper} ! {depth_callback} ! {depth_sink} "
             f"t. ! {QUEUE(name='det_branch_q', leaky='downstream')} ! {detection_pipeline_wrapper} ! {tracker_pipeline} ! {det_callback} ! {det_sink}"
         )
@@ -386,8 +412,8 @@ class SecondVisionApp(GStreamerApp):
         # The leaky branch queues exist only to decouple the two parallel branches
         # from each other, so a single-branch pipeline doesn't need them.
         return (
-            f"{source_pipeline} ! {detection_pipeline_wrapper} ! {tracker_pipeline} "
-            f"! {det_callback} ! {det_sink}"
+            f"{source_pipeline} ! {_rate_cap(pipeline_fps())} ! {detection_pipeline_wrapper} "
+            f"! {tracker_pipeline} ! {det_callback} ! {det_sink}"
         )
 
     def _build_depth_only(self):
@@ -395,7 +421,8 @@ class SecondVisionApp(GStreamerApp):
         source_pipeline = self.get_source_pipeline(no_webcam_compression=True)
         depth_pipeline_wrapper, depth_callback, depth_sink = self._depth_branch()
 
-        return f"{source_pipeline} ! {depth_pipeline_wrapper} ! {depth_callback} ! {depth_sink}"
+        return (f"{source_pipeline} ! {_rate_cap(pipeline_fps())} ! {depth_pipeline_wrapper} "
+                f"! {depth_callback} ! {depth_sink}")
 
     def _build_idle(self):
         """

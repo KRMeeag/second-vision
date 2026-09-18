@@ -61,7 +61,8 @@ def steady(mapper, values, frames=1, start=0.0, step=1 / 30):
     return out
 
 
-FPS = 20                     # the depth branch's rate (app.DEPTH_MAX_FPS)
+FPS = 20                     # a depth-frame rate to simulate at; the live cap is
+                             # app.PIPELINE_FPS_DEFAULT (30) unless SV_FPS lowers it
 DT = 1 / FPS
 
 

@@ -75,10 +75,12 @@ from second_vision.core.depth_utils import (
 )
 from second_vision.core.haptics import DEADBAND, HapticMapper
 
-# The device caps the depth branch at 20 FPS (app.DEPTH_MAX_FPS); the haptics
-# pulse clock is replayed at that rate so cycle holds and rise interrupts
-# behave as they do live.
-REPLAY_FPS = 20.0
+# The haptics pulse clock is replayed on the manifest's own capture timestamps,
+# so cycle holds and rise interrupts see the real spacing between saved frames
+# (capture.py keeps every Nth). Only when a manifest has no timestamps does the
+# replay fall back to this rate — the pipeline's shared cap
+# (app.PIPELINE_FPS_DEFAULT; not imported, app.py needs GStreamer).
+REPLAY_FPS = 30.0
 # Target ROI, as a fraction of the target zone: the central band of columns and
 # the middle band of rows. The capture protocol keeps the target centred in its
 # zone precisely so this convention can stand in for a drawn ROI (no RGB is
@@ -98,6 +100,7 @@ class Capture:
     zone: Optional[str]
     env: str
     files: List[str] = field(default_factory=list)
+    timestamps: List[float] = field(default_factory=list)   # capture time per frame, may be empty
     # Filled by replay(); one entry per frame.
     roi_depth: np.ndarray = None            # model units, ROI median (model level)
     device_depth: np.ndarray = None         # model units, nearest sub-cell p10 after floor erase
@@ -154,6 +157,9 @@ def load_corpus(corpus_dir: str) -> List[Capture]:
             env=(first.get("env") or parsed["env"] or ""),
             files=[os.path.join(corpus_dir, r["file"]) for r in rows],
         )
+        stamps = [_float_or_none(r.get("timestamp")) for r in rows]
+        if all(t is not None for t in stamps):
+            cap.timestamps = stamps
         if cap.zone not in ZONE_NAMES:
             cap.zone = None
         captures.append(cap)
@@ -208,7 +214,9 @@ def replay(cap: Capture, zone_for_open: str = "center") -> Capture:
     perc = {z: [] for z in ZONE_NAMES}
     drv = {z: [] for z in ZONE_NAMES}
 
+    t0 = cap.timestamps[0] if cap.timestamps else 0.0
     for i, path in enumerate(cap.files):
+        now = (cap.timestamps[i] - t0) if cap.timestamps else i / REPLAY_FPS
         raw = np.load(path).astype(np.float32)
         cropped = crop_border(raw)
         small = downsample_depth(cropped)
@@ -226,7 +234,7 @@ def replay(cap: Capture, zone_for_open: str = "center") -> Capture:
         erased.append(float(np.mean(obstacles >= FLOOR_FILL) - np.mean(small >= FLOOR_FILL)))
 
         intensities = processor.process(cropped)
-        mapper.shape(intensities, i / REPLAY_FPS)
+        mapper.shape(intensities, now)
         for z in ZONE_NAMES:
             perc[z].append(intensities[z])
             drv[z].append(mapper.last_levels[z])
@@ -608,7 +616,7 @@ def print_report(r: dict, out=None) -> None:
     p(f"Depth evaluation — {c['captures']} captures, {c['frames']} frames "
       f"({c['positives']} targets, {c['open']} open scenes)")
     p(f"warn distance {r['warn_m']} m | deadband {r['deadband']:.2f} "
-      f"({r['deadband'] * 255:.0f}/255) | replay {REPLAY_FPS:.0f} FPS")
+      f"({r['deadband'] * 255:.0f}/255) | haptics clock from manifest timestamps")
     if c["unscorable"]:
         p(f"UNSCORABLE (no zone in label): {', '.join(c['unscorable'])}")
     if r["in_sample"]:

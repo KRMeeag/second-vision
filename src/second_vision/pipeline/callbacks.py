@@ -111,6 +111,13 @@ DEPTH_PREVIEW_EVERY = 2              # Only ship every Nth frame to the viewer p
                                      # EMA-smoothed values barely move frame to frame
 DEPTH_ERROR_LOG_SECONDS = 5.0        # Floor on repeat error logging; a bad frame at 30 FPS
                                      # must not bury the console in tracebacks
+# Camera-to-callback age above which the depth branch is not keeping up with
+# the shared frame rate (app.PIPELINE_FPS_DEFAULT). Measured history: 120-200
+# ms is healthy; 1.0-1.2 s is what a throughput-bound branch looks like. The
+# warning names the fix (SV_FPS=20) because the number that matters to the
+# wearer is this one, not the FPS.
+LATENCY_WARN_MS = 300.0
+LATENCY_WARN_EVERY_SECONDS = 5.0     # a lagging branch must not also flood the console
 
 # ---- Zone boundaries (fractions of frame width) ----
 LEFT_BOUNDARY = 0.22          # Below this -> "left"
@@ -263,6 +270,7 @@ if HAILO_AVAILABLE:
             self.head_turn_cooldown_until = 0.0
             self.depth_frame_count = 0
             self.depth_fps_start_time = time.monotonic()
+            self.last_latency_warning = 0.0
 
             # ---- Depth post-processing state ----
             # Built here rather than in the callback because __init__ runs once,
@@ -856,11 +864,23 @@ def _process_real_depth(element, buffer, user_data):
         # rate-coded pulse a duty of 0 at a non-zero level is the gap between
         # taps, not a lost obstacle.
         lv = user_data.haptics.last_levels
+        # Both branches' rates side by side: the cap is shared (one videorate
+        # ahead of the tee), so these should agree; a gap between them is a
+        # branch dropping frames under load, which is worth seeing here rather
+        # than inferring from the latency. (In depth-only mode det reads 0.)
+        lat_text = f"lat {lat_ms:.0f} ms" if lat_ms is not None else "lat n/a"
         print(f"[DEPTH] Frame {frame_count} | "
               f"L={intensities['left']} C={intensities['center']} R={intensities['right']} | "
               f"motor L={motors['left']}/L{lv['left']} C={motors['center']}/L{lv['center']} "
               f"R={motors['right']}/L{lv['right']} | "
               + (f"Hazard: {hazard} ({direction}, sev {severity}) | " if GROUND_HAZARD_ENABLED else "")
               + f"raw p1/p50/p99: {d_lo:.2f}/{d_med:.2f}/{d_hi:.2f} | "
-              f"{user_data.get_depth_fps():.1f} FPS | "
-              f"lat {lat_ms:.0f} ms" if lat_ms is not None else "lat n/a")
+              f"depth {user_data.get_depth_fps():.1f} FPS / det {user_data.get_det_fps():.1f} FPS | "
+              + lat_text)
+        if lat_ms is not None and lat_ms > LATENCY_WARN_MS:
+            now = time.monotonic()
+            if now - user_data.last_latency_warning >= LATENCY_WARN_EVERY_SECONDS:
+                user_data.last_latency_warning = now
+                print(f"[DEPTH] WARNING: camera-to-callback latency {lat_ms:.0f} ms "
+                      f"(> {LATENCY_WARN_MS:.0f} ms) — the depth branch is not keeping up "
+                      f"with the frame rate. Relaunch with SV_FPS=20 (see app.PIPELINE_FPS_DEFAULT).")

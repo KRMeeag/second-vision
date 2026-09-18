@@ -83,7 +83,8 @@ def make_corpus(root: Path, with_gt_columns: bool = True, envs=("room1", "room2"
             for i in range(FRAMES):
                 name = f"{label}_{i:04d}.npy"
                 np.save(root / name, _scene(rng, d, z))
-                row = {"file": name, "label": label, "timestamp": float(i), "frame": i * 3,
+                # every 3rd frame of a 30 FPS stream, as capture.py saves them
+                row = {"file": name, "label": label, "timestamp": i * 0.1, "frame": i * 3,
                        "height": H, "width": W}
                 if with_gt_columns:
                     row.update({"distance_m": "" if d is None else d, "zone": z or "",
