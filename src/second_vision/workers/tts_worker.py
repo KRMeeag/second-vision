@@ -61,7 +61,7 @@ _pyttsx3_engine = None
 # itself. Too short and a pre-turn object still gets announced into the new
 # scene; too long and the wearer loses real-time obstacle feedback right when
 # they've just re-oriented and need it most.
-TURN_MUTE_SECONDS = 2.0
+TURN_MUTE_SECONDS = 1.0
 
 
 def _check_turn_mute(turn_event, mailbox, now: float, mute_until: float) -> float:
