@@ -4,6 +4,8 @@ EDIT THE CONSTANTS BELOW to match your actual board, then re-run:
     python3 local/hardware/gen_wiring.py
 """
 
+import os
+
 # ============================================================
 #  MEASURE YOUR BOARD, THEN EDIT THESE
 # ------------------------------------------------------------
@@ -262,5 +264,16 @@ txt(LX+10, yy+21, "GPIO1 / GPIO3 - your serial link to the Pi", 9, "#991b1b")
 txt(LX+10, yy+37, "GPIO0 - bootloader     GPIO6-11 - SPI flash", 9, "#991b1b")
 
 add('</svg>')
-open(__file__.rsplit("/", 1)[0] + "/breadboard_wiring.svg", "w").write("\n".join(s))
+# Path and encoding both matter here, and both have broken on Windows before.
+#
+#   __file__.rsplit("/", 1)   never matches a backslash path, so it produced
+#                             ...\docs\gen.py/breadboard_wiring.svg  ->  FileNotFoundError
+#   no encoding=              defaults to cp1252, which cannot encode the box
+#                             glyphs in this drawing  ->  UnicodeEncodeError
+#
+# This file is copied to a Windows laptop as part of firmware/control-panel/.
+# Keep os.path and the explicit encoding; do not "simplify" them away.
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "breadboard_wiring.svg")
+with open(OUT, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(s))
 print(f"wrote breadboard_wiring.svg  (PINS={PINS}, TOP_ROW={TOP_ROW})")

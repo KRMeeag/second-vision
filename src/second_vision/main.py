@@ -106,6 +106,13 @@ def main():
         "--serial-baud", type=int, default=None, metavar="RATE",
         help="Serial baud rate (default 115200; must match the ESP32 firmware)",
     )
+    pre_parser.add_argument(
+        "--config-port", default=None, metavar="DEV",
+        help="Serial device for the control panel, e.g. /dev/ttyAMA3. A "
+             "DIFFERENT board and UART from --serial-port: the panel speaks "
+             "text at 9600 one-way, the motor board binary at 115200. Omit to "
+             "run with no panel attached.",
+    )
     pre_args, remaining = pre_parser.parse_known_args()
 
     # 1. Shared config
@@ -114,6 +121,8 @@ def main():
         config.update(serial_port=pre_args.serial_port)
     if pre_args.serial_baud:
         config.update(serial_baudrate=pre_args.serial_baud)
+    if pre_args.config_port:
+        config.update(config_port=pre_args.config_port)
 
     # 2. Shared user data
     user_data = SecondVisionUserData(config)
@@ -142,6 +151,12 @@ def main():
     # 4. Start pipeline OR mock generators
     if pre_args.mock or not HAILO_AVAILABLE:
         print("[MAIN] Running in MOCK mode (no hardware)")
+        # The panel is real hardware even when nothing else is, and mock mode
+        # exists precisely to develop without a camera or Hailo (D26). app=None
+        # because there is no pipeline to rebuild — the worker already guards
+        # that, so mode changes update config and announce, they just do not
+        # tear anything down.
+        _start_config_reader(user_data, config, None, workers)
         _run_mock_mode(user_data, config, workers)
     else:
         _run_pipeline_mode(user_data, config, workers, remaining)
@@ -181,6 +196,29 @@ def _run_mock_mode(user_data, config, workers):
         pass
 
 
+def _start_config_reader(user_data, config, app, workers):
+    """
+    Start the control-panel reader, if --config-port was given.
+
+    Read from config, NOT from app.options_menu: the flag is registered on the
+    pre-parser, which the pipeline app's parser never sees. The old
+    getattr(app.options_menu, "config_port", None) therefore always returned
+    None and this worker never started at all.
+
+    `app` may be None (mock mode) — the worker guards trigger_rebuild().
+    """
+    config_port = config.get("config_port")
+    if not config_port:
+        return
+    t = threading.Thread(
+        target=config_reader_worker,
+        args=(user_data, config, config_port, app),
+        daemon=True, name="config-reader",
+    )
+    t.start()
+    workers.append(t)
+
+
 def _run_pipeline_mode(user_data, config, workers, cli_args):
     """Run the real GStreamer pipeline."""
     from second_vision.pipeline.app import SecondVisionApp
@@ -197,16 +235,7 @@ def _run_pipeline_mode(user_data, config, workers, cli_args):
         config=config,
     )
     
-    # Config reader (if --config-port provided)
-    config_port = getattr(app.options_menu, "config_port", None)
-    if config_port:
-        config_thread = threading.Thread(
-            target=config_reader_worker,
-            args=(user_data, config, config_port, app),
-            daemon=True, name="config-reader"
-        )
-        config_thread.start()
-        workers.append(config_thread)
+    _start_config_reader(user_data, config, app, workers)
 
     # DEBUG ONLY (--cycle-modes): stand in for the not-yet-built Arduino mode
     # switch by cycling pipeline_mode on a timer. Without the flag this block is

@@ -22,6 +22,29 @@
 #include <Arduino.h>
 #include <stdarg.h>
 
+/*
+ * NO_BROWNOUT: for running off a supply with no bulk capacitance behind it.
+ *
+ * The ESP32 pulls a current spike as it boots. On USB that is absorbed by the
+ * host's capacitance; on a bare jumper from a header pin the rail dips, the
+ * brownout detector fires, and the chip dies partway through setup() — UART
+ * already initialised (TX idles high) but nothing ever transmitted.
+ *
+ * This disables that detector. Running slightly under-volt is survivable;
+ * never finishing setup() is not.
+ *
+ * ONE change only. An earlier attempt also called setCpuFrequencyMhz(80) to
+ * halve the current — do NOT do that: the UART divisor comes off the system
+ * clock, so changing it around Serial.begin() corrupts every line at both ends.
+ */
+#ifndef NO_BROWNOUT
+#  define NO_BROWNOUT 0
+#endif
+#if NO_BROWNOUT
+#  include "soc/soc.h"
+#  include "soc/rtc_cntl_reg.h"
+#endif
+
 const uint32_t BAUD = 9600;
 const uint8_t  PROTOCOL_VERSION = 1;
 const uint16_t DEBOUNCE_MS = 50;     // generous — the rockers' contacts need it
@@ -185,8 +208,20 @@ void emitFullState() {
 }
 
 void setup() {
+#if NO_BROWNOUT
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+#endif
+
   Serial.begin(BAUD);                                        // USB
   LINK.begin(BAUD, SERIAL_8N1, PIN_LINK_RX, PIN_LINK_TX);    // the Pi
+
+#if NO_BROWNOUT
+  // Diagnostic, this build only: get one line out BEFORE the settle delay and
+  // the pin reads. Seeing V:panel:1 and then nothing localises the death to
+  // after this point; seeing nothing at all means it dies earlier still.
+  // panel/bench keep the original order, where this goes out with the burst.
+  emit("V:panel:%d\n", PROTOCOL_VERSION);
+#endif
 
   pinMode(detect.pin,  INPUT_PULLUP);
   pinMode(depth.pin,   INPUT_PULLUP);
@@ -207,7 +242,9 @@ void setup() {
   lastRaw = analogRead(PIN_KNOB);
 #endif
 
+#if !NO_BROWNOUT
   emit("V:panel:%d\n", PROTOCOL_VERSION);
+#endif
   emitFullState();
 }
 

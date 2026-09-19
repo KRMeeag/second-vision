@@ -67,7 +67,7 @@
 - [ ] Ensure it coexists cleanly with the haptic/serial path
 - [ ] Apply this repo's coding standards before it lands
 - [ ] Replace the placeholder `_process_real_depth`
-- [ ] Wire real hazard output (currently `hazard=False` unconditionally)
+- [x] ~~Wire real hazard output~~ — **disabled by decision (D36)**: `hazard=False` is now deliberate, gated by `GROUND_HAZARD_ENABLED`
 - [ ] Port/author unit tests for the depth math in this repo
 - [ ] Tune parameters against real captures
 - [ ] Decide where depth post-processing state lives across a pipeline rebuild
@@ -159,11 +159,11 @@
 - [ ] `tests/test_depth_utils.py` — lands with the depth port
 - [ ] Decide whether to delete `main2.py` (temporary smoke-test script)
 - [ ] Decide whether to trim the `TBR-*` draft files
-- [ ] **Open interface question**: hazard *direction*. The prototype's ground-hazard
-      detection distinguishes `"down"` (drop-off) from `"up"` (curb), but the `serial_queue`
-      contract has no field for it and `HAZARD_ALERT`'s payload is severity + pattern.
-      Needs a joint decision between the depth and firmware owners; note the return-arity
-      mismatch is a port-time `ValueError` risk.
+- [ ] **Open interface question** *(parked — ground-hazard detection is disabled, D36)*:
+      hazard *direction*. The prototype's ground-hazard detection distinguishes `"down"`
+      (drop-off) from `"up"` (curb), but the `serial_queue` contract has no field for it and
+      `HAZARD_ALERT`'s payload is severity + pattern. Only needs settling if the feature is
+      ever re-enabled.
 
 ---
 

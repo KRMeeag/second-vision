@@ -1,4 +1,6 @@
+import gc
 import os
+import subprocess
 import queue
 import sys
 import threading
@@ -64,7 +66,44 @@ hailo_logger = get_logger(__name__)
 MODE_BOTH = "both"
 MODE_DETECTION = "detection"
 MODE_DEPTH = "depth"
-VALID_MODES = (MODE_BOTH, MODE_DETECTION, MODE_DEPTH)
+
+# ONE frame-rate cap for the whole pipeline, applied to the camera stream
+# BEFORE the tee, so the depth and detection branches receive the same frames
+# at the same rate in every mode. It used to sit on the depth branch alone
+# (DEPTH_MAX_FPS = 20) while detection ran at the camera rate — two algorithms
+# at two rates, which is the "FPS mismatch" this removes. Both branches now see
+# identical buffers with identical timestamps; what each branch DROPS under
+# load is still its own business (the leaky branch queues), which is why the
+# [DEPTH] log prints both branches' FPS side by side.
+#
+# 30 by team decision (2026-09-19): higher frame rate. Overridable at launch
+# with SV_FPS=<n> because the 30-vs-20 history is not settled, all measured on
+# the device:
+#   - fed at the camera rate (30) on an idle Pi, the depth branch managed 29.7
+#     FPS and latency was 87-108 ms — but only because it happened to keep up;
+#   - the same setting two days later with a person in frame (tracker + TTS +
+#     overlay loading the CPU): the branch slipped to 27.2 FPS against a 28.6
+#     FPS camera, every buffer between them filled, and latency was 1.0-1.2 s;
+#   - fed at 15 FPS: 122-202 ms; at 20: ~120-200 ms, regardless of load.
+# A branch running at exactly its input rate sits on a knife edge. Read the
+# [DEPTH] "lat" figure during every rehearsal: the callback warns when it
+# passes LATENCY_WARN_MS (callbacks.py), and the answer to that warning is
+# `SV_FPS=20 ./scripts/sv-main.sh`, not a code change. Motors (50 ms spin-up,
+# 4 levels, 0.18 s taps) cannot use more than ~20 updates/s either way.
+PIPELINE_FPS_DEFAULT = 30
+
+
+def pipeline_fps() -> int:
+    """The shared cap: SV_FPS from the environment, else PIPELINE_FPS_DEFAULT."""
+    try:
+        return max(1, int(os.environ.get("SV_FPS", PIPELINE_FPS_DEFAULT)))
+    except (TypeError, ValueError):
+        return PIPELINE_FPS_DEFAULT
+# Both rockers off. Neither speech nor motors are reachable, so running either
+# model would burn Hailo and battery producing output nobody receives. This is
+# "run nothing", NOT "run both and mute" — see PROTOCOL.md, mode truth table.
+MODE_NONE = "none"
+VALID_MODES = (MODE_BOTH, MODE_DETECTION, MODE_DEPTH, MODE_NONE)
 
 # A mode swap is considered healthy if the new pipeline delivers its first frame within
 # this long. Not enforced — exceeding it is logged as SLOW so it gets reported, since the
@@ -86,6 +125,72 @@ _SWAP_POLL_TIMEOUT_SECONDS = 15.0
 # _rebuild_pipeline() re-checks the mode afterwards, so the pipeline always converges on
 # the most recently requested mode.
 MIN_REBUILD_INTERVAL_SECONDS = 2.0
+
+# How long to wait for the old pipeline to reach NULL before giving up on a
+# clean teardown. Generous: the alternative is losing the Hailo device.
+TEARDOWN_TIMEOUT_SECONDS = 5
+
+# After the old pipeline is unreferenced, how long to let the driver actually
+# release the vdevice. Freeing is not synchronous with the last Python
+# reference dropping.
+DEVICE_SETTLE_SECONDS = 1.0
+
+
+def _hailort_service_available():
+    """
+    True when HailoRT's daemon is running and can own the device for us.
+
+    With multi-process-service the hailort_service process holds the physical
+    Hailo permanently and our pipeline connects as a client. Rebuilds then never
+    acquire or release hardware at all.
+
+    Without it, each hailonet takes the device exclusively — and on a mode
+    switch the outgoing pipeline had not let go before the incoming one asked:
+
+        Failed to create vdevice. there are not enough free devices.
+        requested: 1, found: 0   ->  HAILO_OUT_OF_PHYSICAL_DEVICES(74)  ->  segfault
+
+    Checked at runtime rather than assumed: the property is only valid while the
+    service is active, so on a machine without it we must fall back to exclusive
+    ownership rather than build a pipeline that cannot start.
+    """
+    try:
+        return subprocess.run(
+            ["systemctl", "is-active", "--quiet", "hailort.service"],
+            timeout=2,
+        ).returncode == 0
+    except Exception:      # no systemd, no systemctl, timeout — assume not
+        return False
+
+
+def _low_latency_queues(fragment: str) -> str:
+    """
+    Shrink every default 3-buffer queue in a pipeline fragment to 1 buffer.
+
+    hailo_apps' helpers put `leaky=no max-size-buffers=3` between every pair of
+    elements. When the branch is throughput-bound each of those holds 3 stale
+    frames, and there are ~9 of them between the tee and the callback: that is
+    where the seconds of delay live. One buffer per queue is all the decoupling
+    a linear branch needs. Deliberately NOT made leaky: inside the cropper ->
+    aggregator pair a dropped crop leaves the aggregator waiting forever for a
+    result that never arrives; backpressure is safe, dropping there is not. The
+    dropping happens once, upstream, in the leaky rate-limit queue.
+    """
+    return fragment.replace("leaky=no max-size-buffers=3", "leaky=no max-size-buffers=1")
+
+
+def _rate_cap(fps: int) -> str:
+    """
+    The shared frame-rate cap, placed once on the camera stream before it
+    fans out. drop-only: never duplicate a frame to pad the rate, only discard
+    to reduce it. The 1-buffer leaky queue in front takes the drop when
+    videorate is momentarily blocked, so the source is never held up.
+    """
+    return (
+        f"{QUEUE(name='rate_q', max_size_buffers=1, leaky='downstream')} ! "
+        f"videorate name=rate_videorate drop-only=true ! "
+        f"video/x-raw, framerate={fps}/1"
+    )
 
 
 class SecondVisionApp(GStreamerApp):
@@ -142,6 +247,18 @@ class SecondVisionApp(GStreamerApp):
         self.app_callback = app_callback
         self.config = config
         setproctitle.setproctitle("Parallel-Depth-Detection-V4")
+
+        # Let the HailoRT daemon own the physical device when it is available.
+        # Decided once, at construction: every rebuilt pipeline must agree, and
+        # re-probing per rebuild would let the answer change underneath a
+        # half-built pipeline. See _hailort_service_available().
+        self._multi_process_service = _hailort_service_available()
+        hailo_logger.info(
+            "Hailo device ownership: %s",
+            "hailort_service (survives pipeline rebuilds)"
+            if self._multi_process_service
+            else "exclusive, in-process — mode switches will contend for the device",
+        )
 
         # Set once shutdown begins, so a rebuild already queued on the idle loop can't
         # resurrect a torn-down pipeline while the app is exiting. See shutdown().
@@ -215,6 +332,12 @@ class SecondVisionApp(GStreamerApp):
     # branch the dual pipeline uses, just without the tee.
     # ------------------------------------------------------------------
 
+    # Class-level default so get_pipeline_string() works on an instance built
+    # without __init__ — tests/test_pipeline_modes.py does exactly that to check
+    # the mode branching without touching hardware. __init__ overrides it with
+    # the real probe.
+    _multi_process_service = False
+
     def _depth_branch(self):
         """Depth branch fragments: (wrapper, callback, sink)."""
         depth_pipeline = INFERENCE_PIPELINE(
@@ -222,11 +345,16 @@ class SecondVisionApp(GStreamerApp):
             post_process_so=self.depth_post_process_so,
             post_function_name=self.depth_post_function_name,
             name="depth_inference",
+            multi_process_service=self._multi_process_service,
         )
         depth_pipeline_wrapper = INFERENCE_PIPELINE_WRAPPER(
             depth_pipeline, name="inference_wrapper_depth"
         ).replace("use-letterbox=true", "use-letterbox=false")
-        depth_callback = USER_CALLBACK_PIPELINE(name="depth_callback")
+        depth_pipeline_wrapper = _low_latency_queues(depth_pipeline_wrapper)
+        # No rate cap here any more: the cap sits on the shared stream in front
+        # of the tee (_rate_cap), so this branch is fed at exactly the rate the
+        # detection branch is.
+        depth_callback = _low_latency_queues(USER_CALLBACK_PIPELINE(name="depth_callback"))
         # No DISPLAY_PIPELINE here — that opens its own native GStreamer window
         # with hailo's own overlay, on top of the cv2 window callbacks.py
         # already draws (via use_frame/set_frame), which was showing up as two
@@ -243,7 +371,8 @@ class SecondVisionApp(GStreamerApp):
             batch_size=self.batch_size,
             config_json=self.labels_json,
             additional_params=self.thresholds_str,
-            name="det_inference"
+            name="det_inference",
+            multi_process_service=self._multi_process_service,
         )
         detection_pipeline_wrapper = INFERENCE_PIPELINE_WRAPPER(
             detection_pipeline, name="inference_wrapper_det"
@@ -270,7 +399,7 @@ class SecondVisionApp(GStreamerApp):
 
         # Parallel tee architecture (display handled by cv2 in callbacks.py)
         return (
-            f"{source_pipeline} ! tee name=t "
+            f"{source_pipeline} ! {_rate_cap(pipeline_fps())} ! tee name=t "
             f"t. ! {QUEUE(name='depth_branch_q', leaky='downstream')} ! {depth_pipeline_wrapper} ! {depth_callback} ! {depth_sink} "
             f"t. ! {QUEUE(name='det_branch_q', leaky='downstream')} ! {detection_pipeline_wrapper} ! {tracker_pipeline} ! {det_callback} ! {det_sink}"
         )
@@ -283,8 +412,8 @@ class SecondVisionApp(GStreamerApp):
         # The leaky branch queues exist only to decouple the two parallel branches
         # from each other, so a single-branch pipeline doesn't need them.
         return (
-            f"{source_pipeline} ! {detection_pipeline_wrapper} ! {tracker_pipeline} "
-            f"! {det_callback} ! {det_sink}"
+            f"{source_pipeline} ! {_rate_cap(pipeline_fps())} ! {detection_pipeline_wrapper} "
+            f"! {tracker_pipeline} ! {det_callback} ! {det_sink}"
         )
 
     def _build_depth_only(self):
@@ -292,7 +421,31 @@ class SecondVisionApp(GStreamerApp):
         source_pipeline = self.get_source_pipeline(no_webcam_compression=True)
         depth_pipeline_wrapper, depth_callback, depth_sink = self._depth_branch()
 
-        return f"{source_pipeline} ! {depth_pipeline_wrapper} ! {depth_callback} ! {depth_sink}"
+        return (f"{source_pipeline} ! {_rate_cap(pipeline_fps())} ! {depth_pipeline_wrapper} "
+                f"! {depth_callback} ! {depth_sink}")
+
+    def _build_idle(self):
+        """
+        Camera only — no inference at all.
+
+        The SOURCE stays up deliberately. Tearing it down would save a little
+        idle power, but coming back would then cost a camera cold-start on top
+        of the rebuild blackout (D21), and a rocker is exactly the control a
+        user flips straight back.
+
+        A callback identity is still present with nothing in front of it: the
+        wrapper it gets connected to is what increments the frame counter, and
+        without one --enable-watchdog reads an idle pipeline as a stalled one.
+        It keeps the name "det_callback" so _connect_callback needs no special
+        lookup — see the det_disabled note there.
+        """
+        source_pipeline = self.get_source_pipeline(no_webcam_compression=True)
+        idle_callback = USER_CALLBACK_PIPELINE(name="det_callback")
+
+        return (
+            f"{source_pipeline} ! {idle_callback} "
+            f"! fakesink name=idle_sink sync=false"
+        )
 
     def current_mode(self) -> str:
         """
@@ -317,6 +470,8 @@ class SecondVisionApp(GStreamerApp):
             pipeline_str = self._build_detection_only()
         elif mode == MODE_DEPTH:
             pipeline_str = self._build_depth_only()
+        elif mode == MODE_NONE:
+            pipeline_str = self._build_idle()
         else:
             pipeline_str = self._build_dual()
 
@@ -346,17 +501,24 @@ class SecondVisionApp(GStreamerApp):
         disable_callback = self.options_menu.disable_callback
         mode = self.current_mode()
 
-        wire_det = mode in (MODE_BOTH, MODE_DETECTION)
+        wire_det = mode in (MODE_BOTH, MODE_DETECTION, MODE_NONE)
         wire_depth = mode in (MODE_BOTH, MODE_DEPTH)
         # Depth is the frame-counting branch only when detection isn't there to do it.
         depth_counts_frames = mode == MODE_DEPTH
+
+        # MODE_NONE wires the identity but not the handler: there is no inference
+        # ahead of it, so on_det_frame would parse metadata that does not exist.
+        # _internal_callback_wrapper still runs and still counts frames when the
+        # callback is disabled — which is the whole reason idle can be told
+        # apart from a stall by --enable-watchdog.
+        det_disabled = disable_callback or mode == MODE_NONE
 
         if wire_det:
             det_identity = self.pipeline.get_by_name("det_callback")
             if det_identity:
                 det_identity.set_property("signal-handoffs", True)
                 det_identity.connect(
-                    "handoff", _internal_callback_wrapper, self.user_data, callbacks.on_det_frame, disable_callback
+                    "handoff", _internal_callback_wrapper, self.user_data, callbacks.on_det_frame, det_disabled
                 )
                 hailo_logger.debug("Connected detection callback.")
             else:
@@ -473,6 +635,9 @@ class SecondVisionApp(GStreamerApp):
             self._rebuild_in_flight = False
             return False
 
+        # MUST happen before super() builds the new pipeline. See the method.
+        self._release_old_pipeline()
+
         try:
             return super()._rebuild_pipeline()
         finally:
@@ -483,6 +648,112 @@ class SecondVisionApp(GStreamerApp):
             if not self._shutting_down and self.current_mode() != self._built_mode:
                 hailo_logger.debug("Mode changed during rebuild — rebuilding again")
                 self.trigger_rebuild()
+
+    @staticmethod
+    def _hailonet_elements(pipeline):
+        """
+        Every hailonet in the pipeline, including inside nested bins.
+
+        The inference branches are wrapped in hailocropper/hailoaggregator bins,
+        so a flat iterate_elements() misses the hailonets that actually hold the
+        device. Recurse.
+        """
+        found = []
+
+        def walk(bin_):
+            it = bin_.iterate_elements()
+            while True:
+                ok, element = it.next()
+                if ok != Gst.IteratorResult.OK:
+                    break
+                factory = element.get_factory()
+                if factory is not None and factory.get_name() == "hailonet":
+                    found.append(element)
+                elif isinstance(element, Gst.Bin):
+                    walk(element)
+
+        try:
+            walk(pipeline)
+        except Exception as exc:  # never let discovery block a teardown
+            hailo_logger.warning("Could not enumerate hailonet elements: %r", exc)
+        return found
+
+    def _release_old_pipeline(self):
+        """
+        Tear the old pipeline down and let the Hailo device actually go.
+
+        The framework's _rebuild_pipeline() does its own teardown, but it keeps
+        a local `bus` variable referencing the OLD pipeline's bus alive across
+        the Gst.parse_launch() of the NEW one:
+
+            bus = self.pipeline.get_bus()   # ref to the old pipeline
+            ...
+            self.pipeline = None            # not enough — bus still holds it
+            self.pipeline = Gst.parse_launch(...)   # new hailonet wants the device
+            bus = self.pipeline.get_bus()   # only NOW is the old bus dropped
+
+        A GstBus holds its parent, so the old hailonet — and the vdevice it
+        owns — are still alive when the new hailonet asks for hardware. There is
+        exactly one Hailo-8, so it fails:
+
+            Failed to create vdevice. there are not enough free devices.
+            requested: 1, found: 0
+            HAILO_OUT_OF_PHYSICAL_DEVICES(74)
+
+        and then segfaults inside GStreamer. It fires on EVERY mode switch,
+        which is every time the user flips a rocker.
+
+        Doing the teardown here fixes it because every reference dies before we
+        return: super() then finds self.pipeline None and skips its own block,
+        so no stale bus survives into parse_launch.
+        """
+        if self.pipeline is None:
+            return
+
+        pipeline, self.pipeline = self.pipeline, None
+        try:
+            # Take the hailonet elements to NULL FIRST, individually.
+            #
+            # Setting the pipeline to NULL is meant to cascade, but it did not
+            # release the Hailo vdevice here: switching both -> none appeared to
+            # work only because the idle pipeline has no hailonet and so asked
+            # for no hardware. The very next switch that DID need the device got
+            #     Failed to create vdevice ... requested: 1, found: 0
+            # because the previous pipeline's hailonet still owned it.
+            #
+            # hailonet releases the vdevice on its own NULL transition, so drive
+            # that explicitly and wait for each one rather than trusting the
+            # cascade.
+            for element in self._hailonet_elements(pipeline):
+                name = element.get_name()
+                element.set_state(Gst.State.NULL)
+                ret, _, _ = element.get_state(TEARDOWN_TIMEOUT_SECONDS * Gst.SECOND)
+                if ret != Gst.StateChangeReturn.SUCCESS:
+                    hailo_logger.warning(
+                        "hailonet %s did not reach NULL (%s) — the device may "
+                        "still be held", name, ret)
+                else:
+                    hailo_logger.debug("hailonet %s released", name)
+
+            pipeline.set_state(Gst.State.NULL)
+            # Block until it really is NULL. Returning early would defeat the
+            # whole point — the device is released on the state change, not on
+            # the request for it.
+            pipeline.get_state(TEARDOWN_TIMEOUT_SECONDS * Gst.SECOND)
+            bus = pipeline.get_bus()
+            if bus is not None:
+                bus.remove_signal_watch()
+                del bus
+        except Exception as exc:  # never let teardown kill the rebuild
+            hailo_logger.warning("Error tearing down old pipeline: %r", exc)
+        finally:
+            del pipeline
+            # Refcounting alone is not enough — GStreamer objects can sit in
+            # reference cycles that only the collector breaks.
+            gc.collect()
+            # And the driver frees the vdevice slightly after the last
+            # reference goes.
+            time.sleep(DEVICE_SETTLE_SECONDS)
 
     def shutdown(self, signum=None, frame=None):
         """

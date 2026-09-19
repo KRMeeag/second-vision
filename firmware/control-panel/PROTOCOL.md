@@ -27,7 +27,7 @@ Every line is emitted **identically and in the same order** on both:
 
 | Path | Pins | Purpose |
 |---|---|---|
-| `Serial2` | ESP32 GPIO23 → Pi GPIO15 (`/dev/serial0`) | deployment |
+| `Serial2` | ESP32 GPIO23 → Pi **pin 21** (GPIO9, `uart3-pi5`) | deployment |
 | `Serial` | USB CDC | bench debugging, and testing on a laptop with no Pi |
 
 No build flag, no mode switch. The Pi link is deliberately **not** UART0: UART0

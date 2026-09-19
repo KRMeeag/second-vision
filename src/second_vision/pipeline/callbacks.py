@@ -17,11 +17,16 @@ import time
 #
 #   serial_queue item (5 fields, all always present):
 #     left/center/right  int 0-255  MOTOR DUTY, not a perception score. Already
-#                                   deadbanded, quantized, floored above the
-#                                   motors' start threshold and pulse-gated by
-#                                   core/haptics.py. 0 means "hold still"; any
-#                                   non-zero value is meant to be felt.
-#     hazard             bool       ground break, debounced and LATCHED
+#                                   deadbanded, quantized and rate-coded into
+#                                   taps by core/haptics.py: a fixed strong duty
+#                                   that repeats faster the nearer the obstacle,
+#                                   continuous at point-blank. 0 means "hold
+#                                   still" — between taps as much as when clear.
+#     hazard             bool       ground break, debounced and LATCHED.
+#                                   Always False while depth_utils
+#                                   .GROUND_HAZARD_ENABLED is off (it is —
+#                                   detector unreliable, DECISIONS D36); the
+#                                   field stays so the ESP32 contract holds.
 #     hazard_severity    int 0-255  break SIZE, not a distance — a different
 #                                   scale from the zone values, never compare
 #                                   the two. 0 whenever hazard is False.
@@ -52,6 +57,7 @@ try:
     from second_vision.core.calibration import CalibrationLogger
     from second_vision.core.capture import FrameCapture
     from second_vision.core.depth_utils import (
+        GROUND_HAZARD_ENABLED,
         DepthPostProcessor,
         HazardDebouncer,
         crop_border,
@@ -105,6 +111,13 @@ DEPTH_PREVIEW_EVERY = 2              # Only ship every Nth frame to the viewer p
                                      # EMA-smoothed values barely move frame to frame
 DEPTH_ERROR_LOG_SECONDS = 5.0        # Floor on repeat error logging; a bad frame at 30 FPS
                                      # must not bury the console in tracebacks
+# Camera-to-callback age above which the depth branch is not keeping up with
+# the shared frame rate (app.PIPELINE_FPS_DEFAULT). Measured history: 120-200
+# ms is healthy; 1.0-1.2 s is what a throughput-bound branch looks like. The
+# warning names the fix (SV_FPS=20) because the number that matters to the
+# wearer is this one, not the FPS.
+LATENCY_WARN_MS = 300.0
+LATENCY_WARN_EVERY_SECONDS = 5.0     # a lagging branch must not also flood the console
 
 # ---- Zone boundaries (fractions of frame width) ----
 LEFT_BOUNDARY = 0.22          # Below this -> "left"
@@ -135,7 +148,7 @@ def on_depth_frame(element, buffer, user_data):
         # Convention (AGENTS.md): a callback catches, logs and returns — one bad
         # frame must never take the pipeline down with it.
         try:
-            _process_real_depth(buffer, user_data)
+            _process_real_depth(element, buffer, user_data)
         except Exception as exc:
             _log_depth_error(exc)
             # A swallowed exception must not also swallow the motors' last
@@ -257,6 +270,7 @@ if HAILO_AVAILABLE:
             self.head_turn_cooldown_until = 0.0
             self.depth_frame_count = 0
             self.depth_fps_start_time = time.monotonic()
+            self.last_latency_warning = 0.0
 
             # ---- Depth post-processing state ----
             # Built here rather than in the callback because __init__ runs once,
@@ -290,10 +304,11 @@ if HAILO_AVAILABLE:
             # strip's own noise median and so flickers on a marginal break. Held
             # here rather than inside DepthPostProcessor because the hazard strip
             # is a separate signal from the zone intensities and is reset on the
-            # same events but graded on its own timebase.
-            self.hazard_debouncer = HazardDebouncer()
-            # Last stage before the queue: deadband, level quantization, PWM
-            # floor and the anti-habituation pulse. Everything upstream of it
+            # same events but graded on its own timebase. None while ground-
+            # hazard detection is disabled (see GROUND_HAZARD_ENABLED).
+            self.hazard_debouncer = HazardDebouncer() if GROUND_HAZARD_ENABLED else None
+            # Last stage before the queue: deadband, level quantization, then
+            # the cycle hold and rate-coded pulse. Everything upstream of it
             # measures the scene; it alone decides what the motors do.
             self.haptics = HapticMapper()
 
@@ -697,7 +712,27 @@ def _publish_silence(user_data) -> None:
     _publish_motors(user_data, user_data.haptics.silence(time.monotonic()))
 
 
-def _process_real_depth(buffer, user_data):
+def _pipeline_latency_ms(element, buffer):
+    """
+    Age of this buffer: how long ago the camera captured the frame the callback
+    is looking at RIGHT NOW, in ms. The pipeline clock's running time minus the
+    buffer's timestamp (a live source stamps buffers with the running time at
+    capture). This is the number the wearer feels — everything upstream of the
+    callback (queues, cropper, inference, aggregator) is inside it, and nothing
+    downstream (haptics, serial) is. None if the pipeline has no clock yet.
+    """
+    try:
+        clock = element.get_clock()
+        pts = buffer.pts
+        if clock is None or pts is None or pts < 0:
+            return None
+        running = clock.get_time() - element.get_base_time()
+        return (running - pts) / 1e6
+    except Exception:
+        return None
+
+
+def _process_real_depth(element, buffer, user_data):
     """
     Run the depth post-processing chain (core/depth_utils.py) on one frame and
     publish per-zone MOTOR DUTIES to serial_queue.
@@ -708,7 +743,7 @@ def _process_real_depth(buffer, user_data):
           -> downsample             (64x48 grid for the cheap zone math)
           -> [SV_CALIBRATE: log raw stats and STOP — headless tuning mode]
           -> DepthPostProcessor.process(cropped, NATIVE resolution)
-          -> detect_ground_hazard(small)
+          -> [GROUND_HAZARD_ENABLED, currently off: detect_ground_hazard(small)]
           -> HapticMapper.shape()   (perception -> what the motors do)
           -> serial_queue + throttled preview payload
 
@@ -718,8 +753,8 @@ def _process_real_depth(buffer, user_data):
     internally, so every other detector still sees the same `small` grid.
 
     WHAT LEAVES THIS FUNCTION. The values on serial_queue are PWM duties, not
-    perception scores: post-deadband, quantized, floored at the motors' start
-    threshold and pulse-gated. `serial_worker.py` is transport and applies
+    perception scores: post-deadband, quantized, held per pulse cycle and
+    rate-coded into taps. `serial_worker.py` is transport and applies
     `config.motor_strength`; nothing else between here and the ESP32 reinterprets
     them. The distinction matters because a zone perceiving 60 and driving 0 is
     correct behaviour here, not a lost signal.
@@ -770,14 +805,20 @@ def _process_real_depth(buffer, user_data):
         return
 
     intensities = user_data.depth_processor.process(depth_data)
-    # Debounced, not raw: detect_ground_hazard is memoryless and its gate divides
-    # by the strip's own noise median, so on a marginal break it alternates
-    # true/false frame to frame (131 flips in 400 frames on a static scene). The
-    # motors must not be driven off that — a ~10 Hz stutter reads as a broken
-    # device, not as a warning.
-    hazard, severity, direction = user_data.hazard_debouncer.update(
-        *detect_ground_hazard(small, small.shape[0])
-    )
+    # Ground-hazard detection is off by team decision (see GROUND_HAZARD_ENABLED
+    # in depth_utils.py): the detector was not trustworthy enough to ship, and
+    # there is no cane to fall back on — the wearer is told the device does not
+    # see stairs. The contract fields are still
+    # published, as an explicit False / 0, so the firmware sees no change.
+    # When it is on, the reading is debounced, not raw: detect_ground_hazard is
+    # memoryless and its gate divides by the strip's own noise median, so on a
+    # marginal break it alternates true/false frame to frame (131 flips in 400
+    # frames on a static scene) — a ~10 Hz stutter the motors must never see.
+    hazard, severity, direction = False, 0, "none"
+    if user_data.hazard_debouncer is not None:
+        hazard, severity, direction = user_data.hazard_debouncer.update(
+            *detect_ground_hazard(small, small.shape[0])
+        )
 
     # Perception -> what the wearer feels. Everything above this line measures
     # the scene; this line decides the device's behaviour, and it is the only
@@ -815,13 +856,31 @@ def _process_real_depth(buffer, user_data):
 
     if frame_count % DEPTH_LOG_EVERY == 0:
         d_lo, d_med, d_hi = np.percentile(small, [1, 50, 99])
+        lat_ms = _pipeline_latency_ms(element, buffer)
         # Both rows on purpose: perception (what was seen) and motor (what the
         # wearer got). They are allowed to disagree, and when the device "does
         # nothing" the only way to tell a dead detector from a working deadband
-        # is to see the pair side by side.
+        # is to see the pair side by side. The motor row is duty/level: with the
+        # rate-coded pulse a duty of 0 at a non-zero level is the gap between
+        # taps, not a lost obstacle.
+        lv = user_data.haptics.last_levels
+        # Both branches' rates side by side: the cap is shared (one videorate
+        # ahead of the tee), so these should agree; a gap between them is a
+        # branch dropping frames under load, which is worth seeing here rather
+        # than inferring from the latency. (In depth-only mode det reads 0.)
+        lat_text = f"lat {lat_ms:.0f} ms" if lat_ms is not None else "lat n/a"
         print(f"[DEPTH] Frame {frame_count} | "
               f"L={intensities['left']} C={intensities['center']} R={intensities['right']} | "
-              f"motor L={motors['left']} C={motors['center']} R={motors['right']} | "
-              f"Hazard: {hazard} ({direction}, sev {severity}) | "
-              f"raw p1/p50/p99: {d_lo:.2f}/{d_med:.2f}/{d_hi:.2f} | "
-              f"{user_data.get_depth_fps():.1f} FPS")
+              f"motor L={motors['left']}/L{lv['left']} C={motors['center']}/L{lv['center']} "
+              f"R={motors['right']}/L{lv['right']} | "
+              + (f"Hazard: {hazard} ({direction}, sev {severity}) | " if GROUND_HAZARD_ENABLED else "")
+              + f"raw p1/p50/p99: {d_lo:.2f}/{d_med:.2f}/{d_hi:.2f} | "
+              f"depth {user_data.get_depth_fps():.1f} FPS / det {user_data.get_det_fps():.1f} FPS | "
+              + lat_text)
+        if lat_ms is not None and lat_ms > LATENCY_WARN_MS:
+            now = time.monotonic()
+            if now - user_data.last_latency_warning >= LATENCY_WARN_EVERY_SECONDS:
+                user_data.last_latency_warning = now
+                print(f"[DEPTH] WARNING: camera-to-callback latency {lat_ms:.0f} ms "
+                      f"(> {LATENCY_WARN_MS:.0f} ms) — the depth branch is not keeping up "
+                      f"with the frame rate. Relaunch with SV_FPS=20 (see app.PIPELINE_FPS_DEFAULT).")

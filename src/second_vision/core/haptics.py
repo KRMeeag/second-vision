@@ -13,10 +13,18 @@ device becomes an unwearable one.
 Shaping order, and why it is this order:
 
     1. lateral contrast  — subtract part of the quietest zone from all three
-    2. deadband          — anything below "worth noticing" becomes exactly 0
-    3. quantize          — ~5 levels, with hysteresis so they don't chatter
-    4. PWM floor         — a non-zero level must actually spin the motor
-    5. pulse when static — an unchanging strong reading goes intermittent
+    2. centre priority   — a centre reading as near as the sides silences them
+    3. winner-take-most  — zones trailing the loudest one are pushed down
+    4. deadband          — anything below "worth noticing" becomes exactly 0
+    5. quantize          — ~5 levels, with hysteresis so they don't chatter
+    6. cycle hold        — the level actually driven is decided once per pulse
+                           cycle, from the levels seen during the cycle before
+    7. rate coding       — a fixed strong tap, repeated faster the nearer the
+                           obstacle; a solid buzz at point-blank
+
+With PULSE_ENABLED = False, stages 6-7 are replaced by a per-frame amplitude
+(level_to_pwm, floored at PWM_FLOOR) — the pre-September-2026 behaviour, kept
+for tests of stages 1-5 and as the fallback if the rate code fails the wearer.
 
 Contrast runs BEFORE the deadband on purpose. Walking a normal corridor lights
 both temples at a similar level all the way down it; contrast collapses that
@@ -25,16 +33,32 @@ order, the corridor survives the deadband and the wearer feels a two-minute
 buzz on both temples — the failure mode FIELD-TESTING.md's environments
 (schools, malls, streets) would hit within seconds of walking in.
 
+Winner-take-most exists because contrast alone answers the wrong question. It
+removes what all three zones share, but says nothing about the zones that are
+merely LOWER than the loudest: a person on the right at 255 next to a centre
+zone reading 200 from something farther away came out, after contrast and the
+quantizer, at the same level on both motors — the wearer felt "centre" (field
+report). The direction a three-motor headband can convey is which zone WINS;
+that difference has to be amplified, not preserved.
+
 Use-case assumptions baked in here (PROJECT.md):
   - 3 ERM motors: left temple, forehead, right temple. Coin ERMs do not spin at
     low duty and have a ~50 ms spin-up, so anything they are asked to do must be
     slow and coarse compared to the 30 FPS depth stream.
-  - The wearer KEEPS their white cane. This channel covers body and head height,
-    which the cane cannot reach. It is not the primary ground sense, so it can
-    afford to stay quiet; silence is a valid and common output.
+  - This channel is the wearer's obstacle sense at body and head height; there
+    is NO white cane (PROJECT.md, corrected Sept 2026) and no ground-hazard
+    detection (DECISIONS D36). Silence is still a valid and common output —
+    nothing near means nothing felt — but it must never be silence by
+    accident.
   - Skin habituates. A continuous vibration stops being felt within about a
-    minute, so a constant-level warning must be modulated or it decays to
-    nothing exactly when the wearer has been near an obstacle the longest.
+    minute. A rate code re-triggers the skin by construction — every tap is an
+    onset — so this no longer needs a separate modulation stage; only the
+    continuous top level can still fade, and at point-blank the wearer is
+    acting on the warning, not standing in it.
+  - The depth model is noisy frame to frame, and at 20 FPS a per-frame motor
+    command puts that noise straight onto the skin. The cycle hold (stage 6) is
+    the integrator: nothing is sampled at frame rate, so nothing is felt at
+    frame rate.
 
 Every threshold below is a starting value chosen from ERM datasheet behaviour
 and the reasoning above, NOT from a measurement on our motors. PWM_FLOOR
@@ -47,7 +71,7 @@ Pure functions plus HapticMapper, which holds the hysteresis and pulse state.
 No hardware, no serial port — all unit-testable.
 """
 
-from typing import Dict
+from typing import Dict, List, Optional, Sequence, Tuple
 
 ZONE_NAMES = ("left", "center", "right")
 
@@ -56,21 +80,60 @@ ZONE_NAMES = ("left", "center", "right")
 # motors on a head, the question the wearer is actually asking is "which way is
 # clear", not "how far is the left wall" — and a reading common to all three
 # zones carries no directional information at all.
-# Deliberately not 1.0: at 1.0 a wall closing in dead ahead across the whole
-# field reads identically to open space, because subtracting the minimum zeroes
-# a uniform frame. Keeping half means absolute urgency still gets through while
-# the directional contrast is what dominates. PLACEHOLDER — 0.5 is reasoned,
-# not measured; the honest test is whether a corridor goes quiet while a
-# head-on wall does not.
-CONTRAST_FRACTION = 0.5
+# Now 0.0 — retired, on live evidence. Contrast can only act when ALL three
+# zones are non-zero (a clear centre makes the minimum 0, so the corridor case
+# it was written for was never touched by it). The one case it did act on is a
+# surface filling the whole field, and there it took a point-blank object down
+# to 145/255 on the forehead (live: L=255 C=244 R=255 -> motor C=145). With
+# centre priority and winner-take-most doing the directional work, all this
+# stage could do was weaken the winner. The function stays for the tests and in
+# case a measured reason for it appears.
+CONTRAST_FRACTION = 0.0
 
-# --- 2. deadband -----------------------------------------------------------
+# --- 2. centre priority ------------------------------------------------------
+# When the centre zone is active AND at least as near as the sides, only the
+# centre motor runs. The centre is the collision path (DECISIONS D7; the TTS
+# priority weights it 1.0 against 0.5 for the sides for the same reason). A
+# person straddling centre-and-right, or a wall filling all three zones, lights
+# two or three motors at once — and three motors on a head buzzing together do
+# not say "obstacle ahead" more strongly, they say nothing at all, which is the
+# "overwhelmed" report from the field. One motor, the one on the path, is the
+# whole message.
+#
+# The nearness condition is the safety guard: a side that is CLEARLY nearer than
+# the centre — someone at your shoulder while the centre reads a wall metres
+# ahead — keeps its motor, because silencing the nearer hazard is the unsafe
+# direction. "Clearly" means more than CENTER_PRIORITY_MARGIN (0-1 scale,
+# roughly one quantizer level) above the centre. Set CENTER_PRIORITY False to
+# disable.
+CENTER_PRIORITY = True
+CENTER_PRIORITY_MARGIN = 0.2
+# Once the centre holds priority, a side must exceed the centre by MARGIN plus
+# this before it wins it back. Live: a surface filling the field read
+# L=255 C=203 R=252 for one frame — the centre a hair past the margin — and all
+# three motors fired for a tick before it snapped back to centre-only. A
+# decision worth two motors switching on must not sit on a knife edge.
+CENTER_PRIORITY_HYSTERESIS = 0.15
+
+# --- 3. winner-take-most -----------------------------------------------------
+# Each zone is pushed down by this multiple of its distance below the LOUDEST
+# zone. At 1.0 a zone reading 60% of the winner is silenced entirely
+# (0.6 - 1.0 * 0.4 = 0.2, then the deadband), one at 80% keeps a faint level,
+# and the winner itself is untouched — so a wall closing in across the whole
+# field (all zones equal) still fires all three at full, and a corridor (both
+# temples equal, centre quiet) still fires both temples. Only the zones that
+# are BOTH quieter AND not tied lose. PLACEHOLDER — 1.0 is reasoned, not
+# measured; the honest test is whether a person on one side is felt on that
+# side alone. Set to 0.0 to disable.
+WINNER_SUPPRESSION = 1.0
+
+# --- 4. deadband -----------------------------------------------------------
 # Below this (0-1 scale, after contrast) the output is exactly 0. This is the
 # single most important rule in the file: it is what makes "nothing worth
 # reporting" the device's resting state instead of a permanent low hum.
 DEADBAND = 0.18
 
-# --- 3. quantize -----------------------------------------------------------
+# --- 5. quantize -----------------------------------------------------------
 # Nobody discriminates 256 vibration levels on a temple; a handful is the real
 # resolution of the channel. Quantizing also kills micro-flicker for free —
 # a value wobbling by a couple of counts stops moving the motor at all.
@@ -80,7 +143,7 @@ LEVELS = 5                   # level 0 = silent, 1..4 = felt intensities
 # frame, which is felt as a rattle rather than as a steady reading.
 LEVEL_HYSTERESIS = 0.06
 
-# --- 4. PWM floor ----------------------------------------------------------
+# --- PWM floor (amplitude path, PULSE_ENABLED = False) ------------------------
 # ERMs do not turn at all across the bottom of the duty range, so a "weak"
 # warning sent as a small number is indistinguishable from no warning — the
 # device looks broken while behaving correctly. Every non-zero level is mapped
@@ -90,21 +153,63 @@ LEVEL_HYSTERESIS = 0.06
 PWM_FLOOR = 90
 PWM_MAX = 255
 
-# --- 5. pulse when static --------------------------------------------------
-# A zone held at the same level for this long starts pulsing instead of running
-# continuously. Standing at a bus stop facing a wall should not fade to nothing;
-# re-triggering the mechanoreceptors is what keeps it perceptible.
-PULSE_AFTER_S = 3.0
-PULSE_PERIOD_S = 0.9         # one on+off cycle
-PULSE_DUTY = 0.6             # fraction of the period the motor is ON
-# Lowest level that pulses once held. This is 1 — i.e. everything — because
-# habituation is not a function of amplitude: a gentle hum held against the
-# temples fades from awareness just as completely as a strong one, and the
-# low-level case is the COMMON one (a corridor puts a moderate reading on both
-# temples for its entire length). An intermittent gentle tap for a corridor is
-# information; two minutes of continuous hum is what gets a device switched off.
-# Raise this only if field testing shows the pulsing itself is the irritant.
-PULSE_MIN_LEVEL = 1
+# --- 6. cycle hold + 7. rate coding -----------------------------------------
+# The motor is NOT re-commanded every frame. Each zone runs a pulse clock, and
+# the level actually driven is decided once per cycle, from the levels the
+# quantizer produced during the cycle just ended — the upper median, i.e. the
+# level met or exceeded at least half the time, ties toward nearer. Between
+# boundaries the command does not change. This is where the depth model's
+# frame-to-frame wobble stops: the EMA, deadband and hysteresis upstream all
+# thin it, but at 20 FPS whatever got past them reached the skin within 50 ms,
+# and the wearer felt the model's noise directly ("overwhelmed with the
+# changes", Sept 2026). A cycle is the unit of decision because it is also the
+# unit of perception — nobody feels a change inside a tap.
+#
+# WHAT A PULSE MEANS. Rate-coded, like a parking sensor: a fixed strong tap
+# whose repetition rate rises with proximity, and a solid buzz at point-blank.
+# Chosen over amplitude levels (user decision, 2026-09-15) because rhythm is
+# discriminated on skin far more reliably than amplitude: the four duties of
+# level_to_pwm have never been shown to be tellable apart on these motors, and
+# PWM_FLOOR is still unmeasured. A rate code depends on neither. It also
+# retires the anti-habituation dip that lived here — a tap re-triggers the
+# skin by construction.
+#
+# Two earlier pulse designs were rejected by testers as "255 one second, 0 the
+# next". Both MODULATED a held amplitude on top of the reading; here the pulse
+# IS the reading, and its rate is the information. Same skin, though — this
+# must be wearer-tested before it is called good, and PULSE_ENABLED = False
+# is the way back.
+PULSE_ENABLED = True
+# Cycle length per level, seconds; index = level, entry 0 unused (silent). The
+# ON time is fixed (below), so a shorter period is a faster tap. A period no
+# longer than PULSE_ON_S is continuous — that is the top level, point-blank.
+# The far levels, where the model is noisiest, are also re-evaluated least
+# often, which is the right way round. PLACEHOLDER — reasoned from ERM spin-up
+# and parking-sensor practice, not measured. len() must equal LEVELS.
+PULSE_PERIODS_S: Tuple[Optional[float], ...] = (None, 1.2, 0.7, 0.4, 0.18)
+# How long each tap drives the motor. Coin ERMs need ~50 ms to spin up and
+# about as long to stop, so anything under ~120 ms is a click rather than a
+# buzz; 180 ms is a clear tap and 3-4 frames at 20 FPS. PLACEHOLDER.
+PULSE_ON_S = 0.18
+# Duty of every tap. One value: with a rate code the amplitude carries no
+# information, so it is simply "clearly felt". Must be >= PWM_FLOOR.
+PULSE_PWM = PWM_MAX
+# The one thing that cuts a cycle short: something arriving FAST. A quantized
+# level at least PULSE_RISE_LEVELS above the driven level — or any level at
+# all while the zone is silent — seen on PULSE_RISE_FRAMES consecutive frames
+# starts a new cycle at once instead of waiting for the boundary. Three frames
+# is 150 ms at 20 FPS: under the motor's own spin-up plus the wearer's reaction,
+# and enough that a single-frame spike from the model cannot fire a tap. A
+# reading that flickers at the deadband for three frames still buys one tap;
+# the next boundary then judges it by its median and drops it. That single
+# tap is the accepted cost — raise PULSE_RISE_FRAMES if it is felt too often.
+# Falling never interrupts. An obstacle that clears is judged at the next
+# boundary by the median of a cycle it was mostly present in, so it usually
+# earns ONE more tap; simulated at every phase, the last drive lands within
+# 0.75 s of the clear at level 1 and within 0.25 s at level 4. A stale tap is
+# the conservative direction; a dropped real obstacle is not.
+PULSE_RISE_LEVELS = 2
+PULSE_RISE_FRAMES = 3
 
 SILENT: Dict[str, int] = {zone: 0 for zone in ZONE_NAMES}
 
@@ -117,6 +222,46 @@ def apply_lateral_contrast(values: Dict[str, float],
     """
     common = min(values[zone] for zone in ZONE_NAMES) * fraction
     return {zone: max(0.0, values[zone] - common) for zone in ZONE_NAMES}
+
+
+def center_has_priority(values: Dict[str, float], holding: bool,
+                        margin: float = CENTER_PRIORITY_MARGIN,
+                        hysteresis: float = CENTER_PRIORITY_HYSTERESIS) -> bool:
+    """
+    Should the centre zone own the output this frame? Yes when it is active and
+    no side is more than `margin` above it — or, if it already held priority
+    (`holding`), more than `margin + hysteresis` above it.
+    """
+    center = values["center"]
+    if center <= 0.0:
+        return False
+    allowance = margin + (hysteresis if holding else 0.0)
+    return max(values["left"], values["right"]) <= center + allowance
+
+
+def apply_center_priority(values: Dict[str, float], holding: bool = False,
+                          margin: float = CENTER_PRIORITY_MARGIN) -> Dict[str, float]:
+    """
+    If the centre has priority (see center_has_priority), silence both sides
+    and return the centre alone. Otherwise return the values unchanged. Never
+    raises any zone.
+    """
+    if not center_has_priority(values, holding, margin):
+        return dict(values)
+    return {"left": 0.0, "center": values["center"], "right": 0.0}
+
+
+def apply_winner_take_most(values: Dict[str, float],
+                           suppression: float = WINNER_SUPPRESSION) -> Dict[str, float]:
+    """
+    Push every zone down by `suppression` x its shortfall from the loudest
+    zone. The loudest zone (and any zone tied with it) is returned unchanged;
+    a uniformly loud frame passes through intact. Never returns a negative
+    value.
+    """
+    peak = max(values[zone] for zone in ZONE_NAMES)
+    return {zone: max(0.0, values[zone] - suppression * (peak - values[zone]))
+            for zone in ZONE_NAMES}
 
 
 def level_to_pwm(level: int, levels: int = LEVELS,
@@ -135,6 +280,18 @@ def level_to_pwm(level: int, levels: int = LEVELS,
     return int(round(floor + span * (level - 1) / (top - 1)))
 
 
+def upper_median(levels: Sequence[int]) -> int:
+    """
+    The level met or exceeded at least half the time — the cycle's verdict.
+    Ties go nearer (for four samples 0,0,4,4 the answer is 4), because the
+    unsafe direction is under-reporting. Empty input is silence.
+    """
+    if not levels:
+        return 0
+    ordered = sorted(levels)
+    return ordered[len(ordered) // 2]
+
+
 class HapticMapper:
     """
     Stateful per-zone shaping: perception in (0-255), motor duty out (0-255).
@@ -150,17 +307,40 @@ class HapticMapper:
 
     def __init__(self, deadband: float = DEADBAND, levels: int = LEVELS,
                  contrast: float = CONTRAST_FRACTION, pwm_floor: int = PWM_FLOOR,
-                 pulse: bool = True):
+                 pulse: bool = PULSE_ENABLED, winner: float = WINNER_SUPPRESSION,
+                 center_priority: bool = CENTER_PRIORITY,
+                 periods: Sequence[Optional[float]] = PULSE_PERIODS_S,
+                 on_s: float = PULSE_ON_S, pulse_pwm: int = PULSE_PWM,
+                 rise_levels: int = PULSE_RISE_LEVELS,
+                 rise_frames: int = PULSE_RISE_FRAMES):
+        if pulse and len(periods) != levels:
+            raise ValueError(f"need one pulse period per level: {len(periods)} != {levels}")
         self.deadband = deadband
         self.levels = levels
         self.contrast = contrast
+        self.winner = winner
+        self.center_priority = center_priority
+        self._center_holding = False
         self.pwm_floor = pwm_floor
         self.pulse = pulse
+        self.periods = tuple(periods)
+        self.on_s = on_s
+        self.pulse_pwm = pulse_pwm
+        self.rise_levels = rise_levels
+        self.rise_frames = rise_frames
+        # Stage 5: the quantizer's per-frame level, with its hysteresis.
         self._level: Dict[str, int] = {zone: 0 for zone in ZONE_NAMES}
-        self._level_since: Dict[str, float] = {zone: 0.0 for zone in ZONE_NAMES}
-        # Pre-shaping levels, kept for the HUD: what the motors were asked for
-        # before the pulse gate chopped it, so a dark frame in a pulse's off
-        # phase doesn't read as "the detector lost the obstacle".
+        # Stages 6-7: the level a zone is being DRIVEN at this cycle, when the
+        # cycle began, the per-frame levels seen since, and how many frames in
+        # a row have qualified as a rise interrupt.
+        self._driven: Dict[str, int] = {zone: 0 for zone in ZONE_NAMES}
+        self._cycle_start: Dict[str, float] = {zone: 0.0 for zone in ZONE_NAMES}
+        self._cycle_levels: Dict[str, List[int]] = {zone: [] for zone in ZONE_NAMES}
+        self._rise_run: Dict[str, int] = {zone: 0 for zone in ZONE_NAMES}
+        # What the motors were asked for, kept for the HUD and the log: the
+        # driven level (pulse on) or the quantized level (pulse off). A frame
+        # sampled in the gap between taps must not read as "the detector lost
+        # the obstacle" — the returned duty is 0 there, this is not.
         self.last_levels: Dict[str, int] = {zone: 0 for zone in ZONE_NAMES}
 
     def _quantize(self, zone: str, value: float) -> int:
@@ -190,20 +370,61 @@ class HapticMapper:
             return raw
         return current
 
-    def _pulse_gate(self, zone: str, level: int, now: float) -> bool:
+    def _start_cycle(self, zone: str, level: int, now: float) -> None:
+        self._driven[zone] = level
+        self._cycle_start[zone] = now
+        self._cycle_levels[zone] = []
+        self._rise_run[zone] = 0
+
+    def _cycle_len(self, level: int) -> float:
         """
-        True if the motor should be ON this instant. A zone that has held the
-        same strong level longer than PULSE_AFTER_S switches to an intermittent
-        pattern; anything still changing is left alone, because a changing
-        reading is already re-triggering the skin on its own.
+        How long a cycle at `level` runs before its verdict. A level whose
+        period is no longer than the tap is continuous: it is still
+        re-judged, every `on_s`, but the motor never stops between verdicts.
         """
-        if not self.pulse or level < PULSE_MIN_LEVEL:
-            return True
-        held = now - self._level_since[zone]
-        if held < PULSE_AFTER_S:
-            return True
-        phase = (held - PULSE_AFTER_S) % PULSE_PERIOD_S
-        return phase < PULSE_PERIOD_S * PULSE_DUTY
+        period = self.periods[level]
+        return self.on_s if period is None else max(period, self.on_s)
+
+    def _tap(self, zone: str, now: float) -> int:
+        """
+        Stage 7: the duty this instant for the zone's driven level — the tap's
+        duty for the first `on_s` of the cycle, 0 for the rest. A continuous
+        level's cycle IS `on_s` long, so it never reaches the gap. Never
+        non-zero for a silent zone.
+        """
+        driven = self._driven[zone]
+        if driven <= 0:
+            return 0
+        return self.pulse_pwm if now - self._cycle_start[zone] < self.on_s else 0
+
+    def _pulse(self, zone: str, level: int, now: float) -> int:
+        """
+        Stage 6: fold this frame's quantized `level` into the zone's cycle and
+        decide whether the cycle ends here — at its boundary, on the verdict of
+        the frames it contained, or early, on a confirmed rise. Then stage 7.
+
+        A silent zone has no cycle: it accumulates nothing and waits for
+        PULSE_RISE_FRAMES consecutive non-zero frames, so silence is left by a
+        confirmed onset, never by one frame.
+        """
+        driven = self._driven[zone]
+        if driven == 0:
+            self._rise_run[zone] = self._rise_run[zone] + 1 if level >= 1 else 0
+            if self._rise_run[zone] >= self.rise_frames:
+                self._start_cycle(zone, level, now)
+            return self._tap(zone, now)
+
+        self._cycle_levels[zone].append(level)
+        if level >= driven + self.rise_levels:
+            self._rise_run[zone] += 1
+        else:
+            self._rise_run[zone] = 0
+
+        if self._rise_run[zone] >= self.rise_frames:
+            self._start_cycle(zone, level, now)
+        elif now - self._cycle_start[zone] >= self._cycle_len(driven):
+            self._start_cycle(zone, upper_median(self._cycle_levels[zone]), now)
+        return self._tap(zone, now)
 
     def shape(self, intensities: Dict[str, int], now: float) -> Dict[str, int]:
         """
@@ -216,6 +437,11 @@ class HapticMapper:
         """
         norm = {zone: max(0.0, min(1.0, intensities[zone] / 255.0)) for zone in ZONE_NAMES}
         contrasted = apply_lateral_contrast(norm, self.contrast)
+        if self.center_priority:
+            self._center_holding = center_has_priority(contrasted, self._center_holding)
+            if self._center_holding:
+                contrasted = {"left": 0.0, "center": contrasted["center"], "right": 0.0}
+        contrasted = apply_winner_take_most(contrasted, self.winner)
 
         out: Dict[str, int] = {}
         for zone in ZONE_NAMES:
@@ -224,13 +450,14 @@ class HapticMapper:
                 value = 0.0
 
             level = self._quantize(zone, value)
-            if level != self._level[zone]:
-                self._level[zone] = level
-                self._level_since[zone] = now
+            self._level[zone] = level
 
-            self.last_levels[zone] = level
-            out[zone] = level_to_pwm(level, self.levels, self.pwm_floor) \
-                if self._pulse_gate(zone, level, now) else 0
+            if self.pulse:
+                out[zone] = self._pulse(zone, level, now)
+                self.last_levels[zone] = self._driven[zone]
+            else:
+                out[zone] = level_to_pwm(level, self.levels, self.pwm_floor)
+                self.last_levels[zone] = level
         return out
 
     def silence(self, now: float) -> Dict[str, int]:
@@ -242,15 +469,19 @@ class HapticMapper:
         being driven at, so the next good frame could step down from a level
         that was never actually felt.
         """
+        self._center_holding = False
         for zone in ZONE_NAMES:
-            if self._level[zone] != 0:
-                self._level[zone] = 0
-                self._level_since[zone] = now
+            self._level[zone] = 0
+            self._start_cycle(zone, 0, now)
             self.last_levels[zone] = 0
         return dict(SILENT)
 
     def reset(self) -> None:
         """Drop all state — call on pipeline rebuild or mode switch."""
+        self._center_holding = False
         self._level = {zone: 0 for zone in ZONE_NAMES}
-        self._level_since = {zone: 0.0 for zone in ZONE_NAMES}
+        self._driven = {zone: 0 for zone in ZONE_NAMES}
+        self._cycle_start = {zone: 0.0 for zone in ZONE_NAMES}
+        self._cycle_levels = {zone: [] for zone in ZONE_NAMES}
+        self._rise_run = {zone: 0 for zone in ZONE_NAMES}
         self.last_levels = {zone: 0 for zone in ZONE_NAMES}

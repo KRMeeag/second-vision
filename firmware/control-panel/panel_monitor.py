@@ -261,6 +261,7 @@ def main():
     print(f"{BOLD}listening on {args.port} @ {args.baud}{RESET} — flip a rocker, "
           f"turn the knob, press STATUS.  Ctrl-C to stop.\n")
     mon = Monitor(raw=args.raw)
+    lost = False
     try:
         while True:
             raw = port.readline()
@@ -269,10 +270,24 @@ def main():
             mon.check_watchdog()
     except KeyboardInterrupt:
         pass
+    except serial.SerialException as exc:
+        # The port going away mid-session is likelier in the field than a
+        # malformed line — a re-enumerating USB bridge, a yanked cable, a board
+        # resetting. This is §2.6.4's principle one level up: report it as the
+        # fault it is, with the summary of everything seen so far intact, rather
+        # than as a stack trace that buries both.
+        lost = True
+        mon.problem(f"serial link lost: {exc}")
     finally:
-        port.close()
+        try:
+            port.close()
+        except Exception:      # already gone; nothing useful left to do
+            pass
         mon.summary()
+
+    # Non-zero on a lost link so this is usable in a script; Ctrl-C stays 0.
+    return 1 if lost else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

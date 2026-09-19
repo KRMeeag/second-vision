@@ -2,10 +2,14 @@
 Depth Utilities — Zone splitting, proximity curves, and ground hazard detection.
 
 Post-processing pipeline (per SV-Docu/depth_estimation_handoff.md):
-    thin-structure ridge pass [cables/poles/branches, at native resolution —
-    combined into the zone maximum, gated by THIN_DRIVES_MOTORS] ->
-    downsample -> zone split -> per zone max(sub-grid pooling [near clusters],
-    blank-wall detection [flat surfaces], floor-to-wall [walls read as far])
+    downsample -> floor model [1/depth plane fitted to the bottom rows; the
+    ground is NOT an obstacle, see FLOOR_SUPPRESSION] ->
+    thin-structure ridge pass [cables/poles/branches, at native resolution,
+    gated to pixels in front of the floor — combined into the zone maximum,
+    gated by THIN_DRIVES_MOTORS] ->
+    zone split -> per zone max(sub-grid pooling [near clusters] and
+    blank-wall detection [flat surfaces], both on the floor-erased grid;
+    floor-to-wall [walls read as far] on the raw grid)
     -> safe-zone threshold -> non-linear curve -> EMA smoothing
     -> 0-255 motor intensity.
 
@@ -84,6 +88,23 @@ FLOOR_WALL_JUMP_RATIO = 3.0
 FLOOR_WALL_MIN_JUMP = 2.0
 MIN_FLOOR_ROWS = 3           # need this many receding-floor rows below the break to trust it
 GROUND_STRIP_FRACTION = 0.25
+# Ground-hazard (drop-off / stair / curb) detection is DISABLED — a team
+# decision, not a bug, re-confirmed knowing the wearer uses NO cane (DECISIONS
+# D36). Scope is the HAZARD detector only — stairs, drop-offs, step-ups; the
+# ground plane is still modelled every frame by floor_profile() and obstacles
+# standing on the floor are still detected. The
+# detector was the least trustworthy thing in the chain:
+# monocular depth reads a drop-off as "far", not "down" (DECISIONS.md), its
+# gate divides by the strip's own noise and flapped 131 times in 400 frames on
+# a static scene, and every threshold below it is an uncalibrated placeholder.
+# A ground warning that is wrong that often teaches the wearer to ignore the
+# device, which costs them the warnings that do work.
+#
+# Disabled, not deleted: detect_ground_hazard / HazardDebouncer stay here,
+# tested, and the serial contract keeps its hazard fields (always False / 0),
+# so the ESP32 firmware needs no change and the feature can return in one line
+# once someone calibrates it against real stairs.
+GROUND_HAZARD_ENABLED = False
 HAZARD_THRESHOLD_RATIO = 5.0
 # Absolute row-to-row jump (model units) below which a ground break is noise.
 # Needed because the ratio test alone is meaningless when the strip is flat: the
@@ -150,21 +171,71 @@ THIN_MIN_AREA_PX = 4         # absolute floor, so tiny grids still need >1 pixel
 # "structure" being graded is the background. Field testing agreed: table edges,
 # chair backs and door frames flagged as readily as cables.
 #
-# It is ON now by decision, ahead of the calibration session that would set
-# THIN_MIN_CONTRAST / THIN_MAX_WIDTH_PX / THIN_MIN_AREA_FRAC from real captures.
-# The trade being accepted: a cable across a doorway is a hazard nothing else in
-# this module can see (every other detector asks "how near is this?", and a cable
-# is barely nearer than the wall behind it), and missing it is worse than
-# over-warning — but the false-positive rate is currently UNMEASURED on real
-# scenes, and a haptic that fires on furniture teaches its wearer to ignore it,
-# which costs the warnings from the detectors that DO work.
+# It was ON for a while by decision, ahead of the calibration session that
+# would set THIN_MIN_CONTRAST / THIN_MAX_WIDTH_PX / THIN_MIN_AREA_FRAC from real
+# captures — the trade being that a cable across a doorway is a hazard nothing
+# else in this module can see, and missing it is worse than over-warning.
 #
-# So this is a flag rather than a code change: if the first wear test is a
-# constant buzz around furniture, set it False and the device returns to the
-# previous, known behaviour without touching any logic. Raising
-# THIN_MIN_CONTRAST above the scene's noise floor is the real fix; that number
-# comes out of the calibration capture.
-THIN_DRIVES_MOTORS = True
+# OFF again as of 2026-09-14, by the user's decision, on live evidence: the `T`
+# tag lit on plain scenes with nothing thin in them (a chair, a cabinet edge),
+# and a haptic that fires on furniture teaches its wearer to ignore it, which
+# costs the warnings from the detectors that DO work. The reading is still
+# computed every frame and published on `last_thin` (the `t` number and the T
+# tag in the HUD), so the detector stays auditable while it is off. The real
+# fix is raising THIN_MIN_CONTRAST above the scene's noise floor from the
+# calibration corpus; flip this back on only after that number is measured and
+# the tag stays quiet on furniture.
+THIN_DRIVES_MOTORS = False
+
+# Floor suppression — the ground plane is NOT an obstacle.
+#
+# A forehead camera angled 10-15 deg down puts the floor at the wearer's feet in
+# the bottom of every frame, and it is the nearest surface the model can see
+# (live captures: whole-frame p1 sits at 15.0-15.5 in every scene — that IS the
+# floor). Measured on the real chain with a synthetic open floor (16 units at the
+# bottom row receding to 45): an EMPTY scene drove all three zones to 213/255 and
+# the motors to 145/145/145, and a person at collision range fully inside the
+# right zone changed the motors by exactly nothing — the 42-point gap between
+# "floor" and "person" collapsed in the contrast and quantize stages. Worse, a
+# person at moderate range LOWERED their zone, because they occluded the near
+# floor behind them. Every detector here asks "how near is this?", and without
+# this stage the answer is always "the floor".
+#
+# The model: for a plane seen by a pinhole camera, 1/depth is LINEAR in image
+# row. The bottom FLOOR_FIT_FRACTION of rows (row-wise median across columns, so
+# a person's legs cannot bend the fit) gives the line; it is extrapolated upward
+# and a pixel is an obstacle only if it is clearly NEARER than the floor would be
+# at its row. A wall does not recede between rows, so it falls under the line
+# and is kept. Where a row measures FARTHER than the plane (a doorway, curvature
+# in the model's relative scale) the measured value is used instead — that can
+# only keep more pixels, never fewer, so the safe direction is preserved.
+#
+# Everything is relative to the frame's own floor, so the scale ambiguity that
+# makes the absolute thresholds above placeholders does not bite here.
+FLOOR_SUPPRESSION = True
+# Bottom fraction of rows the plane is fitted to. Matches GROUND_STRIP_FRACTION
+# on purpose: it is the same "this is where the floor lives" assumption the
+# hazard detector already makes.
+FLOOR_FIT_FRACTION = 0.25
+# The fitted plane must recede by at least this ratio across the fit window
+# before it is believed. A wall filling the bottom of the frame is flat row to
+# row (ratio ~1.0) and must NOT be mistaken for a floor and erased; a real floor
+# over a quarter of the frame recedes by ~1.8x (camera 1.6 m up, 35 deg down at
+# the bottom edge -> 2 m, 24 deg a quarter up -> 3.6 m). PLACEHOLDER pending
+# calibration.
+FLOOR_MIN_RECESSION = 1.15
+# How much nearer than the expected floor a pixel must read to count as an
+# obstacle: the larger of an absolute step (model units, ~3x the measured
+# empty-scene noise of ~1.0) and a fraction of the floor depth (the model's
+# error grows with distance). One-sided: too small and floor noise leaks
+# through as point-blank warnings, because a leaked pixel is then graded on its
+# ABSOLUTE depth, which is the floor's, i.e. maximum. PLACEHOLDER.
+FLOOR_MARGIN_ABS = 3.0
+FLOOR_MARGIN_REL = 0.15
+# Suppressed pixels are rewritten to exactly the safe-zone cutoff: the proximity
+# curve reads them as 0.0, and a cell of nothing but floor is "flat at zero",
+# which the wall detector's boost leaves untouched.
+FLOOR_FILL = MAX_DEPTH_M
 
 ZONE_NAMES = ("left", "center", "right")
 
@@ -479,6 +550,89 @@ def detect_floor_to_wall(zone_slice: np.ndarray, jump_ratio: float = FLOOR_WALL_
     return _proximity_curve(floor_reach)  # near -> warn, far -> ~0
 
 
+def floor_profile(depth_map: np.ndarray, fit_fraction: float = FLOOR_FIT_FRACTION) -> np.ndarray:
+    """
+    Expected FLOOR depth for every row of `depth_map`, in the map's own row
+    order (top row first). `inf` for rows above the horizon and everywhere when
+    no floor can be trusted — `inf` means "suppress nothing here".
+
+    Fits 1/depth = a + b*row over the bottom `fit_fraction` of rows (row-wise
+    median across columns) and extrapolates. Returns all-`inf` unless the fit
+    recedes — b < 0 AND the plane grows by FLOOR_MIN_RECESSION across the fit
+    window — because the alternative is erasing a wall that happens to fill the
+    bottom of the frame. Above the fit window the profile is the LARGER of the
+    plane and the row's measurement, so a row that reads farther than the plane
+    (doorway, model curvature) loosens the test and never tightens it.
+    """
+    h, w = depth_map.shape
+    none = np.full(h, np.inf)
+    n_fit = int(h * fit_fraction)
+    if n_fit < 3 or w < 1:
+        return none
+    prof = np.median(depth_map, axis=1).astype(np.float64)[::-1]      # bottom row first
+    fit = prof[:n_fit]
+    if not np.all(np.isfinite(fit)) or np.any(fit <= 0):
+        return none
+    rows = np.arange(n_fit, dtype=np.float64)
+    b, a = np.polyfit(rows, 1.0 / fit, 1)
+    if b >= 0:
+        return none                                  # not receding upward -> no floor
+    inv_bottom, inv_top = a, a + b * (n_fit - 1)
+    if inv_top <= 0 or inv_bottom / inv_top < FLOOR_MIN_RECESSION:
+        return none                                  # too flat to be a floor (or a horizon inside the window)
+    inv = a + b * np.arange(h, dtype=np.float64)
+    with np.errstate(divide="ignore"):
+        plane = np.where(inv > 0, 1.0 / np.where(inv > 0, inv, 1.0), np.inf)
+    floor = np.maximum(plane, prof)
+    # Once the plane passes the horizon nothing above it is floor; do not let a
+    # measured row below the horizon line re-enable suppression above it.
+    above = np.flatnonzero(~np.isfinite(plane))
+    if above.size:
+        floor[above[0]:] = np.inf
+    return floor[::-1]
+
+
+def floor_mask(depth_map: np.ndarray, floor: np.ndarray) -> np.ndarray:
+    """
+    Boolean mask, True where a pixel is an OBSTACLE — clearly nearer than the
+    floor expected at its row. `floor` is a per-row array as returned by
+    floor_profile() for a map with the same number of rows (or one whose rows
+    map onto it by proportion, see floor_rows_for()).
+    """
+    finite = np.isfinite(floor)
+    safe = np.where(finite, floor, 0.0)
+    margin = np.maximum(FLOOR_MARGIN_ABS, FLOOR_MARGIN_REL * safe)
+    # Rows with no floor (inf) keep everything; `inf - inf` would be NaN, and a
+    # NaN limit compares False — i.e. it would silently ERASE the whole row.
+    limit = np.where(finite, safe - margin, np.inf)
+    return depth_map < limit[:, None]
+
+
+def floor_rows_for(floor: np.ndarray, height: int) -> np.ndarray:
+    """Resample a per-row floor profile onto a map with `height` rows (nearest row)."""
+    if floor.shape[0] == height:
+        return floor
+    return floor[(np.arange(height) * floor.shape[0]) // height]
+
+
+def suppress_floor(depth_map: np.ndarray, floor: np.ndarray | None = None) -> np.ndarray:
+    """
+    A copy of `depth_map` with the ground plane erased: every pixel at or beyond
+    the expected floor reads FLOOR_FILL (= the safe-zone cutoff, proximity 0.0).
+    Obstacles — anything clearly in front of the floor at its row — pass through
+    untouched. With FLOOR_SUPPRESSION off, or when no floor can be trusted, this
+    is the identity.
+    """
+    if not FLOOR_SUPPRESSION:
+        return depth_map
+    if floor is None:
+        floor = floor_profile(depth_map)
+    if not np.any(np.isfinite(floor)):
+        return depth_map
+    return np.where(floor_mask(depth_map, floor_rows_for(floor, depth_map.shape[0])),
+                    depth_map, FLOOR_FILL).astype(depth_map.dtype, copy=False)
+
+
 def subgrid_proximity(zone_slice: np.ndarray, grid_shape: Tuple[int, int] = SUBGRID_SHAPE) -> float:
     """
     Sub-grid pooling for small / thin objects (poles, cables, chair legs).
@@ -661,21 +815,32 @@ def compute_thin_intensities(depth_map: np.ndarray) -> dict[str, float]:
 # runs and still drives the motors; only the pixel-level display is gone.
 
 
-def zone_warning(zone_slice: np.ndarray) -> float:
+def zone_warning(zone_slice: np.ndarray, obstacle_slice: np.ndarray | None = None) -> float:
     """
     Combined per-zone warning: the worst of sub-grid pooling (thin objects),
     blank-wall detection (flat close surfaces), and floor-to-wall intersection
     (near walls the model reads as far). Each can only raise the warning, never
     lower it, so the device stays fail-safe.
+
+    `obstacle_slice` is the same zone with the floor erased (suppress_floor).
+    The near-cluster and wall detectors read THAT — both ask "how near is the
+    nearest thing", and without the floor gone the answer is the wearer's own
+    feet in every zone. Floor-to-wall keeps the raw slice: it is the one
+    detector that needs the floor, as the ruler it measures the wall with.
+    Defaults to the raw slice, so callers that have no floor model (tests,
+    off-device tools) get the pre-suppression behaviour.
     """
+    if obstacle_slice is None:
+        obstacle_slice = zone_slice
     return max(
-        subgrid_proximity(zone_slice),
-        detect_blank_wall(zone_slice),
+        subgrid_proximity(obstacle_slice),
+        detect_blank_wall(obstacle_slice),
         detect_floor_to_wall(zone_slice),
     )
 
 
-def zone_warning_breakdown(zone_slice: np.ndarray, thin_value: float | None = None) -> dict:
+def zone_warning_breakdown(zone_slice: np.ndarray, thin_value: float | None = None,
+                           obstacle_slice: np.ndarray | None = None) -> dict:
     """
     Itemised per-detector contributions for one zone — the same numbers
     zone_warning() takes the max of, but broken out so the live view can show
@@ -695,15 +860,21 @@ def zone_warning_breakdown(zone_slice: np.ndarray, thin_value: float | None = No
       "broad" — cells blanket the zone (large close surface: wall, door)
       "none"  — sub-grid quiet.
 
+    `obstacle_slice` is the floor-suppressed zone (see zone_warning); pass it so
+    the HUD itemises what the motors were actually driven by, not a reading
+    that still contains the floor.
+
     Diagnostics/visualisation only; the hot path uses zone_warning(). Runs in the
     display process, so it costs the streaming thread nothing.
     """
-    cells = subgrid_cell_proximities(zone_slice)
+    if obstacle_slice is None:
+        obstacle_slice = zone_slice
+    cells = subgrid_cell_proximities(obstacle_slice)
     if thin_value is None:
         thin_value = thin_zone_warning(zone_slice, thin_structure_mask(zone_slice))
     parts = {
-        "sub": float(cells.max()),                # nearest cluster of anything
-        "wall": detect_blank_wall(zone_slice),    # locally-smooth close surface
+        "sub": float(cells.max()),                    # nearest cluster of anything
+        "wall": detect_blank_wall(obstacle_slice),    # locally-smooth close surface
         "f2w": detect_floor_to_wall(zone_slice),  # wall the model reads as far
         "thin": float(thin_value),                # cable / pole / branch / railing
     }
@@ -722,7 +893,8 @@ def zone_warning_breakdown(zone_slice: np.ndarray, thin_value: float | None = No
             "coverage": coverage, "shape": shape}
 
 
-def compute_zone_intensities(depth_data: np.ndarray, width: int) -> dict[str, float]:
+def compute_zone_intensities(depth_data: np.ndarray, width: int,
+                             obstacles: np.ndarray | None = None) -> dict[str, float]:
     """
     Split a depth frame into left/center/right zones (25/50/25) and
     return each zone's warning intensity (0.0-1.0).
@@ -730,8 +902,14 @@ def compute_zone_intensities(depth_data: np.ndarray, width: int) -> dict[str, fl
     Each zone combines sub-grid pooling (a thin obstacle filling only part of the
     zone still triggers) with blank-wall detection (a flat, textureless close
     surface still triggers even when its per-cluster depth reads washed out).
+
+    `obstacles` is the floor-suppressed twin of `depth_data` (suppress_floor).
+    When omitted it is computed here, so a single call on a raw grid does the
+    right thing; the hot path passes it in because it already has it.
     """
-    return {zone: zone_warning(depth_data[:, x0:x1])
+    if obstacles is None:
+        obstacles = suppress_floor(depth_data)
+    return {zone: zone_warning(depth_data[:, x0:x1], obstacles[:, x0:x1])
             for zone, (x0, x1) in _zone_bounds(width).items()}
 
 
@@ -752,11 +930,15 @@ class DepthPostProcessor:
         self.alpha = alpha
         self._smoothed: dict[str, float] | None = None
         self.last_thin: dict[str, float] = {zone: 0.0 for zone in ZONE_NAMES}
+        # Per-row floor profile of the last frame (grid rows, inf = no floor),
+        # published for the HUD so a tester can see what was erased.
+        self.last_floor: np.ndarray | None = None
 
     def process(self, depth_map: np.ndarray) -> dict[str, int]:
         """
-        Full pipeline: thin-structure pass (native resolution) -> downsample ->
-        zone intensities -> EMA -> 0-255 ints.
+        Full pipeline: downsample -> floor model -> thin-structure pass (native
+        resolution, floor-gated) -> zone intensities on the floor-erased grid
+        -> EMA -> 0-255 ints.
 
         Returns {"left": int, "center": int, "right": int} per the
         serial_queue contract.
@@ -775,10 +957,24 @@ class DepthPostProcessor:
         (t0.00 and the T tag in the view), so the detector stays auditable
         either way.
         """
-        self.last_thin = thin_zone_intensities(depth_map, thin_structure_mask(depth_map))
-
         small = downsample_depth(depth_map)
-        raw = compute_zone_intensities(small, small.shape[1])
+        # One floor model per frame, fitted on the cheap grid and shared by both
+        # resolutions: the ridge pass sees a pixel-accurate floor mask (nearest-
+        # row lookup), the zone detectors see the grid with the floor erased.
+        floor = floor_profile(small) if FLOOR_SUPPRESSION else np.full(small.shape[0], np.inf)
+        self.last_floor = floor
+        obstacles = suppress_floor(small, floor)
+
+        # The ridge mask is a SHAPE test and fires on floor noise as readily as
+        # on cables (measured: 7% of a flat frame at sigma=1.0); grading only
+        # the ridge pixels that also stand in front of the floor is what stops
+        # it re-reporting the wearer's feet as a cable in every zone.
+        ridge = thin_structure_mask(depth_map)
+        if np.any(np.isfinite(floor)):
+            ridge &= floor_mask(depth_map, floor_rows_for(floor, depth_map.shape[0]))
+        self.last_thin = thin_zone_intensities(depth_map, ridge)
+
+        raw = compute_zone_intensities(small, small.shape[1], obstacles)
         if THIN_DRIVES_MOTORS:
             raw = {zone: max(raw[zone], self.last_thin[zone]) for zone in ZONE_NAMES}
 
@@ -796,6 +992,7 @@ class DepthPostProcessor:
         """Clear EMA state (e.g., after a pipeline rebuild or mode switch)."""
         self._smoothed = None
         self.last_thin = {zone: 0.0 for zone in ZONE_NAMES}
+        self.last_floor = None
 
 
 class HazardDebouncer:
