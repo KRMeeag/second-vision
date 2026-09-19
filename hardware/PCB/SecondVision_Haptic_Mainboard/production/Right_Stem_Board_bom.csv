@@ -1,0 +1,6 @@
+﻿Designator,Footprint,Quantity,Value,LCSC Part #
+"D2, D3",D_SOD-123,2,1N5401,
+"PAD_5V_R1, PAD_D1_CENTER1, PAD_D2_RIGHT1, PAD_GND_R1",PinHeader_1x01_P2.54mm_Vertical,4,Conn_01x01,
+"Q2, Q3",SOT-23,2,2N7000,
+"R2, R3",0603,2,R,
+"VIB_CENTER1, VIB_RIGHT1",PinHeader_1x02_P2.54mm_Vertical,2,Conn_01x02,

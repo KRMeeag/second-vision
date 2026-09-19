@@ -17,7 +17,8 @@ Change a value, re-run, re-test the relevant scenario.
 **Safety (read first):**
 - The device is **under test** — do **not** rely on it for real obstacle avoidance.
 - Prefer **sighted testers** wearing the rig. If a visually-impaired teammate tests,
-  they keep their **white cane** and have a **dedicated spotter** the whole time.
+  they have a **dedicated spotter** the whole time. The device does **not** detect
+  stairs, curbs or ledges (DECISIONS D36) — the spotter owns those.
 - **Streets/traffic**: stay on the sidewalk. Start with **parked or slow-moving**
   vehicles. Never step into a roadway to "trigger" a car detection. One person's only
   job is watching for real hazards, not the device.

@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="1000" viewBox="0 0 1300 1000" font-family="DejaVu Sans, Arial, sans-serif">
+<rect width="1300" height="1000" fill="#ffffff"/>
+<text x="24" y="38" font-size="20" fill="#111827" text-anchor="start" font-weight="bold">ESP32-WROOM-32 — 38-pin DevKit — Second Vision control panel</text>
+<text x="24" y="60" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal">Board oriented with the USB-C connector at the BOTTOM, as it sits on the breadboard.</text>
+<rect x="400" y="108" width="250" height="766" rx="6" fill="#1f2937"/>
+<rect x="456" y="126" width="138" height="96" rx="3" fill="#9ca3af"/>
+<text x="525.0" y="180" font-size="15" fill="#1f2937" text-anchor="middle" font-weight="bold">ESP-32</text>
+<text x="525.0" y="860" font-size="10" fill="#9ca3af" text-anchor="middle" font-weight="normal">USB-C  ▼</text>
+<circle cx="390" cy="138" r="6" fill="#dc2626"/>
+<text x="376" y="137" font-size="11" fill="#dc2626" text-anchor="end" font-weight="bold">3V3</text>
+<text x="376" y="150" font-size="8" fill="#dc2626" text-anchor="end" font-weight="normal">3.3 V OUT → pot only</text>
+<circle cx="390" cy="178" r="6" fill="#9ca3af"/>
+<text x="376" y="177" font-size="11" fill="#6b7280" text-anchor="end" font-weight="normal">EN</text>
+<text x="376" y="190" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">free</text>
+<circle cx="390" cy="218" r="6" fill="#9ca3af"/>
+<text x="376" y="217" font-size="11" fill="#6b7280" text-anchor="end" font-weight="normal">GPIO36</text>
+<text x="376" y="230" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">free · input only</text>
+<circle cx="390" cy="258" r="6" fill="#9ca3af"/>
+<text x="376" y="257" font-size="11" fill="#6b7280" text-anchor="end" font-weight="normal">GPIO39</text>
+<text x="376" y="270" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">free · input only</text>
+<circle cx="390" cy="298" r="6" fill="#7c3aed"/>
+<text x="376" y="297" font-size="11" fill="#7c3aed" text-anchor="end" font-weight="bold">GPIO34</text>
+<text x="376" y="310" font-size="8" fill="#7c3aed" text-anchor="end" font-weight="normal">pot wiper (input only)</text>
+<circle cx="390" cy="338" r="6" fill="#9ca3af"/>
+<text x="376" y="337" font-size="11" fill="#6b7280" text-anchor="end" font-weight="normal">GPIO35</text>
+<text x="376" y="350" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">free · input only</text>
+<circle cx="390" cy="378" r="6" fill="#9ca3af"/>
+<text x="376" y="377" font-size="11" fill="#6b7280" text-anchor="end" font-weight="normal">GPIO32</text>
+<text x="376" y="390" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">free</text>
+<circle cx="390" cy="418" r="6" fill="#9ca3af"/>
+<text x="376" y="417" font-size="11" fill="#6b7280" text-anchor="end" font-weight="normal">GPIO33</text>
+<text x="376" y="430" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">free</text>
+<circle cx="390" cy="458" r="6" fill="#9ca3af"/>
+<text x="376" y="457" font-size="11" fill="#6b7280" text-anchor="end" font-weight="normal">GPIO25</text>
+<text x="376" y="470" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">free</text>
+<circle cx="390" cy="498" r="6" fill="#9ca3af"/>
+<text x="376" y="497" font-size="11" fill="#6b7280" text-anchor="end" font-weight="normal">GPIO26</text>
+<text x="376" y="510" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">free</text>
+<circle cx="390" cy="538" r="6" fill="#9ca3af"/>
+<text x="376" y="537" font-size="11" fill="#6b7280" text-anchor="end" font-weight="normal">GPIO27</text>
+<text x="376" y="550" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">free</text>
+<circle cx="390" cy="578" r="6" fill="#9ca3af"/>
+<text x="376" y="577" font-size="11" fill="#6b7280" text-anchor="end" font-weight="normal">GPIO14</text>
+<text x="376" y="590" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">free</text>
+<circle cx="390" cy="618" r="6" fill="#9ca3af"/>
+<text x="376" y="617" font-size="11" fill="#6b7280" text-anchor="end" font-weight="normal">GPIO12</text>
+<text x="376" y="630" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">free</text>
+<circle cx="390" cy="658" r="6" fill="#111827"/>
+<text x="376" y="657" font-size="11" fill="#111827" text-anchor="end" font-weight="bold">GND</text>
+<text x="376" y="670" font-size="8" fill="#111827" text-anchor="end" font-weight="normal">ground</text>
+<circle cx="390" cy="698" r="6" fill="#9ca3af"/>
+<text x="376" y="697" font-size="11" fill="#6b7280" text-anchor="end" font-weight="normal">GPIO13</text>
+<text x="376" y="710" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">free</text>
+<circle cx="390" cy="738" r="6" fill="#7f1d1d"/>
+<text x="376" y="737" font-size="11" fill="#7f1d1d" text-anchor="end" font-weight="bold">GPIO9</text>
+<text x="376" y="750" font-size="8" fill="#7f1d1d" text-anchor="end" font-weight="normal">SPI flash</text>
+<circle cx="390" cy="778" r="6" fill="#7f1d1d"/>
+<text x="376" y="777" font-size="11" fill="#7f1d1d" text-anchor="end" font-weight="bold">GPIO10</text>
+<text x="376" y="790" font-size="8" fill="#7f1d1d" text-anchor="end" font-weight="normal">SPI flash</text>
+<circle cx="390" cy="818" r="6" fill="#7f1d1d"/>
+<text x="376" y="817" font-size="11" fill="#7f1d1d" text-anchor="end" font-weight="bold">GPIO11</text>
+<text x="376" y="830" font-size="8" fill="#7f1d1d" text-anchor="end" font-weight="normal">SPI flash</text>
+<circle cx="390" cy="858" r="6" fill="#dc2626"/>
+<text x="376" y="857" font-size="11" fill="#dc2626" text-anchor="end" font-weight="bold">5V</text>
+<text x="376" y="870" font-size="8" fill="#dc2626" text-anchor="end" font-weight="normal">POWER IN  ← X1202 5 V</text>
+<circle cx="660" cy="138" r="6" fill="#111827"/>
+<text x="674" y="137" font-size="11" fill="#111827" text-anchor="start" font-weight="bold">GND</text>
+<text x="674" y="150" font-size="8" fill="#111827" text-anchor="start" font-weight="normal">ground</text>
+<circle cx="660" cy="178" r="6" fill="#2563eb"/>
+<text x="674" y="177" font-size="11" fill="#2563eb" text-anchor="start" font-weight="bold">GPIO23</text>
+<text x="674" y="190" font-size="8" fill="#2563eb" text-anchor="start" font-weight="normal">→ Pi pin 21  (UART2 TX)</text>
+<circle cx="660" cy="218" r="6" fill="#ca8a04"/>
+<text x="674" y="217" font-size="11" fill="#ca8a04" text-anchor="start" font-weight="bold">GPIO22</text>
+<text x="674" y="230" font-size="8" fill="#ca8a04" text-anchor="start" font-weight="normal">STATUS button → GND</text>
+<circle cx="660" cy="258" r="6" fill="#7f1d1d"/>
+<text x="674" y="257" font-size="11" fill="#7f1d1d" text-anchor="start" font-weight="bold">GPIO1</text>
+<text x="674" y="270" font-size="8" fill="#7f1d1d" text-anchor="start" font-weight="normal">UART0 TX — the USB serial</text>
+<circle cx="660" cy="298" r="6" fill="#7f1d1d"/>
+<text x="674" y="297" font-size="11" fill="#7f1d1d" text-anchor="start" font-weight="bold">GPIO3</text>
+<text x="674" y="310" font-size="8" fill="#7f1d1d" text-anchor="start" font-weight="normal">UART0 RX — the USB serial</text>
+<circle cx="660" cy="338" r="6" fill="#9ca3af"/>
+<text x="674" y="337" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal">GPIO21</text>
+<text x="674" y="350" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">free</text>
+<circle cx="660" cy="378" r="6" fill="#111827"/>
+<text x="674" y="377" font-size="11" fill="#111827" text-anchor="start" font-weight="bold">GND</text>
+<text x="674" y="390" font-size="8" fill="#111827" text-anchor="start" font-weight="normal">ground</text>
+<circle cx="660" cy="418" r="6" fill="#9ca3af"/>
+<text x="674" y="417" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal">GPIO19</text>
+<text x="674" y="430" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">free</text>
+<circle cx="660" cy="458" r="6" fill="#0d9488"/>
+<text x="674" y="457" font-size="11" fill="#0d9488" text-anchor="start" font-weight="bold">GPIO18</text>
+<text x="674" y="470" font-size="8" fill="#0d9488" text-anchor="start" font-weight="normal">DEPTH rocker → GND</text>
+<circle cx="660" cy="498" r="6" fill="#9ca3af"/>
+<text x="674" y="497" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal">GPIO5</text>
+<text x="674" y="510" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">free</text>
+<circle cx="660" cy="538" r="6" fill="#16a34a"/>
+<text x="674" y="537" font-size="11" fill="#16a34a" text-anchor="start" font-weight="bold">GPIO17</text>
+<text x="674" y="550" font-size="8" fill="#16a34a" text-anchor="start" font-weight="normal">DETECT rocker → GND</text>
+<circle cx="660" cy="578" r="6" fill="#9ca3af"/>
+<text x="674" y="577" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal">GPIO16</text>
+<text x="674" y="590" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">free</text>
+<circle cx="660" cy="618" r="6" fill="#9ca3af"/>
+<text x="674" y="617" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal">GPIO4</text>
+<text x="674" y="630" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">free</text>
+<circle cx="660" cy="658" r="6" fill="#7f1d1d"/>
+<text x="674" y="657" font-size="11" fill="#7f1d1d" text-anchor="start" font-weight="bold">GPIO0</text>
+<text x="674" y="670" font-size="8" fill="#7f1d1d" text-anchor="start" font-weight="normal">bootstrap — held low = flash mode</text>
+<circle cx="660" cy="698" r="6" fill="#9ca3af"/>
+<text x="674" y="697" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal">GPIO2</text>
+<text x="674" y="710" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">free</text>
+<circle cx="660" cy="738" r="6" fill="#9ca3af"/>
+<text x="674" y="737" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal">GPIO15</text>
+<text x="674" y="750" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">free</text>
+<circle cx="660" cy="778" r="6" fill="#7f1d1d"/>
+<text x="674" y="777" font-size="11" fill="#7f1d1d" text-anchor="start" font-weight="bold">GPIO8</text>
+<text x="674" y="790" font-size="8" fill="#7f1d1d" text-anchor="start" font-weight="normal">SPI flash</text>
+<circle cx="660" cy="818" r="6" fill="#7f1d1d"/>
+<text x="674" y="817" font-size="11" fill="#7f1d1d" text-anchor="start" font-weight="bold">GPIO7</text>
+<text x="674" y="830" font-size="8" fill="#7f1d1d" text-anchor="start" font-weight="normal">SPI flash</text>
+<circle cx="660" cy="858" r="6" fill="#7f1d1d"/>
+<text x="674" y="857" font-size="11" fill="#7f1d1d" text-anchor="start" font-weight="bold">GPIO6</text>
+<text x="674" y="870" font-size="8" fill="#7f1d1d" text-anchor="start" font-weight="normal">SPI flash</text>
+<rect x="880" y="108" width="396" height="200" rx="6" fill="#f9fafb" stroke="#e5e7eb"/>
+<text x="893" y="129" font-size="10.5" fill="#111827" text-anchor="start" font-weight="bold">WHAT IS WIRED</text>
+<text x="893" y="149" font-size="8.6" fill="#111827" text-anchor="start" font-weight="normal">5V      ← X1202 5 V, via the protoboard 5V rail</text>
+<text x="893" y="164" font-size="8.6" fill="#111827" text-anchor="start" font-weight="normal">GND     ← X1202 GND, via the GND rail</text>
+<text x="893" y="179" font-size="8.6" fill="#111827" text-anchor="start" font-weight="normal">3V3     → the potentiometer ONLY. This is an OUTPUT:</text>
+<text x="893" y="194" font-size="8.6" fill="#111827" text-anchor="start" font-weight="normal">          the ESP32's own regulator. Never feed 5 V in.</text>
+<text x="893" y="209" font-size="8.6" fill="#111827" text-anchor="start" font-weight="normal">GPIO17  DETECT rocker → GND   (INPUT_PULLUP, active low)</text>
+<text x="893" y="224" font-size="8.6" fill="#111827" text-anchor="start" font-weight="normal">GPIO18  DEPTH rocker  → GND   (INPUT_PULLUP, active low)</text>
+<text x="893" y="239" font-size="8.6" fill="#111827" text-anchor="start" font-weight="normal">GPIO22  STATUS button → GND   (momentary)</text>
+<text x="893" y="254" font-size="8.6" fill="#111827" text-anchor="start" font-weight="normal">GPIO34  pot wiper. Input only, no internal pull-up,</text>
+<text x="893" y="269" font-size="8.6" fill="#111827" text-anchor="start" font-weight="normal">          on ADC1 so it survives WiFi being enabled.</text>
+<text x="893" y="284" font-size="8.6" fill="#111827" text-anchor="start" font-weight="normal">GPIO23  → Pi header pin 21. UART2 TX, panel → Pi.</text>
+<rect x="880" y="324" width="396" height="132" rx="6" fill="#fee2e2" stroke="#fca5a5"/>
+<text x="893" y="345" font-size="10.5" fill="#991b1b" text-anchor="start" font-weight="bold">NEVER WIRE THESE</text>
+<text x="893" y="365" font-size="8.6" fill="#991b1b" text-anchor="start" font-weight="normal">GPIO6-11   SPI flash. Touching these bricks the boot.</text>
+<text x="893" y="380" font-size="8.6" fill="#991b1b" text-anchor="start" font-weight="normal">GPIO0      bootstrap: held low at reset = flash mode.</text>
+<text x="893" y="395" font-size="8.6" fill="#991b1b" text-anchor="start" font-weight="normal">GPIO1/3    UART0 — the USB serial. The ROM bootloader</text>
+<text x="893" y="410" font-size="8.6" fill="#991b1b" text-anchor="start" font-weight="normal">           dumps its 115200 log here on every reset,</text>
+<text x="893" y="425" font-size="8.6" fill="#991b1b" text-anchor="start" font-weight="normal">           which is why the Pi link is GPIO23 instead.</text>
+<rect x="880" y="472" width="396" height="148" rx="6" fill="#fef3c7" stroke="#fbbf24"/>
+<text x="893" y="493" font-size="10.5" fill="#78350f" text-anchor="start" font-weight="bold">PIN-CHOICE SAFETY</text>
+<text x="893" y="513" font-size="8.6" fill="#78350f" text-anchor="start" font-weight="normal">GPIO17 and GPIO18 have plain GPIOs either side, so a</text>
+<text x="893" y="528" font-size="8.6" fill="#78350f" text-anchor="start" font-weight="normal">jumper one hole off reads wrong instead of shorting.</text>
+<text x="893" y="543" font-size="8.6" fill="#78350f" text-anchor="start" font-weight="normal"></text>
+<text x="893" y="558" font-size="8.6" fill="#78350f" text-anchor="start" font-weight="normal">GPIO23 takes the single soldered link wire and no switch:</text>
+<text x="893" y="573" font-size="8.6" fill="#78350f" text-anchor="start" font-weight="normal">it sits one row from the GND pin, on a row carrying 3V3</text>
+<text x="893" y="588" font-size="8.6" fill="#78350f" text-anchor="start" font-weight="normal">on the opposite side. A switch leg can bridge two rows;</text>
+<text x="893" y="603" font-size="8.6" fill="#78350f" text-anchor="start" font-weight="normal">one wire cannot.</text>
+<rect x="880" y="636" width="396" height="132" rx="6" fill="#dbeafe" stroke="#93c5fd"/>
+<text x="893" y="657" font-size="10.5" fill="#1e3a8a" text-anchor="start" font-weight="bold">INPUT-ONLY PINS</text>
+<text x="893" y="677" font-size="8.6" fill="#1e3a8a" text-anchor="start" font-weight="normal">GPIO34 / 35 / 36 / 39 are INPUT ONLY and have no</text>
+<text x="893" y="692" font-size="8.6" fill="#1e3a8a" text-anchor="start" font-weight="normal">internal pull-up or pull-down.</text>
+<text x="893" y="707" font-size="8.6" fill="#1e3a8a" text-anchor="start" font-weight="normal"></text>
+<text x="893" y="722" font-size="8.6" fill="#1e3a8a" text-anchor="start" font-weight="normal">Correct for the pot, which drives the pin itself. Wrong</text>
+<text x="893" y="737" font-size="8.6" fill="#1e3a8a" text-anchor="start" font-weight="normal">for a switch, which needs a pull-up to define its</text>
+<text x="893" y="752" font-size="8.6" fill="#1e3a8a" text-anchor="start" font-weight="normal">released state — a switch here would float.</text>
+</svg>

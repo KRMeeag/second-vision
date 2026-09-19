@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="830" viewBox="0 0 1260 830" font-family="DejaVu Sans, Arial, sans-serif">
+<rect width="1260" height="830" fill="#ffffff"/>
+<text x="24" y="38" font-size="20" fill="#111827" text-anchor="start" font-weight="bold">Measuring the ESP32's supply — probe placement</text>
+<text x="24" y="60" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal">Circuit POWERED: X1202 connected, USB disconnected, red LED lit. Voltage is measured live.</text>
+<rect x="60" y="96" width="300" height="470" rx="14" fill="#1f2937"/>
+<rect x="88" y="122" width="244" height="72" rx="5" fill="#cbd5e1"/>
+<text x="210.0" y="176" font-size="34" fill="#111827" text-anchor="middle" font-weight="bold">5.02</text>
+<text x="318" y="148" font-size="12" fill="#475569" text-anchor="middle" font-weight="normal">V⎓</text>
+<circle cx="210.0" cy="328" r="84" fill="#374151" stroke="#111827" stroke-width="3"/>
+<circle cx="210.0" cy="328" r="30" fill="#4b5563"/>
+<line x1="210.0" y1="328" x2="164.0" y2="270" stroke="#f9fafb" stroke-width="7" stroke-linecap="round"/>
+<text x="136.0" y="254" font-size="12" fill="#16a34a" text-anchor="middle" font-weight="bold">V⏜  20</text>
+<text x="268.0" y="258" font-size="11" fill="#9ca3af" text-anchor="middle" font-weight="normal">V~</text>
+<text x="294.0" y="342" font-size="12" fill="#dc2626" text-anchor="middle" font-weight="bold">A</text>
+<text x="214.0" y="424" font-size="11" fill="#9ca3af" text-anchor="middle" font-weight="normal">Ω</text>
+<text x="210.0" y="446" font-size="9.5" fill="#16a34a" text-anchor="middle" font-weight="bold">set here: DC volts, 20 V range</text>
+<circle cx="126.0" cy="522" r="17" fill="#dc2626" stroke="#111827" stroke-width="2"/>
+<text x="126.0" y="562" font-size="9" fill="#dc2626" text-anchor="middle" font-weight="bold">10A</text>
+<circle cx="210.0" cy="522" r="17" fill="#dc2626" stroke="#111827" stroke-width="2"/>
+<text x="210.0" y="562" font-size="9" fill="#dc2626" text-anchor="middle" font-weight="bold">VΩmA</text>
+<circle cx="294.0" cy="522" r="17" fill="#111827" stroke="#111827" stroke-width="2"/>
+<text x="294.0" y="562" font-size="9" fill="#f9fafb" text-anchor="middle" font-weight="bold">COM</text>
+<line x1="104.0" y1="500" x2="148.0" y2="544" stroke="#ef4444" stroke-width="4"/>
+<text x="126.0" y="492" font-size="8" fill="#ef4444" text-anchor="middle" font-weight="bold">NOT this one</text>
+<rect x="800" y="110" width="150" height="490" rx="6" fill="#1f2937"/>
+<text x="875.0" y="588" font-size="9" fill="#9ca3af" text-anchor="middle" font-weight="normal">USB-C ▼</text>
+<text x="875.0" y="96" font-size="11" fill="#111827" text-anchor="middle" font-weight="bold">ESP32 — LEFT column</text>
+<circle cx="792" cy="132" r="6" fill="#4b5563"/>
+<text x="964" y="136" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">3V3</text>
+<circle cx="792" cy="157" r="6" fill="#4b5563"/>
+<text x="964" y="161" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">EN</text>
+<circle cx="792" cy="182" r="6" fill="#4b5563"/>
+<text x="964" y="186" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO36</text>
+<circle cx="792" cy="207" r="6" fill="#4b5563"/>
+<text x="964" y="211" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO39</text>
+<circle cx="792" cy="232" r="6" fill="#4b5563"/>
+<text x="964" y="236" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO34</text>
+<circle cx="792" cy="257" r="6" fill="#4b5563"/>
+<text x="964" y="261" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO35</text>
+<circle cx="792" cy="282" r="6" fill="#4b5563"/>
+<text x="964" y="286" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO32</text>
+<circle cx="792" cy="307" r="6" fill="#4b5563"/>
+<text x="964" y="311" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO33</text>
+<circle cx="792" cy="332" r="6" fill="#4b5563"/>
+<text x="964" y="336" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO25</text>
+<circle cx="792" cy="357" r="6" fill="#4b5563"/>
+<text x="964" y="361" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO26</text>
+<circle cx="792" cy="382" r="6" fill="#4b5563"/>
+<text x="964" y="386" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO27</text>
+<circle cx="792" cy="407" r="6" fill="#4b5563"/>
+<text x="964" y="411" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO14</text>
+<circle cx="792" cy="432" r="6" fill="#4b5563"/>
+<text x="964" y="436" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO12</text>
+<circle cx="792" cy="457" r="8" fill="#111827" stroke="#ffffff" stroke-width="2"/>
+<text x="964" y="461" font-size="10" fill="#111827" text-anchor="start" font-weight="bold">GND  (6 up)  ← BLACK probe</text>
+<circle cx="792" cy="482" r="6" fill="#4b5563"/>
+<text x="964" y="486" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO13</text>
+<circle cx="792" cy="507" r="6" fill="#4b5563"/>
+<text x="964" y="511" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO9</text>
+<circle cx="792" cy="532" r="6" fill="#4b5563"/>
+<text x="964" y="536" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO10</text>
+<circle cx="792" cy="557" r="6" fill="#4b5563"/>
+<text x="964" y="561" font-size="8.5" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO11</text>
+<circle cx="792" cy="582" r="8" fill="#dc2626" stroke="#ffffff" stroke-width="2"/>
+<text x="964" y="586" font-size="10" fill="#dc2626" text-anchor="start" font-weight="bold">5V   (1 up)  ← RED probe</text>
+<path d="M 210.0 522 C 270.0 522, 520 522, 520 582 L 752 582 L 792 582" stroke="#dc2626" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="792" cy="582" r="4" fill="#dc2626"/>
+<path d="M 294.0 522 C 354.0 522, 520 522, 520 457 L 752 457 L 792 457" stroke="#111827" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="792" cy="457" r="4" fill="#111827"/>
+<rect x="400" y="96" width="360" height="104" rx="6" fill="#fee2e2" stroke="#fca5a5"/>
+<text x="413" y="117" font-size="10.5" fill="#991b1b" text-anchor="start" font-weight="bold">CHECK THE DIAL FIRST</text>
+<text x="413" y="137" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal">If the dial is on A (amps) and the probes touch 5 V</text>
+<text x="413" y="152" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal">and GND, the meter IS a short circuit — the same</text>
+<text x="413" y="167" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal">fault that dropped the Pi earlier.</text>
+<text x="413" y="182" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal"></text>
+<text x="413" y="197" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal">Confirm it reads V⎓ before anything touches a pin.</text>
+<rect x="400" y="214" width="360" height="104" rx="6" fill="#dbeafe" stroke="#93c5fd"/>
+<text x="413" y="235" font-size="10.5" fill="#1e3a8a" text-anchor="start" font-weight="bold">REACHING THE PINS</text>
+<text x="413" y="255" font-size="8.8" fill="#1e3a8a" text-anchor="start" font-weight="normal">Those pins already have jumpers on them.</text>
+<text x="413" y="270" font-size="8.8" fill="#1e3a8a" text-anchor="start" font-weight="normal"></text>
+<text x="413" y="285" font-size="8.8" fill="#1e3a8a" text-anchor="start" font-weight="normal">On a protoboard every hole in the same ROW is the</text>
+<text x="413" y="300" font-size="8.8" fill="#1e3a8a" text-anchor="start" font-weight="normal">same electrical point — so probe an empty hole in</text>
+<text x="413" y="315" font-size="8.8" fill="#1e3a8a" text-anchor="start" font-weight="normal">the 5V row and one in the GND row instead.</text>
+<rect x="400" y="332" width="360" height="104" rx="6" fill="#f0fdf4" stroke="#86efac"/>
+<text x="413" y="353" font-size="10.5" fill="#14532d" text-anchor="start" font-weight="bold">THEN CHECK 3V3</text>
+<text x="413" y="373" font-size="8.8" fill="#14532d" text-anchor="start" font-weight="normal">Leave BLACK where it is. Move RED to 3V3 — the TOP</text>
+<text x="413" y="388" font-size="8.8" fill="#14532d" text-anchor="start" font-weight="normal">pin of this column, 19 up from the USB-C end.</text>
+<text x="413" y="403" font-size="8.8" fill="#14532d" text-anchor="start" font-weight="normal">+3.2 to +3.4 V = regulator working.</text>
+<text x="413" y="418" font-size="8.8" fill="#14532d" text-anchor="start" font-weight="normal">Well below that = the chip is browning out.</text>
+<text x="400" y="668" font-size="12" fill="#111827" text-anchor="start" font-weight="bold">WHAT THE NUMBER MEANS  (red on 5V, black on GND)</text>
+<line x1="400" y1="694" x2="1220" y2="694" stroke="#e5e7eb"/>
+<rect x="400" y="703" width="12" height="12" rx="2" fill="#16a34a"/>
+<text x="422" y="714" font-size="11" fill="#16a34a" text-anchor="start" font-weight="bold">4.8 – 5.2 V</text>
+<text x="540" y="714" font-size="9.5" fill="#6b7280" text-anchor="start" font-weight="normal">supply is good — the fault is elsewhere</text>
+<line x1="400" y1="724" x2="1220" y2="724" stroke="#e5e7eb"/>
+<rect x="400" y="733" width="12" height="12" rx="2" fill="#d97706"/>
+<text x="422" y="744" font-size="11" fill="#d97706" text-anchor="start" font-weight="bold">3.5 – 4.5 V</text>
+<text x="540" y="744" font-size="9.5" fill="#6b7280" text-anchor="start" font-weight="normal">SAGGING under load — the loose XH2.54 contact</text>
+<line x1="400" y1="754" x2="1220" y2="754" stroke="#e5e7eb"/>
+<rect x="400" y="763" width="12" height="12" rx="2" fill="#dc2626"/>
+<text x="422" y="774" font-size="11" fill="#dc2626" text-anchor="start" font-weight="bold">0.0 – 0.5 V</text>
+<text x="540" y="774" font-size="9.5" fill="#6b7280" text-anchor="start" font-weight="normal">no contact at all, despite the lit LED</text>
+<line x1="400" y1="784" x2="1220" y2="784" stroke="#e5e7eb"/>
+<rect x="400" y="793" width="12" height="12" rx="2" fill="#9ca3af"/>
+<text x="422" y="804" font-size="11" fill="#9ca3af" text-anchor="start" font-weight="bold">negative</text>
+<text x="540" y="804" font-size="9.5" fill="#6b7280" text-anchor="start" font-weight="normal">probes reversed — swap them, harmless</text>
+</svg>
