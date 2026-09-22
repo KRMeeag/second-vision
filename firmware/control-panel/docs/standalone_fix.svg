@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="900" viewBox="0 0 1300 900" font-family="DejaVu Sans, Arial, sans-serif">
+<rect width="1300" height="900" fill="#ffffff"/>
+<text x="24" y="38" font-size="20" fill="#111827" text-anchor="start" font-weight="bold">Making the ESP32 boot without USB</text>
+<text x="24" y="60" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal">The CP2102 drives EN and IO0 on this DevKit. Unplug USB and it is unpowered — so the board never boots on its own.</text>
+<rect x="470" y="110" width="200" height="656" rx="6" fill="#1f2937"/>
+<rect x="518" y="128" width="104" height="70" rx="3" fill="#9ca3af"/>
+<text x="570.0" y="170" font-size="13" fill="#1f2937" text-anchor="middle" font-weight="bold">ESP-32</text>
+<text x="570.0" y="754" font-size="9" fill="#9ca3af" text-anchor="middle" font-weight="normal">USB-C ▼  (unplugged)</text>
+<circle cx="461" cy="140" r="7" fill="#7c3aed" stroke="#ffffff" stroke-width="2"/>
+<text x="448" y="144" font-size="10" fill="#7c3aed" text-anchor="end" font-weight="bold">3V3</text>
+<circle cx="461" cy="174" r="7" fill="#16a34a" stroke="#ffffff" stroke-width="2"/>
+<text x="448" y="178" font-size="10" fill="#16a34a" text-anchor="end" font-weight="bold">EN</text>
+<circle cx="461" cy="208" r="5" fill="#4b5563"/>
+<text x="448" y="212" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO36</text>
+<circle cx="461" cy="242" r="5" fill="#4b5563"/>
+<text x="448" y="246" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO39</text>
+<circle cx="461" cy="276" r="5" fill="#4b5563"/>
+<text x="448" y="280" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO34</text>
+<circle cx="461" cy="310" r="5" fill="#4b5563"/>
+<text x="448" y="314" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO35</text>
+<circle cx="461" cy="344" r="5" fill="#4b5563"/>
+<text x="448" y="348" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO32</text>
+<circle cx="461" cy="378" r="5" fill="#4b5563"/>
+<text x="448" y="382" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO33</text>
+<circle cx="461" cy="412" r="5" fill="#4b5563"/>
+<text x="448" y="416" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO25</text>
+<circle cx="461" cy="446" r="5" fill="#4b5563"/>
+<text x="448" y="450" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO26</text>
+<circle cx="461" cy="480" r="5" fill="#4b5563"/>
+<text x="448" y="484" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO27</text>
+<circle cx="461" cy="514" r="5" fill="#4b5563"/>
+<text x="448" y="518" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO14</text>
+<circle cx="461" cy="548" r="5" fill="#4b5563"/>
+<text x="448" y="552" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO12</text>
+<circle cx="461" cy="582" r="7" fill="#111827" stroke="#ffffff" stroke-width="2"/>
+<text x="448" y="586" font-size="10" fill="#111827" text-anchor="end" font-weight="bold">GND</text>
+<circle cx="461" cy="616" r="5" fill="#4b5563"/>
+<text x="448" y="620" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO13</text>
+<circle cx="461" cy="650" r="5" fill="#4b5563"/>
+<text x="448" y="654" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO9</text>
+<circle cx="461" cy="684" r="5" fill="#4b5563"/>
+<text x="448" y="688" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO10</text>
+<circle cx="461" cy="718" r="5" fill="#4b5563"/>
+<text x="448" y="722" font-size="8" fill="#9ca3af" text-anchor="end" font-weight="normal">GPIO11</text>
+<circle cx="461" cy="752" r="7" fill="#dc2626" stroke="#ffffff" stroke-width="2"/>
+<text x="448" y="756" font-size="10" fill="#dc2626" text-anchor="end" font-weight="bold">5V</text>
+<circle cx="679" cy="140" r="7" fill="#111827" stroke="#ffffff" stroke-width="2"/>
+<text x="692" y="144" font-size="10" fill="#111827" text-anchor="start" font-weight="bold">GND</text>
+<circle cx="679" cy="174" r="5" fill="#4b5563"/>
+<text x="692" y="178" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO23</text>
+<circle cx="679" cy="208" r="5" fill="#4b5563"/>
+<text x="692" y="212" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO22</text>
+<circle cx="679" cy="242" r="5" fill="#4b5563"/>
+<text x="692" y="246" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO1</text>
+<circle cx="679" cy="276" r="5" fill="#4b5563"/>
+<text x="692" y="280" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO3</text>
+<circle cx="679" cy="310" r="5" fill="#4b5563"/>
+<text x="692" y="314" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO21</text>
+<circle cx="679" cy="344" r="7" fill="#111827" stroke="#ffffff" stroke-width="2"/>
+<text x="692" y="348" font-size="10" fill="#111827" text-anchor="start" font-weight="bold">GND</text>
+<circle cx="679" cy="378" r="5" fill="#4b5563"/>
+<text x="692" y="382" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO19</text>
+<circle cx="679" cy="412" r="5" fill="#4b5563"/>
+<text x="692" y="416" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO18</text>
+<circle cx="679" cy="446" r="5" fill="#4b5563"/>
+<text x="692" y="450" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO5</text>
+<circle cx="679" cy="480" r="5" fill="#4b5563"/>
+<text x="692" y="484" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO17</text>
+<circle cx="679" cy="514" r="5" fill="#4b5563"/>
+<text x="692" y="518" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO16</text>
+<circle cx="679" cy="548" r="5" fill="#4b5563"/>
+<text x="692" y="552" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO4</text>
+<circle cx="679" cy="582" r="7" fill="#7c3aed" stroke="#ffffff" stroke-width="2"/>
+<text x="692" y="586" font-size="10" fill="#7c3aed" text-anchor="start" font-weight="bold">GPIO0</text>
+<circle cx="679" cy="616" r="5" fill="#4b5563"/>
+<text x="692" y="620" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO2</text>
+<circle cx="679" cy="650" r="5" fill="#4b5563"/>
+<text x="692" y="654" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO15</text>
+<circle cx="679" cy="684" r="5" fill="#4b5563"/>
+<text x="692" y="688" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO8</text>
+<circle cx="679" cy="718" r="5" fill="#4b5563"/>
+<text x="692" y="722" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO7</text>
+<circle cx="679" cy="752" r="5" fill="#4b5563"/>
+<text x="692" y="756" font-size="8" fill="#9ca3af" text-anchor="start" font-weight="normal">GPIO6</text>
+<path d="M 679 582 L 789 582 L 789 824 L 311 824 L 311 140 L 461 140" stroke="#7c3aed" stroke-width="3.5" fill="none" stroke-linejoin="round"/>
+<rect x="763" y="815" width="56" height="18" rx="3" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
+<text x="791" y="828" font-size="8.5" fill="#7c3aed" text-anchor="middle" font-weight="bold">10 kΩ</text>
+<circle cx="679" cy="582" r="4" fill="#7c3aed"/>
+<circle cx="461" cy="140" r="4" fill="#7c3aed"/>
+<path d="M 461 174 L 271 174 M 461 582 L 271 582 M 271 174 L 271 208 M 271 582 L 271 548" stroke="#16a34a" stroke-width="3.5" fill="none"/>
+<line x1="249" y1="370.0" x2="293" y2="370.0" stroke="#16a34a" stroke-width="4"/>
+<line x1="249" y1="386.0" x2="293" y2="386.0" stroke="#16a34a" stroke-width="4"/>
+<text x="271" y="358.0" font-size="9.5" fill="#16a34a" text-anchor="middle" font-weight="bold">1–10 µF</text>
+<text x="271" y="408.0" font-size="8" fill="#16a34a" text-anchor="middle" font-weight="normal">stripe → GND</text>
+<rect x="880" y="110" width="396" height="172" rx="6" fill="#f5f3ff" stroke="#c4b5fd"/>
+<text x="893" y="131" font-size="10.5" fill="#4c1d95" text-anchor="start" font-weight="bold">1 — GPIO0 to 3V3 via 10 kΩ</text>
+<text x="893" y="151" font-size="8.8" fill="#4c1d95" text-anchor="start" font-weight="normal">GPIO0 selects boot mode. Held LOW at reset the chip</text>
+<text x="893" y="166" font-size="8.8" fill="#4c1d95" text-anchor="start" font-weight="normal">enters DOWNLOAD mode: it waits for a flash command</text>
+<text x="893" y="181" font-size="8.8" fill="#4c1d95" text-anchor="start" font-weight="normal">that never comes and never runs your firmware.</text>
+<text x="893" y="196" font-size="8.8" fill="#4c1d95" text-anchor="start" font-weight="normal"></text>
+<text x="893" y="211" font-size="8.8" fill="#4c1d95" text-anchor="start" font-weight="normal">With USB unplugged the CP2102 is unpowered, and the</text>
+<text x="893" y="226" font-size="8.8" fill="#4c1d95" text-anchor="start" font-weight="normal">auto-reset transistors can hold IO0 low. This resistor</text>
+<text x="893" y="241" font-size="8.8" fill="#4c1d95" text-anchor="start" font-weight="normal">keeps it high so the board boots normally.</text>
+<text x="893" y="256" font-size="8.8" fill="#4c1d95" text-anchor="start" font-weight="normal">Use 10 kΩ, NOT a bare wire — a hard tie fights the</text>
+<text x="893" y="271" font-size="8.8" fill="#4c1d95" text-anchor="start" font-weight="normal">auto-reset circuit next time you flash over USB.</text>
+<rect x="880" y="298" width="396" height="140" rx="6" fill="#f0fdf4" stroke="#86efac"/>
+<text x="893" y="319" font-size="10.5" fill="#14532d" text-anchor="start" font-weight="bold">2 — 1–10 µF from EN to GND</text>
+<text x="893" y="339" font-size="8.8" fill="#14532d" text-anchor="start" font-weight="normal">EN is the reset line. On USB the CP2102 pulses it, so</text>
+<text x="893" y="354" font-size="8.8" fill="#14532d" text-anchor="start" font-weight="normal">the chip always starts cleanly. On any other supply it</text>
+<text x="893" y="369" font-size="8.8" fill="#14532d" text-anchor="start" font-weight="normal">relies on a pull-up alone, and a slow-rising rail can</text>
+<text x="893" y="384" font-size="8.8" fill="#14532d" text-anchor="start" font-weight="normal">leave the ESP32 half-started.</text>
+<text x="893" y="399" font-size="8.8" fill="#14532d" text-anchor="start" font-weight="normal"></text>
+<text x="893" y="414" font-size="8.8" fill="#14532d" text-anchor="start" font-weight="normal">This capacitor stretches the power-on reset.</text>
+<text x="893" y="429" font-size="8.8" fill="#14532d" text-anchor="start" font-weight="normal">Striped (negative) leg to GND.</text>
+<rect x="880" y="454" width="396" height="126" rx="6" fill="#fef3c7" stroke="#fbbf24"/>
+<text x="893" y="475" font-size="10.5" fill="#78350f" text-anchor="start" font-weight="bold">IF THE SUPPLY ALSO SAGS</text>
+<text x="893" y="495" font-size="8.8" fill="#78350f" text-anchor="start" font-weight="normal">Add 100–470 µF across 5V and GND, close to the board.</text>
+<text x="893" y="510" font-size="8.8" fill="#78350f" text-anchor="start" font-weight="normal"></text>
+<text x="893" y="525" font-size="8.8" fill="#78350f" text-anchor="start" font-weight="normal">Only needed if the rail cannot hold the boot surge —</text>
+<text x="893" y="540" font-size="8.8" fill="#78350f" text-anchor="start" font-weight="normal">the X1202 aux output could not; the Pi's 5V header,</text>
+<text x="893" y="555" font-size="8.8" fill="#78350f" text-anchor="start" font-weight="normal">with real current behind it, should not need this.</text>
+<rect x="880" y="596" width="396" height="158" rx="6" fill="#fee2e2" stroke="#fca5a5"/>
+<text x="893" y="617" font-size="10.5" fill="#991b1b" text-anchor="start" font-weight="bold">FINDING THE PINS</text>
+<text x="893" y="637" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal">GPIO0   right column, 6th up from the USB-C end.</text>
+<text x="893" y="652" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal">        Neighbours: GPIO4 above, GPIO2 below.</text>
+<text x="893" y="667" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal">3V3     top pin of the LEFT column. Neighbour: EN.</text>
+<text x="893" y="682" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal">EN      second from the top, left column.</text>
+<text x="893" y="697" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal">GND     left column, 6th up from the USB-C end.</text>
+<text x="893" y="712" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal"></text>
+<text x="893" y="727" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal">Read the silkscreen. Do not count — 3V3 and 5V are</text>
+<text x="893" y="742" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal">end pins of the SAME column and counting has gone</text>
+<text x="893" y="757" font-size="8.8" fill="#991b1b" text-anchor="start" font-weight="normal">wrong before.</text>
+</svg>

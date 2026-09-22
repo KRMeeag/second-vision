@@ -20,7 +20,7 @@ Second Vision is a head-mounted assistive device that gives visually impaired us
 1. **Audio (TTS)**: Announces *known* objects detected by AI — "person left", "car center", "bicycle right"
 2. **Haptic (vibration motors)**: Provides proportional vibration for *all* obstacles (including those AI can't classify) — closer obstacle = stronger vibration
 
-Users continue using their white cane for ground-level hazards (curbs, stairs). Second Vision covers what the cane can't — obstacles at body/head height and approaching objects.
+The device is used **without a white cane** (team decision, Sept 2026 — earlier drafts assumed one). It is the wearer's obstacle sense: anything standing in front of them, including low obstacles on the floor. **Stairs, drop-offs and step-ups are out of scope** — the software that tried to detect breaks in the ground exists in the code but is disabled because it is not reliable enough to be trusted (DECISIONS D36). The ground plane itself is still modelled every frame (it is how the floor is told apart from an obstacle). Users and demos must be told plainly that the device does not warn about stairs.
 
 ---
 

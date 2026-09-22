@@ -97,12 +97,13 @@ implementation, so they outlive any given algorithm:
 | Thin objects (poles, cables, chair legs) | Networks smooth them away; a whole-zone aggregate averages them out |
 | Blank / textureless walls | No texture → scale ambiguity → washed-out, uncertain output |
 | Near walls the model renders as *far* | Same ambiguity, but failing dangerously rather than noisily |
-| Drop-offs and descending stairs | A drop reads as "far", i.e. indistinguishable from open space |
+| Drop-offs and descending stairs | A drop reads as "far", i.e. indistinguishable from open space — *stair / drop-off / step-up detection is OUT OF SCOPE (D36). The ground plane itself is still modelled and obstacles on it are still detected* |
 
 **In this repo today:** `_process_real_depth` in
-[`pipeline/callbacks.py`](../src/second_vision/pipeline/callbacks.py) is a **placeholder
-awaiting replacement**, not the intended design. It emits `hazard=False` unconditionally.
-Nothing else in `src/` implements depth.
+[`pipeline/callbacks.py`](../src/second_vision/pipeline/callbacks.py) runs the real chain
+(`core/depth_utils.py` → `core/haptics.py` → `serial_queue`). It emits `hazard=False` on every
+frame **by decision** (DECISIONS D36): ground-hazard detection is disabled as unreliable, and
+the fields stay only to keep the ESP32 contract intact.
 
 **Units:** the SC-DepthV3 postprocess emits **relative** model units, not metres. Any
 constant carrying an `_M` suffix in prototype code is still in those relative units.
@@ -258,7 +259,8 @@ streets; best case, worst case, edge cases — and tunes the priority constants 
 Two standing caveats while testing:
 
 - The device is **under test**. It is not to be relied on for real obstacle avoidance, and a
-  visually-impaired tester keeps their white cane and has a dedicated spotter.
+  visually-impaired tester has a dedicated spotter — the device does not detect stairs or
+  curbs (DECISIONS D36), so the spotter owns ground-level hazards.
 - Until depth lands, unclassifiable obstacles (poles, glass doors, curbs) are **silent** —
   that is expected, and noting which ones felt dangerous to miss is itself a deliverable for
   the depth workstream.

@@ -28,8 +28,8 @@
 | 13 | TTS phrasing | Short: `"person left"` | 0.6s per utterance; leaves silence between cooldowns |
 | 14 | ESP32 firmware | Teammate-owned; protocol spec provided | Independent development against the binary protocol spec |
 | 15 | Form factor | Head-mounted | Camera, motors, earpiece all on headband |
-| 16 | Target user | Visually impaired | White cane as fallback for ground-level hazards |
-| 17 | Downward hazards | Software ground-plane departure detection | Depth gradient spike analysis; catches stairs/ledges |
+| 16 | Target user | Visually impaired, **no white cane** | Earlier drafts assumed a cane fallback; corrected Sept 2026 — see D36 |
+| 17 | ~~Downward hazards~~ | ~~Software ground-plane departure detection~~ | **SUPERSEDED by D36** — disabled; not reliable enough to trust, and there is no cane fallback |
 | 18 | Control panel protocol | Text: `"S:key:value\n"` | Human-speed input; debuggable with serial monitor |
 | 19 | Config sharing | `SystemConfig` with `threading.Lock` | Workers poll on each loop iteration (< 1s latency) |
 | 20 | Pipeline switching | Dynamic rebuild via `_rebuild_pipeline()` | **Reaffirmed 2026-07-27** — being built now alongside the control panel |
@@ -96,7 +96,19 @@
 
 **The workaround**: Ground plane departure detection. The bottom 20-30% of the depth map shows ground 1-3m ahead. On flat ground, the depth gradient is smooth. A staircase creates a sudden gradient spike (depth jumps from "close ground" to "far nothing"). Detecting this spike ratio (> 5x median gradient) flags potential drop-offs.
 
-**Limitations**: Works for staircases (3+ steps) and ledges. Small curbs and potholes may be below the noise floor. Not a replacement for the white cane.
+**Limitations**: Works for staircases (3+ steps) and ledges. Small curbs and potholes may be below the noise floor.
+
+**Superseded by D36.**
+
+### D36: Ground-Hazard Detection Disabled (Sept 2026)
+
+**Decision**: `GROUND_HAZARD_ENABLED = False` in `depth_utils.py`. The detector, its debouncer and its tests stay in the tree; the callback publishes `hazard=False, hazard_severity=0` on every frame, so the serial contract and the ESP32 firmware are untouched.
+
+**Why**: the detector was the least trustworthy stage in the chain — D17's own limitation (a drop-off reads as "far") was never solved, the gate divides by the ground strip's noise and flapped 131 times in 400 frames on a static scene, and every threshold is an uncalibrated placeholder. A ground warning that is wrong that often teaches the wearer to ignore the device, which costs them the warnings that do work — and a device that *claims* to see stairs while missing most of them is more dangerous than one that is known not to.
+
+**What it costs — read this**: the wearer uses **no white cane** (D16, corrected). With this off, **breaks in the ground are invisible to the device**: stairs, drop-offs, step-ups, curbs. Scoped precisely (team, 2026-09-15): it is the *hazard* detector that is out — the ground plane is still modelled every frame (`floor_profile`, DECISIONS on floor suppression) and obstacles standing on the floor are still detected. This was first recorded on the false premise that a cane covered them; it was re-confirmed by the team on 2026-09-12 knowing there is no fallback. **What it must not cost**: honesty — every user, demo, doc and script must state plainly that the device does not warn about stairs.
+
+**To reverse**: calibrate `HAZARD_MIN_STEP` / `HAZARD_MAX_JUMP` against real stairs (`SV_CALIBRATE=1`, `core/calibration.py`), settle the direction question (D17 / TASKS), then flip the flag.
 
 ### D20: Dynamic Pipeline Rebuild over "Ignore Output"
 

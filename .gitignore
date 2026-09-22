@@ -14,8 +14,13 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Anchored to repo root (not "lib/") — the unanchored form also matched
+# firmware/esp32_haptic_feedback/lib/, a vendored Arduino library directory
+# that needs to be tracked, not Python build output. Every other pattern in
+# this "Distribution / packaging" block is a root-level build artifact
+# (build/, dist/, etc.), so anchoring here matches the original intent.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
