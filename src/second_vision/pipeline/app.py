@@ -163,6 +163,30 @@ def _hailort_service_available():
         return False
 
 
+# Depth of the inference wrapper's BYPASS queue on the DEPTH branch: the
+# original frames parked while their crop goes through hailonet, re-joined at
+# the aggregator. hailo_apps sizes it at 20, and that is where the 1.0-1.2 s
+# depth latency lived — _low_latency_queues() only shrinks the 3-buffer queues,
+# so this one stayed at 20 and, once the branch fell a hair behind the camera,
+# filled up: 20 frames at 30 FPS is 0.67 s, plus hailonet's own in-flight
+# frames. Measured on 2026-09-21 with the desktop preview on: p50 1103 ms.
+# Four keeps cropper and hailonet pipelined and bounds the backlog to ~130 ms.
+#
+# Short, not leaky: a dropped frame here leaves the aggregator waiting forever
+# for a crop that never arrives. The drop happens once, upstream, in the leaky
+# depth_branch_q, and once more at the tail in depth_callback_q (see there).
+# The detection branch keeps hailo_apps' default 20; it is not touched.
+DEPTH_BYPASS_QUEUE_BUFFERS = 4
+
+# hailonet scheduler-priority for the DEPTH model (0-31, hailonet default 16).
+# With hailort_service owning the device both hailonets are clients of ONE
+# scheduler, and it is the depth model that loses device time (depth 22-24 FPS
+# while detection holds 29). Raising depth's priority reclaims time the
+# scheduler was leaving idle between model switches, not time detection was
+# using: detection's rate did not move when this was measured (2026-09-20).
+DEPTH_SCHEDULER_PRIORITY = 31
+
+
 def _low_latency_queues(fragment: str) -> str:
     """
     Shrink every default 3-buffer queue in a pipeline fragment to 1 buffer.
@@ -346,15 +370,33 @@ class SecondVisionApp(GStreamerApp):
             post_function_name=self.depth_post_function_name,
             name="depth_inference",
             multi_process_service=self._multi_process_service,
+            scheduler_priority=DEPTH_SCHEDULER_PRIORITY,
         )
         depth_pipeline_wrapper = INFERENCE_PIPELINE_WRAPPER(
-            depth_pipeline, name="inference_wrapper_depth"
+            depth_pipeline,
+            bypass_max_size_buffers=DEPTH_BYPASS_QUEUE_BUFFERS,
+            name="inference_wrapper_depth",
         ).replace("use-letterbox=true", "use-letterbox=false")
         depth_pipeline_wrapper = _low_latency_queues(depth_pipeline_wrapper)
         # No rate cap here any more: the cap sits on the shared stream in front
         # of the tee (_rate_cap), so this branch is fed at exactly the rate the
         # detection branch is.
-        depth_callback = _low_latency_queues(USER_CALLBACK_PIPELINE(name="depth_callback"))
+        #
+        # The tail queue, right in front of the Python callback, is LEAKY and
+        # one buffer deep. The slow stage of this branch is on_depth_frame
+        # itself (~15 ms of GIL-holding Python per frame, shared with the
+        # detection callback, the preview and every worker thread). With the
+        # library's non-leaky queue here, the moment the callback falls behind
+        # the camera every queue between the tee and this one fills and stays
+        # full, and the frame the callback sees is as old as their combined
+        # depth. Leaky and one deep, the callback always takes the NEWEST
+        # fully-inferred frame and nothing upstream can accumulate. Safe: this
+        # sits after the aggregator, so a dropped buffer is a whole frame, not
+        # a crop the aggregator is waiting for.
+        depth_callback = (
+            f"{QUEUE(name='depth_callback_q', max_size_buffers=1, leaky='downstream')} ! "
+            f"identity name=depth_callback "
+        )
         # No DISPLAY_PIPELINE here — that opens its own native GStreamer window
         # with hailo's own overlay, on top of the cv2 window callbacks.py
         # already draws (via use_frame/set_frame), which was showing up as two
@@ -400,7 +442,7 @@ class SecondVisionApp(GStreamerApp):
         # Parallel tee architecture (display handled by cv2 in callbacks.py)
         return (
             f"{source_pipeline} ! {_rate_cap(pipeline_fps())} ! tee name=t "
-            f"t. ! {QUEUE(name='depth_branch_q', leaky='downstream')} ! {depth_pipeline_wrapper} ! {depth_callback} ! {depth_sink} "
+            f"t. ! {QUEUE(name='depth_branch_q', max_size_buffers=1, leaky='downstream')} ! {depth_pipeline_wrapper} ! {depth_callback} ! {depth_sink} "
             f"t. ! {QUEUE(name='det_branch_q', leaky='downstream')} ! {detection_pipeline_wrapper} ! {tracker_pipeline} ! {det_callback} ! {det_sink}"
         )
 
