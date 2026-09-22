@@ -1,0 +1,7 @@
+﻿Designator,Footprint,Quantity,Value,LCSC Part #
+"BTN_VOL_DOWN1, BTN_VOL_UP1",SW_SPST_B3U-1000P,2,SW_Push,
+D1,D_SOD-123,1,1N5401,
+"PAD_5V_L1, PAD_D0_LEFT1, PAD_GND_L1, PAD_VOL_DOWN1, PAD_VOL_UP1",PinHeader_1x01_P2.54mm_Vertical,5,Conn_01x01,
+Q1,SOT-23,1,2N7000,
+R1,0603,1,R,
+VIB_LEFT1,PinHeader_1x02_P2.54mm_Vertical,1,Conn_01x02,

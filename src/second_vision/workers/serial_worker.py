@@ -29,6 +29,54 @@ READ_TIMEOUT_SECONDS = 0.01
 # couple us to a detail neither side agreed to.
 ACK_PREFIX = bytes([0xAA, 0xFF])
 
+# --- Inbound: BMI160 telemetry, ESP32 -> Pi (0x02) ---------------------------
+# Matches MSG_IMU_TELEMETRY in firmware/esp32_haptic_feedback/src/main.cpp.
+# Unlike the outbound packets above, this direction gets no ACK — nothing here
+# needs to tell the ESP32 a reading was received.
+#
+#   byte 0   0xAA start
+#   byte 1   0x02 (MSG_IMU_TELEMETRY)
+#   byte 2   state: 0=normal, 1=head_moving, 2=wrong_pitch
+#   byte 3-4 raw_pitch, int16, big-endian (high byte first)
+#   byte 5-6 raw_yaw,   int16, big-endian
+#   byte 7   checksum = 0x02 ^ state ^ pitch_hi ^ pitch_lo ^ yaw_hi ^ yaw_lo
+MSG_IMU_TELEMETRY = 0x02
+IMU_TELEMETRY_FRAME_LEN = 8  # start + type + state + pitch(2) + yaw(2) + checksum
+
+IMU_STATE_NAMES = {0: "normal", 1: "head_moving", 2: "wrong_pitch"}
+
+# A partial telemetry frame (0xAA 0x02 seen, payload still incomplete) that
+# never finishes — a dropped byte, a cable pulled mid-packet — must not sit in
+# the carryover buffer forever. Anything older than this is abandoned so the
+# next real bytes can resync cleanly, mirroring BYTE_TIMEOUT_MS on the
+# firmware side of this same link.
+IMU_TELEMETRY_STALE_SECONDS = 0.5
+
+# --- Inbound: body-turn event, ESP32 -> Pi (0x03) -----------------------------
+# Matches MSG_TURN_EVENT in firmware/esp32_haptic_feedback/src/main.cpp.
+# Separate packet type from 0x02 on purpose: 0x02 is continuous telemetry sent
+# every tick regardless of content; this is a discrete EVENT sent only when
+# the ESP32's gyro-Z integrator actually crosses its turn threshold — most
+# drains will contain no 0x03 frame at all, unlike 0x02 which arrives ~5x/sec
+# unconditionally. No ACK, same as 0x02 — nothing here needs to confirm
+# receipt back to the ESP32.
+#
+#   byte 0   0xAA start
+#   byte 1   0x03 (MSG_TURN_EVENT)
+#   byte 2-3 delta_deg, int16, big-endian, signed — accumulated rotation that
+#            crossed the threshold. Sign = rotation direction, but which
+#            physical direction (left/right) the sign corresponds to has NOT
+#            been verified against the sling-bag mounting — see the firmware
+#            comment on sendTurnEvent() for why a signed value was chosen
+#            over a pre-committed direction label.
+#   byte 4   checksum = 0x03 ^ delta_hi ^ delta_lo
+MSG_TURN_EVENT = 0x03
+TURN_EVENT_FRAME_LEN = 5  # start + type + delta(2) + checksum
+
+# Same reasoning as IMU_TELEMETRY_STALE_SECONDS — an unfinished 0x03 frame
+# must not linger in its carryover buffer forever.
+TURN_EVENT_STALE_SECONDS = 0.5
+
 # The ESP32 zeroes the motors after 3 s without traffic. Send something every
 # second so two heartbeats can be lost — to a dropped write, a busy loop, a
 # scheduling hiccup — before the wearer feels the device cut out. Raising this
@@ -122,6 +170,26 @@ def serial_worker(user_data, config):
         # so checking immediately after a write would measure the round trip
         # rather than the link.
         ack_seen = _check_ack(port)
+
+        # Independent of ACK/link-health bookkeeping below: whatever BMI160
+        # reading _check_ack staged from this same drain, publish it for any
+        # consumer holding this user_data. getattr guards user_data variants
+        # that don't carry imu_telemetry (e.g. a minimal stub in a test) —
+        # this worker has no business requiring every caller to have one.
+        telemetry = _take_imu_telemetry(port)
+        if telemetry is not None:
+            imu_telemetry = getattr(user_data, "imu_telemetry", None)
+            if imu_telemetry is not None:
+                imu_telemetry.update(received_at=time.monotonic(), **telemetry)
+
+        # Same pattern as above, for 0x03 turn events. push() (not update())
+        # because TurnEvent is a consume-once occurrence, not persistent
+        # state — see core/turn_event.py.
+        turn = _take_turn_event(port)
+        if turn is not None:
+            turn_event = getattr(user_data, "turn_event", None)
+            if turn_event is not None:
+                turn_event.push(received_at=time.monotonic(), **turn)
 
         # `port is not None` matters: _check_ack() returns True for a None port
         # by design ("no link, so no link to have lost"), which keeps the link
@@ -388,6 +456,189 @@ def _heartbeat_if_due(port, last_write_at: float) -> float:
     return now
 
 
+def _decode_imu_frame(frame: bytes):
+    """
+    Decode one already-checksum-verified-length, exactly IMU_TELEMETRY_FRAME_LEN
+    byte frame (frame[0] == 0xAA, frame[1] == MSG_IMU_TELEMETRY assumed by the
+    caller). Returns a dict on a valid checksum, None on a bad one — the caller
+    decides what to do with a bad checksum, this function just doesn't act on it.
+
+    struct.unpack(">h", ...) does the signed decoding: ">" is big-endian to
+    match the firmware's byte order, "h" is a signed 16-bit int, so two's
+    complement negative values (e.g. a pitch tipped backward) come out correct
+    without hand-rolled sign-extension logic.
+    """
+    state_byte, pitch_hi, pitch_lo, yaw_hi, yaw_lo, checksum = frame[2:8]
+    expected = MSG_IMU_TELEMETRY ^ state_byte ^ pitch_hi ^ pitch_lo ^ yaw_hi ^ yaw_lo
+    if checksum != expected:
+        return None
+    raw_pitch = struct.unpack(">h", bytes([pitch_hi, pitch_lo]))[0]
+    raw_yaw = struct.unpack(">h", bytes([yaw_hi, yaw_lo]))[0]
+    return {
+        "state": IMU_STATE_NAMES.get(state_byte, "unknown"),
+        "raw_pitch": raw_pitch,
+        "raw_yaw": raw_yaw,
+    }
+
+
+def _scan_imu_telemetry(buf: bytes):
+    """
+    Walk buf for 0x02 telemetry frames. Returns (remaining_tail, latest_or_None).
+
+    Keeps only the LAST successfully decoded frame in this chunk — a "most
+    recent reading" store has no use for intermediate values it would
+    immediately overwrite anyway. A bad checksum is dropped and logged
+    (throttled, like every other link error here), not raised: one corrupted
+    reading is not worth losing the reader loop over, and the next one is
+    ~200ms behind it.
+
+    Any 0xAA that turns out not to start a 0x02 frame (an ACK prefix, noise)
+    is simply stepped past — this scan only cares about its own message type;
+    _check_ack's scan over the same chunk handles ACKs independently.
+    """
+    latest = None
+    i = 0
+    n = len(buf)
+    while i < n:
+        if buf[i] != 0xAA:
+            i += 1
+            continue
+        if i + 1 >= n:
+            break  # type byte hasn't arrived yet — keep from here as the tail
+        if buf[i + 1] != MSG_IMU_TELEMETRY:
+            i += 1
+            continue
+        if i + IMU_TELEMETRY_FRAME_LEN > n:
+            break  # frame not fully arrived yet — keep from here as the tail
+        decoded = _decode_imu_frame(buf[i:i + IMU_TELEMETRY_FRAME_LEN])
+        if decoded is None:
+            _log_serial_error("IMU telemetry checksum mismatch, dropping frame")
+        else:
+            latest = decoded
+        i += IMU_TELEMETRY_FRAME_LEN
+    return buf[i:], latest
+
+
+def _extract_imu_telemetry(port, chunk: bytes, now: float):
+    """
+    Feed this call's already-drained chunk through the telemetry scanner,
+    carrying a partial frame across calls on the port object — same technique
+    _check_ack uses for _sv_ack_tail, just with a longer carryover since an
+    8-byte frame cannot survive being trimmed to 1 byte the way the 2-byte ACK
+    prefix can.
+
+    Does its own I/O: none. `chunk` must come from the SAME drain _check_ack
+    already performed this iteration — reading the port a second time here
+    would consume bytes out from under whichever scan ran first and could
+    split a frame between them.
+    """
+    tail = getattr(port, "_sv_telemetry_tail", b"")
+    tail_started_at = getattr(port, "_sv_telemetry_tail_started_at", now)
+    if tail and (now - tail_started_at) > IMU_TELEMETRY_STALE_SECONDS:
+        tail = b""  # abandon a partial frame that stalled; resync on new bytes only
+
+    new_tail, latest = _scan_imu_telemetry(tail + chunk)
+    port._sv_telemetry_tail = new_tail
+    port._sv_telemetry_tail_started_at = tail_started_at if (new_tail and tail) else now
+
+    if latest is not None:
+        port._sv_pending_telemetry = latest
+
+
+def _take_imu_telemetry(port):
+    """
+    Pop the most recent BMI160 reading _check_ack staged this iteration, or
+    None if nothing new decoded since the last call. Call this once per loop
+    iteration, after _check_ack — it does not read the port itself.
+    """
+    if port is None:
+        return None
+    telemetry = getattr(port, "_sv_pending_telemetry", None)
+    port._sv_pending_telemetry = None
+    return telemetry
+
+
+def _decode_turn_event(frame: bytes):
+    """
+    Decode one already-length-checked 0x03 frame. Returns {"delta_deg": int}
+    on a valid checksum, None on a bad one — same contract as
+    _decode_imu_frame: the caller decides what a bad checksum means here.
+    """
+    delta_hi, delta_lo, checksum = frame[2:5]
+    expected = MSG_TURN_EVENT ^ delta_hi ^ delta_lo
+    if checksum != expected:
+        return None
+    delta_deg = struct.unpack(">h", bytes([delta_hi, delta_lo]))[0]
+    return {"delta_deg": delta_deg}
+
+
+def _scan_turn_event(buf: bytes):
+    """
+    Walk buf for 0x03 frames. Returns (remaining_tail, latest_or_None).
+
+    Mirrors _scan_imu_telemetry exactly, sized for the shorter 5-byte frame.
+    Keeps only the last decoded event in this chunk for the same reason
+    _scan_imu_telemetry keeps only the last telemetry reading — though in
+    practice a single drain containing two DISTINCT turn events (as opposed
+    to two motor-update frames, which arrive constantly) would be unusual,
+    since events are throttled by the firmware's own cooldown between them.
+    """
+    latest = None
+    i = 0
+    n = len(buf)
+    while i < n:
+        if buf[i] != 0xAA:
+            i += 1
+            continue
+        if i + 1 >= n:
+            break
+        if buf[i + 1] != MSG_TURN_EVENT:
+            i += 1
+            continue
+        if i + TURN_EVENT_FRAME_LEN > n:
+            break
+        decoded = _decode_turn_event(buf[i:i + TURN_EVENT_FRAME_LEN])
+        if decoded is None:
+            _log_serial_error("Turn event checksum mismatch, dropping frame")
+        else:
+            latest = decoded
+        i += TURN_EVENT_FRAME_LEN
+    return buf[i:], latest
+
+
+def _extract_turn_event(port, chunk: bytes, now: float):
+    """
+    Same shape as _extract_imu_telemetry, with its own independent carryover
+    buffer (_sv_turn_tail, not _sv_telemetry_tail) — 0x02 and 0x03 frames can
+    both appear in the same drained chunk, and a partial frame of one type
+    must not be confused with or clobber a partial frame of the other.
+    """
+    tail = getattr(port, "_sv_turn_tail", b"")
+    tail_started_at = getattr(port, "_sv_turn_tail_started_at", now)
+    if tail and (now - tail_started_at) > TURN_EVENT_STALE_SECONDS:
+        tail = b""
+
+    new_tail, latest = _scan_turn_event(tail + chunk)
+    port._sv_turn_tail = new_tail
+    port._sv_turn_tail_started_at = tail_started_at if (new_tail and tail) else now
+
+    if latest is not None:
+        port._sv_pending_turn_event = latest
+
+
+def _take_turn_event(port):
+    """
+    Pop the most recent turn event _check_ack staged this iteration, or None.
+    Same contract as _take_imu_telemetry — call once per loop iteration,
+    after _check_ack; does not read the port itself.
+    """
+    if port is None:
+        return None
+    event = getattr(port, "_sv_pending_turn_event", None)
+    port._sv_pending_turn_event = None
+    return event
+
+
 def _check_ack(port) -> bool:
     """
     Has the ESP32 acknowledged anything since the last check?
@@ -405,6 +656,14 @@ def _check_ack(port) -> bool:
     and unbounded growth on a chatty board would be a slow leak.
 
     A None port returns True — no link, so no link to have lost.
+
+    Side effect: also stages any BMI160 telemetry (0x02) and turn events
+    (0x03) found in the same drained bytes, for _take_imu_telemetry() and
+    _take_turn_event() to collect respectively — see those functions and
+    _extract_imu_telemetry()/_extract_turn_event() below. This function's own
+    return value and ACK-detection behavior are unchanged by that; it is
+    additive scanning over the chunk this function already reads, not a
+    second read.
     """
     if port is None:
         return True
@@ -417,6 +676,18 @@ def _check_ack(port) -> bool:
 
     if not chunk:
         return False
+
+    # Same drained chunk, scanned three times now for three independent
+    # purposes: this scan below for the ACK prefix (unchanged from before
+    # telemetry existed), _extract_imu_telemetry for 0x02 frames, and
+    # _extract_turn_event for 0x03 frames. All three run off this one
+    # port.read() rather than each doing their own — a second read here
+    # would consume whatever arrived after this call's read, silently
+    # stealing bytes out from under the other scans and fragmenting frames
+    # unpredictably.
+    now = time.monotonic()
+    _extract_imu_telemetry(port, chunk, now)
+    _extract_turn_event(port, chunk, now)
 
     buffered = getattr(port, "_sv_ack_tail", b"") + chunk
     found = ACK_PREFIX in buffered

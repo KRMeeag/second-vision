@@ -7,6 +7,11 @@
 # starts and the rockers do nothing, with no error to explain why.
 cd "$(dirname "$0")/.."
 
+# Two separate ESP32 boards, two separate ports — not competing values for one
+# setting. /dev/serial0 is the haptics/BMI160 (motor) board, confirmed working
+# across today's real hardware tests; CONFIG_PORT is the control-panel board
+# wired in over uart3 (see the file-top comment).
+SERIAL_PORT="${SERIAL_PORT:-/dev/serial0}"
 CONFIG_PORT="${CONFIG_PORT:-/dev/ttyAMA3}"
 INPUT="${INPUT:-/dev/video0}"
 
@@ -25,14 +30,14 @@ if [ ! -e "$INPUT" ]; then
     echo "[sv-main] $INPUT does not exist — no camera attached."
     echo "[sv-main] Falling back to --mock so the panel can still be exercised."
     echo "[sv-main] Set INPUT=/dev/videoN to override."
-    exec python3 src/second_vision/main.py --mock --config-port "$CONFIG_PORT"
+    exec python3 src/second_vision/main.py --mock --serial-port "$SERIAL_PORT" --config-port "$CONFIG_PORT"
 fi
 
 if [ ! -e "$CONFIG_PORT" ]; then
     echo "[sv-main] warning: $CONFIG_PORT missing — running without the control panel."
     exec python3 src/second_vision/main.py --input "$INPUT" \
-        --width 640 --height 480 $FRAME_FLAG
+        --width 640 --height 480 $FRAME_FLAG --serial-port "$SERIAL_PORT"
 fi
 
 exec python3 src/second_vision/main.py --input "$INPUT" \
-    --width 640 --height 480 $FRAME_FLAG --config-port "$CONFIG_PORT"
+    --width 640 --height 480 $FRAME_FLAG --serial-port "$SERIAL_PORT" --config-port "$CONFIG_PORT"

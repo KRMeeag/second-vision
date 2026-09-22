@@ -27,24 +27,18 @@ Edit the board constants at the top of `gen_wiring.py` before re-running it.
 | `polarity` | `src/polarity_test.cpp`| Bring-up. Raw pin states + ADC + implied mode. |
 | `panel`    | `src/control_panel.cpp`| The real firmware. Default env. |
 | `bench`    | `src/control_panel.cpp`| Same firmware, `-D HAVE_POT=0`. For a bare board with no breadboard — an unfitted pot floats GPIO34 and floods the link. |
-| `motorlink`| `src/main.cpp`         | **A DIFFERENT BOARD** — see below. |
 
-### `motorlink` is not the control panel
+### The motor board lives elsewhere
 
-`src/main.cpp` targets the glasses / vibration-motor ESP32. It shares this
-project only because both boards are `esp32dev` with the same toolchain;
-`build_src_filter` compiles exactly one sketch per env.
+Everything in `src/` is **control-panel** firmware. The glasses /
+vibration-motor ESP32 (XIAO ESP32-C3, binary, 115200, bidirectional, driven
+by `--serial-port` rather than `--config-port`) has its own PlatformIO
+project in `firmware/esp32_haptic_feedback/`. The old `motorlink` link-check
+sketch that used to sit here as `src/main.cpp` is gone; that board's
+protocol is exercised by `scripts/test_motor_packet.py` and
+`tests/test_serial_worker.py` instead.
 
-It is a **link check, not motor firmware** — no PWM, no MOSFETs, no motor
-logic. It waits for `0xAA` from the Pi and replies with the `ACK_PREFIX` that
-`workers/serial_worker.py` matches. Binary, 115200, bidirectional — a different
-link from the panel's text/9600/one-way one, driven by `--serial-port` rather
-than `--config-port`.
-
-`PROTOCOL.md` documents the **panel** protocol only and does not apply to it.
-
-`default_envs = panel`, so a bare `pio run -t upload` can never flash this by
-accident; you have to ask for `-e motorlink` explicitly.
+`PROTOCOL.md` documents the **panel** protocol only.
 
     pio run -e polarity -t upload -t monitor
     pio run -e panel    -t upload -t monitor
