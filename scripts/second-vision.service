@@ -1,0 +1,61 @@
+# Second Vision boot service: starts the app when the Pi boots, stops it
+# cleanly when the Pi shuts down (power button included).
+#
+# Do not copy this file by hand — scripts/install-service.sh fills in the
+# @REPO@ / @USER@ / @UID@ placeholders and installs it as a system unit.
+# Day to day:
+#   sudo systemctl stop second-vision      # before running the app by hand
+#   sudo systemctl start second-vision
+#   journalctl -u second-vision -f         # live log (no sudo needed)
+
+[Unit]
+Description=Second Vision (detection + depth -> TTS + haptics)
+# The app asks ONCE, at startup, whether hailort.service is active and picks
+# multi-process or exclusive device mode for the whole run, so start after it.
+# The order reverses at shutdown: we stop first, while the daemon still serves
+# our hailonets.
+Wants=hailort.service
+After=hailort.service
+# TTS reaches the earphones through the user's PipeWire session, which lives in
+# user@UID.service (started at boot because linger is enabled). Same reversal:
+# audio stays up until we have stopped.
+Wants=user@@UID@.service
+After=user@@UID@.service
+# Retry forever: a camera plugged in late must still come up.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=@USER@
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/scripts/sv-main.sh
+SyslogIdentifier=second-vision
+# Wait for the camera and hard-fail instead of mock mode (see sv-main.sh).
+Environment=SV_SERVICE=1
+# PipeWire's sockets live here; without it espeak-ng has no audio server.
+Environment=XDG_RUNTIME_DIR=/run/user/@UID@
+# Otherwise print() output reaches the journal in 4 KB lumps, and whatever is
+# still buffered when the process dies is lost.
+Environment=PYTHONUNBUFFERED=1
+# Device overrides; the defaults live in sv-main.sh. Prefer
+# `sudo systemctl edit second-vision` over editing this file.
+#Environment=INPUT=/dev/video0
+#Environment=SERIAL_PORT=/dev/serial0
+#Environment=CONFIG_PORT=/dev/ttyAMA3
+
+# Stop == Ctrl+C. main.py handles SIGTERM the same way once the pipeline
+# exists, but SIGINT also exits cleanly during startup and in mock mode.
+KillSignal=SIGINT
+# Signal only the Python process; anything it leaves behind (an espeak-ng
+# mid-word) is SIGKILLed once it has exited.
+KillMode=mixed
+# A clean stop takes ~0.7 s, and the app forces its own exit after 5 s if the
+# GStreamer teardown deadlocks. Past 10 s something else is wrong: kill it
+# rather than hold up a power-button shutdown (systemd's default is 90 s).
+TimeoutStopSec=10
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

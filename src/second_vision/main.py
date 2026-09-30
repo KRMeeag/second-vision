@@ -2,12 +2,18 @@
 Second Vision — Main Entry Point
 
 Usage:
-  python3 src/second_vision/main.py --input usb                    # Real pipeline, stub consumers
+  python3 src/second_vision/main.py --input usb                    # Real pipeline, no board attached
   python3 src/second_vision/main.py --mock                         # Full mock mode (no hardware)
-  python3 src/second_vision/main.py --input usb --serial-port /dev/ttyUSB0  # Real serial
+  python3 src/second_vision/main.py --input usb --serial-port /dev/ttyUSB0   # ESP32 over USB
+  python3 src/second_vision/main.py --input usb --serial-port /dev/serial0   # ESP32 on the GPIO pins
+
+Omit --serial-port to run with no ESP32: everything is still computed and
+packed, it just isn't written anywhere. Opening a port needs membership of the
+`dialout` group (check with `groups`); a re-login is required after adding it.
 """
 
 import os
+import signal
 import sys
 import threading
 import queue
@@ -22,6 +28,9 @@ os.environ["GST_PLUGIN_FEATURE_RANK"] = "vaapidecodebin:NONE"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from second_vision.core.config import SystemConfig
+from second_vision.core.priority import PriorityMailbox
+from second_vision.core.imu_telemetry import ImuTelemetry
+from second_vision.core.turn_event import TurnEvent
 
 # Conditional imports — don't crash if hailo isn't installed (mock mode)
 HAILO_AVAILABLE = True
@@ -65,9 +74,18 @@ class SecondVisionUserData(_UserDataBase):
     def __init__(self, config: SystemConfig):
         super().__init__()
         self.config = config
-        self.tts_queue = queue.Queue(maxsize=1)
+        # TTS uses a priority mailbox (offer/take/peek), not a FIFO queue — see
+        # core/priority.py. Serial stays a plain FIFO stream.
+        self.tts_queue = PriorityMailbox()
         self.serial_queue = queue.Queue(maxsize=10)
         self.shutdown_event = threading.Event()
+        # Latest BMI160 reading off the ESP32, written by serial_worker as
+        # 0x02 packets arrive. "Latest", not a queue — see core/imu_telemetry.py.
+        self.imu_telemetry = ImuTelemetry()
+        # Most recent unconsumed body-turn event, written by serial_worker as
+        # 0x03 packets arrive. Consume-once, not persistent state — see
+        # core/turn_event.py.
+        self.turn_event = TurnEvent()
 
 
 def main():
@@ -76,11 +94,37 @@ def main():
     # Minimal parser for mock mode (full parser comes from pipeline app in real mode)
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--mock", action="store_true", help="Run in full mock mode (no hardware)")
+    # Parsed HERE rather than in the pipeline app's parser because the serial
+    # worker starts before the pipeline is built, and mock mode never builds one
+    # at all — so this is the only place both paths pass through. parse_known_args
+    # leaves everything else in `remaining` for the pipeline parser.
+    pre_parser.add_argument(
+        "--serial-port", default=None, metavar="DEV",
+        help="Serial device for the ESP32, e.g. /dev/ttyUSB0 (USB) or "
+             "/dev/serial0 (GPIO pins). Omit to run with no board attached.",
+    )
+    pre_parser.add_argument(
+        "--serial-baud", type=int, default=None, metavar="RATE",
+        help="Serial baud rate (default 115200; must match the ESP32 firmware)",
+    )
+    pre_parser.add_argument(
+        "--config-port", default=None, metavar="DEV",
+        help="Serial device for the control panel, e.g. /dev/ttyAMA3. A "
+             "DIFFERENT board and UART from --serial-port: the panel speaks "
+             "text at 9600 one-way, the motor board binary at 115200. Omit to "
+             "run with no panel attached.",
+    )
     pre_args, remaining = pre_parser.parse_known_args()
-    
+
     # 1. Shared config
     config = SystemConfig()
-    
+    if pre_args.serial_port:
+        config.update(serial_port=pre_args.serial_port)
+    if pre_args.serial_baud:
+        config.update(serial_baudrate=pre_args.serial_baud)
+    if pre_args.config_port:
+        config.update(config_port=pre_args.config_port)
+
     # 2. Shared user data
     user_data = SecondVisionUserData(config)
     
@@ -106,18 +150,31 @@ def main():
     print("[MAIN] Serial worker started")
     
     # 4. Start pipeline OR mock generators
-    if pre_args.mock or not HAILO_AVAILABLE:
-        print("[MAIN] Running in MOCK mode (no hardware)")
-        _run_mock_mode(user_data, config, workers)
-    else:
-        _run_pipeline_mode(user_data, config, workers, remaining)
-    
-    # 5. Shutdown
-    print("[MAIN] Shutting down...")
-    user_data.shutdown_event.set()
-    for t in workers:
-        t.join(timeout=2.0)
-    print("[MAIN] Done.")
+    #
+    # try/finally rather than straight-line code: GStreamerApp.run() ends in
+    # sys.exit(), so in pipeline mode nothing after _run_pipeline_mode() ever
+    # ran. The workers never saw shutdown_event — no motor-stop packet, no port
+    # close — and "[MAIN] Done." never printed. finally runs on SystemExit and
+    # KeyboardInterrupt alike, then lets them propagate with the exit code intact.
+    try:
+        if pre_args.mock or not HAILO_AVAILABLE:
+            print("[MAIN] Running in MOCK mode (no hardware)")
+            # The panel is real hardware even when nothing else is, and mock mode
+            # exists precisely to develop without a camera or Hailo (D26). app=None
+            # because there is no pipeline to rebuild — the worker already guards
+            # that, so mode changes update config and announce, they just do not
+            # tear anything down.
+            _start_config_reader(user_data, config, None, workers)
+            _run_mock_mode(user_data, config, workers)
+        else:
+            _run_pipeline_mode(user_data, config, workers, remaining)
+    finally:
+        # 5. Shutdown
+        print("[MAIN] Shutting down...")
+        user_data.shutdown_event.set()
+        for t in workers:
+            t.join(timeout=2.0)
+        print("[MAIN] Done.")
 
 
 def _run_mock_mode(user_data, config, workers):
@@ -147,27 +204,69 @@ def _run_mock_mode(user_data, config, workers):
         pass
 
 
+def _start_config_reader(user_data, config, app, workers):
+    """
+    Start the control-panel reader, if --config-port was given.
+
+    Read from config, NOT from app.options_menu: the flag is registered on the
+    pre-parser, which the pipeline app's parser never sees. The old
+    getattr(app.options_menu, "config_port", None) therefore always returned
+    None and this worker never started at all.
+
+    `app` may be None (mock mode) — the worker guards trigger_rebuild().
+    """
+    config_port = config.get("config_port")
+    if not config_port:
+        return
+    t = threading.Thread(
+        target=config_reader_worker,
+        args=(user_data, config, config_port, app),
+        daemon=True, name="config-reader",
+    )
+    t.start()
+    workers.append(t)
+
+
 def _run_pipeline_mode(user_data, config, workers, cli_args):
     """Run the real GStreamer pipeline."""
     from second_vision.pipeline.app import SecondVisionApp
-    
+
+    # SecondVisionApp builds its own parser and reads sys.argv directly, so the
+    # flags main() already consumed (--mock, --serial-port, --serial-baud) would
+    # reach it as unrecognized arguments and abort the run. cli_args is exactly
+    # what parse_known_args left over, so hand the app that and nothing else.
+    sys.argv = [sys.argv[0]] + list(cli_args)
+
     app = SecondVisionApp(
         app_callback=None,
         user_data=user_data,
         config=config,
     )
-    
-    # Config reader (if --config-port provided)
-    config_port = getattr(app.options_menu, "config_port", None)
-    if config_port:
-        config_thread = threading.Thread(
-            target=config_reader_worker,
-            args=(user_data, config, config_port, app),
-            daemon=True, name="config-reader"
+
+    # The framework routes Ctrl+C to app.shutdown(); give SIGTERM the same
+    # path. It is what `kill` sends, and what a terminal session gets when the
+    # Pi shuts down. Unhandled, it kills Python outright: no teardown, no
+    # motor-stop packet.
+    signal.signal(signal.SIGTERM, app.shutdown)
+
+    _start_config_reader(user_data, config, app, workers)
+
+    # DEBUG ONLY (--cycle-modes): stand in for the not-yet-built Arduino mode
+    # switch by cycling pipeline_mode on a timer. Without the flag this block is
+    # skipped entirely and the pipeline stays in "both".
+    cycle_seconds = getattr(app.options_menu, "cycle_modes", 0.0)
+    if cycle_seconds:
+        from second_vision.mock.mode_cycler import mode_cycler_worker
+
+        cycler_thread = threading.Thread(
+            target=mode_cycler_worker,
+            args=(user_data, config, app, cycle_seconds),
+            daemon=True, name="mode-cycler"
         )
-        config_thread.start()
-        workers.append(config_thread)
-    
+        cycler_thread.start()
+        workers.append(cycler_thread)
+        app.start_mode_monitor()
+
     print("[MAIN] Starting pipeline...")
     try:
         app.run()

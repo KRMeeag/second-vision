@@ -8,7 +8,7 @@ procedure:
 
   CAPTURE (runs inside the live pipeline, headless — no video window, so it works
   even while the VNC preview is frozen):
-      1) SV_CALIBRATE=1 python -m ...sv_dual_callback_withdepth
+      1) SV_CALIBRATE=1 ./scripts/sv-main.sh      (or ./scripts/run.sh --input usb)
       2) place an object at a known distance, then in a SECOND ssh terminal:
              echo "0.5m" > calib_label.txt      # tag the current samples
          move it and retag. Capture ALL of these to resolve every threshold:
@@ -20,7 +20,7 @@ procedure:
          Rows stream to depth_calibration.csv, throttled to the terminal.
 
   ANALYSE (offline, no hardware):
-      python -m ...calibration --analyze depth_calibration.csv
+      python3 -m second_vision.core.calibration --analyze depth_calibration.csv
   Groups rows by label and prints per-distance stats plus suggested threshold
   values you can drop into depth_utils.py.
 
@@ -36,7 +36,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from hailo_apps.python.pipeline_apps.custom_depth_detection.depth_utils import (
+from second_vision.core.depth_utils import (
     ground_break_stats,
     local_flatness,
     zone_warning_breakdown,

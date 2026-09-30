@@ -11,6 +11,19 @@ class SystemConfig:
         # Motors
         self.motor_strength = 1.0       # 0.0 - 1.0
         self.vibration_enabled = True
+        # Serial link to the ESP32. serial_port is None until --serial-port is
+        # passed, and None means "run without a board": the worker shapes and
+        # packs everything exactly as it would for real hardware and simply does
+        # not write. That has to stay a supported mode, not an error — the
+        # depth/haptics work is developed on machines with no ESP32 attached,
+        # and a missing board must never take the pipeline down with it.
+        self.serial_port = None         # e.g. "/dev/ttyUSB0" or "/dev/serial0"
+        self.serial_baudrate = 115200   # must match the ESP32 firmware
+        # Control panel — a SEPARATE board on a SEPARATE UART from the motor
+        # link above. Text protocol at 9600, one-way, panel -> Pi. Pointing
+        # --config-port at the motor board (or --serial-port at the panel) gives
+        # a silent panel or dead motors, so the two are kept distinct here.
+        self.config_port = None         # e.g. "/dev/ttyAMA3"
         # TTS
         self.tts_enabled = True
         self.cooldown_seconds = 3.0
