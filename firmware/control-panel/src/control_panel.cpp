@@ -16,8 +16,17 @@
  *   DETECT rocker  ->  YOLOv8 object detection  +  speech   (tts_enabled)
  *   DEPTH  rocker  ->  SC-DepthV3 depth         +  motors   (vibration_enabled)
  *
- * Wiring: docs/breadboard_wiring.svg (controls) and docs/pi_link_wiring.svg
- * (link to the Pi, powered from the X1202 UPS).
+ * and ONE KNOB per output channel, for how STRONG that channel is — never
+ * whether it is on, which stays the rocker's job:
+ *
+ *   VOLUME   knob  ->  speech volume            (tts_volume,     GPIO33)
+ *   STRENGTH knob  ->  motor tap intensity      (motor_strength, GPIO34)
+ *
+ * There is no STATUS button any more: the volume knob took its place on the
+ * panel (2026-10), and GPIO22 is free.
+ *
+ * Wiring: docs/pot_wiring.svg (controls, as built on the protoboard) and
+ * docs/pi_link_wiring.svg (link to the Pi, powered from the X1202 UPS).
  */
 #include <Arduino.h>
 #include <stdarg.h>
@@ -95,10 +104,12 @@ struct Input {
 //                  pin  activeLow
 Input detect  = { 17,  true,  HIGH, HIGH, 0 };   // rocker — LATCHING — detection + TTS
 Input depth   = { 18,  true,  HIGH, HIGH, 0 };   // rocker — LATCHING — depth + motors
-Input statBtn = { 22,  true,  HIGH, HIGH, 0 };   // tactile button
 
 /*
- * HAVE_POT=0 omits the potentiometer entirely — no reads, no S:motor_strength.
+ * One flag per potentiometer, because an UNWIRED pot pin must not be read:
+ *
+ *   HAVE_POT=0         omits the STRENGTH pot — no reads, no S:motor_strength
+ *   HAVE_VOLUME_POT=0  omits the VOLUME pot   — no reads, no S:tts_volume
  *
  * This is not a convenience flag. GPIO34 is input-only with NO internal pull-up
  * (correct for a pot, and on ADC1 so it survives WiFi being switched on; ADC2
@@ -111,25 +122,72 @@ Input statBtn = { 22,  true,  HIGH, HIGH, 0 };   // tactile button
  * rocker events still got through, but on the Pi that noise competes with the
  * pipeline for the link.
  *
- * A grounding jumper on GPIO34 fixes it too, but a jumper is a thing to
- * remember and a build flag is not.
+ * GPIO33 floats the same way, even though it HAS internal pulls: analogRead()
+ * re-runs pinMode(pin, ANALOG) on every call, and that switches both pulls off
+ * (cores/esp32/esp32-hal-adc.c, Arduino-ESP32 2.0.17). So no software trick
+ * keeps an unwired GPIO33 quiet — hence a second flag, not an auto-detect.
+ *
+ * A grounding jumper fixes it too, but a jumper is a thing to remember and a
+ * build flag is not. Worse here: a jumper left on a pin after its pot is
+ * fitted ties that wiper to a rail, and the knob's far end then shorts 3V3 to
+ * GND through the pot.
  */
 #ifndef HAVE_POT
 #  define HAVE_POT 1
 #endif
-
-#if HAVE_POT
-// Input-only pin, no internal pull-up — correct for a pot, and it is on ADC1,
-// which keeps working if WiFi is ever switched on. ADC2 would not.
-const uint8_t PIN_KNOB = 34;                     // B10K wiper
+#ifndef HAVE_VOLUME_POT
+#  define HAVE_VOLUME_POT 1
 #endif
 
+// Both pots are B10K LINEAR, outer legs on 3V3 and GND, wiper on an ADC1 pin.
+// ADC1 because it keeps working if WiFi is ever switched on; ADC2 would not.
 #if HAVE_POT
-// Hysteresis-filtered knob reading, shared by the pot handler and the state
+// Input-only pin, no internal pull-up — correct for a pot.
+const uint8_t PIN_KNOB = 34;                     // STRENGTH wiper
+#endif
+#if HAVE_VOLUME_POT
+/*
+ * GPIO33, and the pin choice is a safety property, like the rockers'. It is
+ * ADC1; it is not a boot-strapping pin, so the knob's position can never change
+ * how the chip boots (on GPIO12, a knob left near full would stop the board
+ * booting); and both its neighbours, GPIO32 and GPIO25, are unused. GPIO35 is the
+ * nearer ADC1 pin but sits right beside the strength wiper: a solder bridge
+ * between two wipers, with the knobs at opposite ends, shorts 3V3 to GND
+ * through the pots. GPIO39 has the same problem; GPIO36 sits beside EN.
+ *
+ * GPIO33 can also be an OUTPUT. Never configure it as one: driven against a
+ * wiper resting at an end stop, it would fight a rail through ~0 ohms.
+ */
+const uint8_t PIN_VOLUME = 33;                   // VOLUME wiper
+#endif
+
+#if HAVE_POT || HAVE_VOLUME_POT
+// The deadband, in raw ADC counts of 4095 (~2% of travel). Sized for a wired
+// pot's dither; see HAVE_POT above for what happens without one.
+const int KNOB_DEADBAND = 80;
+
+// True when the knob on `pin` has moved past the deadband since it was last
+// reported, and `reported` now holds the new reading. Hysteresis matters: the
+// ADC's last bits dither by a few counts even on a motionless knob, and at
+// 9600 baud an unfiltered read would fill the link with meaningless updates
+// and starve the switch events behind them.
+bool knobMoved(uint8_t pin, int &reported) {
+  int raw = analogRead(pin);                     // 0..4095
+  if (abs(raw - reported) <= KNOB_DEADBAND) return false;
+  reported = raw;
+  return true;
+}
+#endif
+
+// Hysteresis-filtered knob readings, shared by the pot handlers and the state
 // burst. The burst must resend the SETTLED value, not a fresh analogRead():
 // the ADC's last bits dither, and a raw read would flip the %.2f output between
 // neighbouring values and look like a change on every heartbeat.
+#if HAVE_POT
 int lastRaw = -1000;
+#endif
+#if HAVE_VOLUME_POT
+int lastVolumeRaw = -1000;
 #endif
 
 bool isOn(const Input &in) {
@@ -204,6 +262,9 @@ void emitFullState() {
 #if HAVE_POT
   emit("S:motor_strength:%.2f\n",  lastRaw / 4095.0f);
 #endif
+#if HAVE_VOLUME_POT
+  emit("S:tts_volume:%.2f\n",      lastVolumeRaw / 4095.0f);
+#endif
   emitMode();
 }
 
@@ -225,7 +286,6 @@ void setup() {
 
   pinMode(detect.pin,  INPUT_PULLUP);
   pinMode(depth.pin,   INPUT_PULLUP);
-  pinMode(statBtn.pin, INPUT_PULLUP);
 
   // Just long enough for both UARTs to settle. We do NOT wait for the Pi here:
   // it shares our power supply and is ~30 s behind us, so no delay we could
@@ -240,6 +300,9 @@ void setup() {
   depth.stable  = depth.lastRead  = digitalRead(depth.pin);
 #if HAVE_POT
   lastRaw = analogRead(PIN_KNOB);
+#endif
+#if HAVE_VOLUME_POT
+  lastVolumeRaw = analogRead(PIN_VOLUME);
 #endif
 
 #if !NO_BROWNOUT
@@ -261,24 +324,21 @@ void loop() {
   if (detMoved || depMoved)
     emitRockers();
 
-  if (settled(statBtn) && isOn(statBtn))
-    emit("B:status\n");            // Pi speaks the full config aloud
-
-  // Potentiometer -> motor_strength. Hysteresis matters: the ADC's last bits
-  // dither by a few counts even on a motionless knob, and at 9600 baud an
-  // unfiltered read would fill the link with meaningless updates and starve the
-  // switch events behind them. Standalone — the mode has not changed, so no M:.
+  // Knobs -> motor_strength / tts_volume, through the deadband in knobMoved().
+  // Standalone lines — the mode has not changed, so no M:.
 #if HAVE_POT
-  int raw = analogRead(PIN_KNOB);                // 0..4095
-  if (abs(raw - lastRaw) > 80) {
-    lastRaw = raw;
-    emit("S:motor_strength:%.2f\n", raw / 4095.0f);
-  }
+  if (knobMoved(PIN_KNOB, lastRaw))
+    emit("S:motor_strength:%.2f\n", lastRaw / 4095.0f);
+#endif
+#if HAVE_VOLUME_POT
+  if (knobMoved(PIN_VOLUME, lastVolumeRaw))
+    emit("S:tts_volume:%.2f\n", lastVolumeRaw / 4095.0f);
 #endif
 
   // Liveness, then state. B:alive is what a receiver's watchdog looks for; the
-  // burst after it is what lets a Pi that started late catch up. Cheap: five
-  // short lines per 10 s is ~7 B/s against 960 B/s of 9600-baud budget.
+  // burst after it is what lets a Pi that started late catch up. Cheap: six
+  // short lines (93 bytes) per 10 s is ~9 B/s against 960 B/s of 9600-baud
+  // budget.
   static uint32_t lastBeat = 0;
   if (millis() - lastBeat >= HEARTBEAT_MS) {
     lastBeat = millis();

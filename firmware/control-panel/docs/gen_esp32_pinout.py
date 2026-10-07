@@ -18,26 +18,38 @@ LEFT, RIGHT = _ns["PINOUT"][38]
 assert len(LEFT) == len(RIGHT) == 19, "38-pin board = 19 per side"
 
 # role -> (colour, label). Anything unlisted is a free GPIO.
-POWER, GND, DANGER = "#dc2626", "#111827", "#7f1d1d"
-DETECT, DEPTH, STATUS, POT, LINK = "#16a34a", "#0d9488", "#ca8a04", "#7c3aed", "#2563eb"
+POWER, GND, DANGER, CARE = "#dc2626", "#111827", "#7f1d1d", "#ea580c"
+DETECT, DEPTH, VOLUME, POT, LINK = "#16a34a", "#0d9488", "#db2777", "#7c3aed", "#2563eb"
 
 ROLE = {
     "5V":     (POWER,  "POWER IN  ← X1202 5 V"),
-    "3V3":    (POWER,  "3.3 V OUT → pot only"),
+    "3V3":    (POWER,  "3.3 V OUT → both knobs only"),
     "GPIO23": (LINK,   "→ Pi pin 21  (UART2 TX)"),
     "GPIO17": (DETECT, "DETECT rocker → GND"),
     "GPIO18": (DEPTH,  "DEPTH rocker → GND"),
-    "GPIO22": (STATUS, "STATUS button → GND"),
-    "GPIO34": (POT,    "pot wiper (input only)"),
+    "GPIO34": (POT,    "STRENGTH knob wiper (input only)"),
+    "GPIO33": (VOLUME, "VOLUME knob wiper"),
 }
 AVOID = {
+    "EN":     "chip RESET — not a GPIO",
     "GPIO0":  "bootstrap — held low = flash mode",
+    "GPIO12": "bootstrap — HIGH at reset = no boot",
     "GPIO1":  "UART0 TX — the USB serial",
     "GPIO3":  "UART0 RX — the USB serial",
     "GPIO6":  "SPI flash", "GPIO7": "SPI flash", "GPIO8": "SPI flash",
     "GPIO9":  "SPI flash", "GPIO10": "SPI flash", "GPIO11": "SPI flash",
 }
+# Boot-strapping pins and pins active during boot: usable, but whatever they are
+# wired to must not hold them at the wrong level when the chip resets.
+CAREFUL = {
+    "GPIO2":  "bootstrap — keep low/free at reset",
+    "GPIO5":  "bootstrap · busy at boot",
+    "GPIO14": "busy at boot · JTAG",
+    "GPIO15": "bootstrap · busy at boot",
+}
 INPUT_ONLY = {"GPIO34", "GPIO35", "GPIO36", "GPIO39"}
+ADC1 = {"GPIO32", "GPIO33", "GPIO34", "GPIO35", "GPIO36", "GPIO39"}
+ADC2 = {"GPIO4", "GPIO13", "GPIO25", "GPIO26", "GPIO27"}   # free ones only
 
 W, H = 1300, 1000
 s = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
@@ -52,7 +64,7 @@ def txt(x, y, t, size=10, fill="#111827", anchor="start", weight="normal"):
 txt(24, 38, "ESP32-WROOM-32 — 38-pin DevKit — Second Vision control panel",
     20, weight="bold")
 txt(24, 60, "Board oriented with the USB-C connector at the BOTTOM, as it sits "
-            "on the breadboard.", 11, "#6b7280")
+            "on the protoboard.", 11, "#6b7280")
 
 BX, BY, BW = 400, 108, 250          # board body
 PITCH = 40
@@ -74,14 +86,17 @@ def draw(names, side):
             col, note = role
         elif name in AVOID:
             col, note = DANGER, AVOID[name]
+        elif name in CAREFUL:
+            col, note = CARE, CAREFUL[name]
         else:
-            col, note = "#9ca3af", "free" + (" · input only" if name in INPUT_ONLY else "")
+            adc = " · ADC1" if name in ADC1 else " · ADC2" if name in ADC2 else " · no ADC"
+            col, note = "#9ca3af", "free" + adc + (" · input only" if name in INPUT_ONLY else "")
 
         px = BX - 10 if side == "L" else BX + BW + 10
         add(f'<circle cx="{px}" cy="{y}" r="6" fill="{col}"/>')
         lx = px - 14 if side == "L" else px + 14
         anchor = "end" if side == "L" else "start"
-        strong = bool(role) or name in AVOID or name == "GND"
+        strong = bool(role) or name in AVOID or name in CAREFUL or name == "GND"
         txt(lx, y - 1, name, 11, col if strong else "#6b7280", anchor,
             "bold" if strong else "normal")
         txt(lx, y + 12, note, 8, col if strong else "#9ca3af", anchor)
@@ -97,44 +112,52 @@ def box(x, y, w, h, fill, stroke, title, lines, tc):
         txt(x+13, y+41+i*15, l, 8.6, tc)
 
 LY = BY
-box(880, LY, 396, 200, "#f9fafb", "#e5e7eb", "WHAT IS WIRED", [
-    "5V      ← X1202 5 V, via the protoboard 5V rail",
-    "GND     ← X1202 GND, via the GND rail",
-    "3V3     → the potentiometer ONLY. This is an OUTPUT:",
+box(880, LY, 396, 215, "#f9fafb", "#e5e7eb", "WHAT IS WIRED", [
+    "5V      ← X1202 5 V, via the protoboard",
+    "GND     → the protoboard GND strip (one pin feeds it)",
+    "3V3     → both knobs' top legs ONLY. This is an OUTPUT:",
     "          the ESP32's own regulator. Never feed 5 V in.",
     "GPIO17  DETECT rocker → GND   (INPUT_PULLUP, active low)",
     "GPIO18  DEPTH rocker  → GND   (INPUT_PULLUP, active low)",
-    "GPIO22  STATUS button → GND   (momentary)",
-    "GPIO34  pot wiper. Input only, no internal pull-up,",
-    "          on ADC1 so it survives WiFi being enabled.",
+    "GPIO34  STRENGTH knob wiper → motor_strength",
+    "GPIO33  VOLUME knob wiper   → tts_volume",
     "GPIO23  → Pi header pin 21. UART2 TX, panel → Pi.",
+    "GPIO22  free — the STATUS button was removed (2026-10).",
 ], "#111827")
 
-box(880, LY+216, 396, 132, "#fee2e2", "#fca5a5", "NEVER WIRE THESE", [
+box(880, LY+231, 396, 162, "#fee2e2", "#fca5a5", "NEVER WIRE THESE", [
     "GPIO6-11   SPI flash. Touching these bricks the boot.",
     "GPIO0      bootstrap: held low at reset = flash mode.",
+    "GPIO12     bootstrap: HIGH at reset = 1.8 V flash, no boot.",
+    "EN         chip reset, NOT a GPIO. Low = held in reset.",
     "GPIO1/3    UART0 — the USB serial. The ROM bootloader",
     "           dumps its 115200 log here on every reset,",
     "           which is why the Pi link is GPIO23 instead.",
 ], "#991b1b")
 
-box(880, LY+364, 396, 148, "#fef3c7", "#fbbf24", "PIN-CHOICE SAFETY", [
+box(880, LY+409, 396, 192, "#fef3c7", "#fbbf24", "PIN-CHOICE SAFETY", [
     "GPIO17 and GPIO18 have plain GPIOs either side, so a",
     "jumper one hole off reads wrong instead of shorting.",
     "",
     "GPIO23 takes the single soldered link wire and no switch:",
     "it sits one row from the GND pin, on a row carrying 3V3",
-    "on the opposite side. A switch leg can bridge two rows;",
-    "one wire cannot.",
+    "on the opposite side. A switch leg can bridge two rows.",
+    "",
+    "GPIO33 for the volume knob: ADC1, not a boot pin, and its",
+    "neighbours are unused — GPIO35 sits beside the strength",
+    "wiper, and two bridged wipers can short 3V3 to GND.",
 ], "#78350f")
 
-box(880, LY+528, 396, 132, "#dbeafe", "#93c5fd", "INPUT-ONLY PINS", [
-    "GPIO34 / 35 / 36 / 39 are INPUT ONLY and have no",
-    "internal pull-up or pull-down.",
-    "",
-    "Correct for the pot, which drives the pin itself. Wrong",
-    "for a switch, which needs a pull-up to define its",
-    "released state — a switch here would float.",
+box(880, LY+617, 396, 192, "#dbeafe", "#93c5fd", "WHERE A KNOB CAN GO / WHERE A SWITCH CAN", [
+    "A knob needs an ADC pin. ADC1 (GPIO32-39) is preferred: ADC2",
+    "stops working whenever WiFi is on. No CLEAN ADC1 pin is left",
+    "for a third knob — GPIO32, 35 and 39 each sit beside a wiper,",
+    "36 beside EN. Use GPIO26 (ADC2, both neighbours unused) while",
+    "WiFi stays off.",
+    "GPIO34 / 35 / 36 / 39 are INPUT ONLY, with no pull-up or",
+    "pull-down: right for a knob, wrong for a switch. Switches",
+    "with only harmless neighbours: GPIO16, 19, 21 (and 26 if no",
+    "third knob takes it). GPIO22 sits between two TX outputs.",
 ], "#1e3a8a")
 
 add('</svg>')

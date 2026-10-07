@@ -51,7 +51,12 @@ First line after reset. `1` is this protocol version.
 |---|---|
 | `S:tts_enabled:<v>` | `0` \| `1` |
 | `S:vibration_enabled:<v>` | `0` \| `1` |
-| `S:motor_strength:<v>` | `0.00`–`1.00`, **always 2 decimals** |
+| `S:motor_strength:<v>` | `0.00`–`1.00`, **always 2 decimals** — STRENGTH knob, GPIO34 |
+| `S:tts_volume:<v>` | `0.00`–`1.00`, **always 2 decimals** — VOLUME knob, GPIO33 |
+
+The two knobs set how STRONG an output channel is, never whether it is on —
+that stays with the rockers (`tts_enabled`, `vibration_enabled`). The Pi maps
+`0.00` to the weakest output that is still felt / heard, not to silence.
 
 ### `M:<mode>` — pipeline mode
 
@@ -73,8 +78,13 @@ to the user is wasted Hailo time and battery.
 
 | Line | Meaning |
 |---|---|
-| `B:status` | STATUS pressed — the Pi speaks the full config aloud |
 | `B:alive` | heartbeat, every 10 s |
+| `B:status` | **no longer sent** — see below |
+
+The STATUS button was removed in October 2026: the volume knob took its place
+on the panel, and GPIO22 is free. Firmware from before that still sends
+`B:status` when the button is pressed, so receivers must keep tolerating it.
+The Pi never acted on it beyond logging `[CONFIG] Button: status`.
 
 ---
 
@@ -90,6 +100,7 @@ partial burst.
     S:tts_enabled:<v>
     S:vibration_enabled:<v>
     S:motor_strength:<v>
+    S:tts_volume:<v>
     M:<mode>
 
 **Either rocker moves** — both flags are sent, so the burst is self-contained:
@@ -98,13 +109,10 @@ partial burst.
     S:vibration_enabled:<v>
     M:<mode>
 
-**Pot moves** (deadbanded, >80 counts of 4095) — standalone, no `M:`:
+**A knob moves** (deadbanded, >80 counts of 4095) — standalone, no `M:`:
 
-    S:motor_strength:<v>
-
-**STATUS pressed** (debounced 50 ms):
-
-    B:status
+    S:motor_strength:<v>        STRENGTH knob
+    S:tts_volume:<v>            VOLUME knob
 
 **Every 10 s** — liveness, then a full state burst:
 
@@ -112,6 +120,7 @@ partial burst.
     S:tts_enabled:<v>
     S:vibration_enabled:<v>
     S:motor_strength:<v>
+    S:tts_volume:<v>
     M:<mode>
 
 ### Why the heartbeat carries state
@@ -148,7 +157,7 @@ the panel stays powered, which is the common case in development.
   consequences of rocker position, not button presses, and move at boot and on
   every flip. Any logic assuming they only change on explicit user action is
   wrong.
-- **The panel is authoritative** for these four values. It reports physical
+- **The panel is authoritative** for these five values. It reports physical
   reality; the Pi must not hold a contradicting internal state.
 
 ---
@@ -157,20 +166,24 @@ the panel stays powered, which is the common case in development.
 
 | Env | Use | Difference |
 |---|---|---|
-| `panel` | deployment | everything present |
-| `bench` | laptop, bare board, no breadboard | `-D HAVE_POT=0` |
+| `panel` | deployment | everything present, BOTH pots |
+| `panel_no_volume` | volume pot not soldered yet | `-D HAVE_VOLUME_POT=0` |
+| `bench` | laptop, bare board, no pots | `-D HAVE_POT=0 -D HAVE_VOLUME_POT=0` |
 | `polarity` | bring-up | separate sketch: raw pin states |
 
-**`HAVE_POT=0` omits `S:motor_strength` entirely** — from the boot burst, the
-heartbeat burst, and the pot handler. Receivers must therefore not *require*
-that key; the Pi simply keeps its existing `motor_strength`. Ordering is
+**`HAVE_POT=0` omits `S:motor_strength` entirely, and `HAVE_VOLUME_POT=0`
+omits `S:tts_volume`** — from the boot burst, the heartbeat burst, and the
+knob handler. Receivers must therefore not *require* either key; the Pi simply
+keeps its existing `motor_strength` / `tts_volume` (1.0 unless told otherwise). Ordering is
 unchanged and `M:` is still the commit marker, so this is a build option, not a
 protocol variant, and the version stays 1.
 
 Why it exists: GPIO34 is input-only with no internal pull-up, so an unfitted pot
 floats and the 80-count deadband — sized for a wired pot's dither — is exceeded
 constantly. Measured on a bare board: **~1,625 spurious `S:motor_strength` lines
-in 30 s** (~54/s), enough to saturate a 9600 link on both transports.
+in 30 s** (~54/s), enough to saturate a 9600 link on both transports. GPIO33
+floats the same way even though it has internal pulls: `analogRead()` switches
+them off on every call (Arduino-ESP32 2.0.17), so the flag is the only fix.
 
 ## Testing without a Raspberry Pi
 
@@ -197,6 +210,11 @@ Adding a new `S:` key does **not** require a bump — receivers already ignore
 unknown keys (rule 2). Neither does adding an emission trigger, provided the
 line format and ordering are unchanged; that is why the 10 s re-announce is
 still v1.
+
+The October 2026 volume knob is still v1 for the same reasons: `S:tts_volume` is
+a new `S:` key, and dropping the STATUS button removes one emission trigger of
+an existing message type (`B:`), whose receivers already tolerate its absence.
+No message type, value range, format or ordering changed.
 
 ---
 

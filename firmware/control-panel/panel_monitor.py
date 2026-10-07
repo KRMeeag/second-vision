@@ -41,7 +41,7 @@ ALIVE_TIMEOUT = 30.0          # §2.6.5: no B:alive for >30 s is a fault
 MAX_LINE = 64
 
 BOOL_KEYS = {"tts_enabled", "vibration_enabled"}
-FLOAT_KEYS = {"motor_strength"}
+FLOAT_KEYS = {"motor_strength", "tts_volume"}   # the strength and volume knobs
 VALID_MODES = {"detection", "depth", "both", "none"}
 
 # Never let an encoding fault kill the monitor mid-session: a Windows console
@@ -180,7 +180,10 @@ class Monitor:
             g = "" if gap is None else f"  {DIM}(+{gap:.1f}s){RESET}"
             print(f"  {DIM}heartbeat{RESET}{g}")
         elif body == "status":
-            print(f"  {BOLD}STATUS pressed{RESET} — Pi would speak the full config")
+            # The STATUS button was removed in 2026-10 (the volume knob took its
+            # place), so current firmware never sends this. Older firmware still
+            # does, and it is a defined event, so it is shown, not flagged.
+            print(f"  {BOLD}STATUS pressed{RESET} — older firmware; the button is gone")
         else:
             print(f"  {YELLOW}? unknown event B:{body}{RESET}")
 
@@ -259,7 +262,7 @@ def main():
         sys.exit(f"could not open {args.port}: {exc}")
 
     print(f"{BOLD}listening on {args.port} @ {args.baud}{RESET} — flip a rocker, "
-          f"turn the knob, press STATUS.  Ctrl-C to stop.\n")
+          f"turn the knobs.  Ctrl-C to stop.\n")
     mon = Monitor(raw=args.raw)
     lost = False
     try:

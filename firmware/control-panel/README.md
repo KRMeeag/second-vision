@@ -6,7 +6,7 @@ Firmware for the physical settings panel. Emits the line protocol parsed by
     V:panel:<n>        protocol version, boot only
     S:<key>:<value>    setting   e.g. S:motor_strength:0.60
     M:<mode>           pipeline mode: detection | depth | both | none
-    B:<name>           event: status | alive
+    B:<name>           event: alive   (status: older firmware only — button removed)
 
 `PROTOCOL.md` is the authoritative contract. Where this README and that file
 disagree, PROTOCOL.md wins.
@@ -15,19 +15,29 @@ Wiring diagrams:
 
 | File | Covers | Regenerate with |
 |------|--------|-----------------|
-| `docs/breadboard_wiring.svg` | controls → ESP32, on the breadboard | `python3 docs/gen_wiring.py` |
+| `docs/pot_wiring.svg`        | **the panel as built**: both knobs, both rockers, power and grounds on the protoboard | `python3 docs/gen_pot_wiring.py` |
+| `docs/esp32_pinout.svg`      | every ESP32 pin: what it does, what is free, what must never be wired | `python3 docs/gen_esp32_pinout.py` |
 | `docs/pi_link_wiring.svg`    | ESP32 → Raspberry Pi 5, over UART   | `python3 docs/gen_pi_link.py` |
-| `docs/pot_wiring.svg`        | the pot, and how one GND pin serves every ground via the rails | `python3 docs/gen_pot_wiring.py` |
+| `docs/breadboard_wiring.svg` | the OLD breadboard layout — superseded by the protoboard, and still shows the removed STATUS button | `python3 docs/gen_wiring.py` |
 
-Edit the board constants at the top of `gen_wiring.py` before re-running it.
+Edit the board constants at the top of `gen_wiring.py` before re-running it —
+every other generator reads its `PINOUT` table. The `.png` files are rendered
+from the `.svg` with headless Chromium:
+
+    chromium --headless --hide-scrollbars --window-size=W,H \
+        --screenshot=docs/NAME.png "file://$PWD/docs/NAME.svg"
 
 ## Environments
 
 | Env        | File                   | Use |
 |------------|------------------------|-----|
 | `polarity` | `src/polarity_test.cpp`| Bring-up. Raw pin states + ADC + implied mode. |
-| `panel`    | `src/control_panel.cpp`| The real firmware. Default env. |
-| `bench`    | `src/control_panel.cpp`| Same firmware, `-D HAVE_POT=0`. For a bare board with no breadboard — an unfitted pot floats GPIO34 and floods the link. |
+| `panel`    | `src/control_panel.cpp`| The real firmware, **both knobs**. Default env. |
+| `panel_no_volume` | `src/control_panel.cpp`| Same, `-D HAVE_VOLUME_POT=0`: strength knob only, for while the volume pot is not soldered yet. |
+| `bench`    | `src/control_panel.cpp`| Same firmware, `-D HAVE_POT=0 -D HAVE_VOLUME_POT=0`. For a bare board with no pots — an unfitted pot floats its pin and floods the link. |
+
+**Flash the env that matches what is soldered.** A knob the firmware reads but
+that is not wired floats and sends ~54 junk lines a second.
 
 ### The motor board lives elsewhere
 
@@ -43,7 +53,8 @@ protocol is exercised by `scripts/test_motor_packet.py` and
 
     pio run -e polarity -t upload -t monitor
     pio run -e panel    -t upload -t monitor
-    pio run -e bench    -t upload -t monitor    # laptop, no breadboard
+    pio run -e panel_no_volume -t upload -t monitor   # volume pot not fitted yet
+    pio run -e bench    -t upload -t monitor    # laptop, no pots
 
 Upload is 115200: this DevKit fails at both 921600 and 460800 once esptool
 switches to the high rate for the stub. Hold IO0 for the ENTIRE upload — the
@@ -81,12 +92,29 @@ rather than paying a camera cold-start on top of the rebuild blackout.
 |----------------|---------|-------|
 | DETECT rocker  | GPIO17  | latching, INPUT_PULLUP, active LOW |
 | DEPTH rocker   | GPIO18  | latching, INPUT_PULLUP, active LOW |
-| Status button  | GPIO22  | momentary, active LOW |
-| B10K pot       | GPIO34  | ADC1, input-only, no pull-up |
+| STRENGTH knob  | GPIO34  | B10K linear, ADC1, input-only, no pull-up → `motor_strength` |
+| VOLUME knob    | GPIO33  | B10K linear, ADC1 → `tts_volume` |
 
-GPIO19 and GPIO21 are free — the mode button and KY-004 are gone. Both wrote
-settings the rockers now own, and two controls writing one setting is how a
-panel ends up lying about its state.
+Both knobs: outer legs to the ESP32's **3V3** pin and to GND, middle leg (wiper)
+to the GPIO — never the other way round. Their 3V3 legs can be linked and share
+one wire to the 3V3 pin; same for GND. Each knob sets how STRONG its channel is,
+never whether it is on: that stays with the rocker.
+
+| Rocker + knob | Channel | On/off | Strength |
+|---|---|---|---|
+| DETECT + VOLUME | speech | `tts_enabled` | `tts_volume` |
+| DEPTH + STRENGTH | motors | `vibration_enabled` | `motor_strength` |
+
+GPIO19, GPIO21 and GPIO22 are free — the mode button and KY-004 are gone (both
+wrote settings the rockers now own, and two controls writing one setting is how
+a panel ends up lying about its state), and the STATUS button gave its place on
+the panel to the volume knob in October 2026. None of the three can take a knob:
+they have no ADC.
+
+**GPIO33 is chosen so a solder bridge cannot short the supply.** It is ADC1 and
+not a boot-strapping pin, and both neighbours (GPIO32, GPIO25) are unused. GPIO35
+is the nearer ADC1 pin but sits beside the strength wiper, and two bridged wipers
+with the knobs at opposite ends short 3V3 to GND through the pots.
 
 **GPIO23 carries the Pi link wire** (UART2 TX) and is not free.
 
@@ -139,8 +167,8 @@ straight in `config_reader.py`. GPIO23 is UART2: the Pi never sees that garbage,
 and USB stays usable for flashing and monitoring at the same time.
 
 Power comes from the Geekworm X1202 UPS, not the Pi's header. The ESP32's own
-`3V3` pin still feeds the breadboard `+` rail — the X1202's 5 V goes to the 5V
-pin and nowhere else, so the pot keeps a safe 3.3 V reference. Because the X1202
+`3V3` pin still feeds both knobs — the X1202's 5 V goes to the 5V pin and
+nowhere else, so the knobs keep a safe 3.3 V reference. Because the X1202
 feeds the Pi, its GND and the Pi's GND are one node — grounding the ESP32 there
 already references it to the Pi, so only the signal wire touches the 40-pin
 header. Unplug the 5 V feed before flashing over USB.
