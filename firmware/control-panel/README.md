@@ -17,6 +17,7 @@ Wiring diagrams:
 |------|--------|-----------------|
 | `docs/breadboard_wiring.svg` | controls → ESP32, on the breadboard | `python3 docs/gen_wiring.py` |
 | `docs/pi_link_wiring.svg`    | ESP32 → Raspberry Pi 5, over UART   | `python3 docs/gen_pi_link.py` |
+| `docs/pot_wiring.svg`        | the pot, and how one GND pin serves every ground via the rails | `python3 docs/gen_pot_wiring.py` |
 
 Edit the board constants at the top of `gen_wiring.py` before re-running it.
 
