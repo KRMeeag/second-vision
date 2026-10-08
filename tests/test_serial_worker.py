@@ -18,6 +18,7 @@ pipeline has to keep working on development machines with no hardware attached.
 """
 
 import os
+import queue
 import select
 import struct
 import threading
@@ -32,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import second_vision.workers.serial_worker as sw
 from second_vision.core.config import SystemConfig
+from second_vision.core.haptics import PULSE_PWM, PWM_FLOOR
 from second_vision.core.imu_telemetry import ImuTelemetry
 
 
@@ -709,3 +711,154 @@ def test_imu_telemetry_concurrent_access_does_not_corrupt_or_raise():
     snap = telemetry.snapshot()
     assert snap["state"] == "normal"
     assert snap["raw_pitch"] in (1, 2)  # whichever writer finished last
+
+
+# --- motor strength: the control panel's knob --------------------------------
+#
+# config.motor_strength is the panel potentiometer (S:motor_strength:0.00-1.00,
+# firmware/control-panel/PROTOCOL.md), applied by _apply_strength() on the way
+# out. These pin what the wearer depends on: full strength changes nothing,
+# silence stays silence, a felt tap is never turned down under the motors'
+# start threshold, and no value off a serial line can stop this thread.
+
+KNOB_POSITIONS = [i / 100 for i in range(101)]  # every value the panel can send
+
+
+def test_full_strength_changes_nothing():
+    """
+    1.0 is the SystemConfig default, so it is every run without a panel: the
+    wire must carry exactly what core/haptics.py decided, as before the knob.
+    """
+    for duty in (0, 1, PWM_FLOOR - 1, PWM_FLOOR, PWM_FLOOR + 1, 145, 200, 254, 255):
+        assert sw._apply_strength(duty, 1.0) == duty
+
+
+def test_silence_stays_silence_at_every_knob_position():
+    for s in KNOB_POSITIONS:
+        assert sw._apply_strength(0, s) == 0
+
+
+def test_a_tap_is_never_turned_down_below_the_floor():
+    """
+    Regression test. A plain duty * strength took the rate-coded tap (always
+    PULSE_PWM) under PWM_FLOOR for every knob position below ~0.35, and to 0
+    at the bottom of the travel — motors still while the DEPTH rocker said ON.
+    """
+    for s in KNOB_POSITIONS:
+        assert sw._apply_strength(PULSE_PWM, s) >= PWM_FLOOR, f"knob at {s:.2f}"
+
+
+def test_knob_fully_down_is_the_weakest_felt_tap():
+    assert sw._apply_strength(PULSE_PWM, 0.0) == PWM_FLOOR
+
+
+def test_turning_the_knob_up_never_weakens_a_tap():
+    duties = [sw._apply_strength(PULSE_PWM, s) for s in KNOB_POSITIONS]
+    assert duties == sorted(duties)
+    assert duties[0] < duties[-1]  # and it does actually change something
+
+
+def test_a_duty_at_or_below_the_floor_passes_through():
+    """Nothing above the start threshold to scale — e.g. amplitude-path level 1."""
+    for s in (0.0, 0.5, 1.0):
+        assert sw._apply_strength(PWM_FLOOR, s) == PWM_FLOOR
+        assert sw._apply_strength(PWM_FLOOR - 10, s) == PWM_FLOOR - 10
+
+
+@pytest.mark.parametrize("strength, expected", [
+    (-0.5, PWM_FLOOR),          # under range: clamped to knob fully down
+    (1.5, PULSE_PWM),           # over range: clamped to knob fully up
+    (float("nan"), PULSE_PWM),  # not a finite number: the 1.0 default
+    (float("inf"), PULSE_PWM),
+    (float("-inf"), PULSE_PWM),
+    (None, PULSE_PWM),
+    ("0.5x", PULSE_PWM),
+])
+def test_out_of_contract_strength_never_raises(strength, expected):
+    assert sw._apply_strength(PULSE_PWM, strength) == expected
+
+
+class FakeBoard:
+    """
+    The ESP32's end of a pty: collects the motor packets the worker sends and
+    ACKs whatever arrives, as the firmware does, so LinkHealth stays up and
+    the worker keeps forwarding frames instead of falling back to heartbeats.
+    """
+
+    def __init__(self, fd):
+        self.fd = fd
+        self.buf = b""
+
+    def next_motor(self, timeout=2.0):
+        """(left, center, right) of the next non-zero 0x01 packet, or None."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if select_readable(self.fd, 0.05):
+                self.buf += os.read(self.fd, 256)
+                os.write(self.fd, bytes([0xAA, 0xFF, 0x01]))
+            while True:
+                i = self.buf.find(bytes([0xAA, 0x01]))
+                if i < 0 or len(self.buf) < i + 6:
+                    break
+                packet, self.buf = self.buf[i:i + 6], self.buf[i + 6:]
+                if any(packet[2:5]):
+                    return tuple(packet[2:5])
+        return None
+
+
+class WorkerUserData:
+    """The slice of SecondVisionUserData that serial_worker() touches."""
+
+    def __init__(self):
+        self.serial_queue = queue.Queue(maxsize=10)
+        self.shutdown_event = threading.Event()
+
+
+TAP = {"left": 0, "center": PULSE_PWM, "right": 0, "hazard": False, "hazard_severity": 0}
+# The documented mapping at half travel, written out rather than computed with
+# _apply_strength() so the loop tests check the wire against the spec.
+HALF_KNOB_TAP = round(PWM_FLOOR + (PULSE_PWM - PWM_FLOOR) * 0.5)
+
+
+def test_turning_the_knob_changes_the_very_next_packet(pty_port):
+    """
+    The real worker loop: config is read per frame, so a knob change reaches
+    the wire on the next frame — no restart, no queue to drain.
+    """
+    path, controller = pty_port
+    cfg = config_with(serial_port=path, motor_strength=1.0)
+    user_data = WorkerUserData()
+    board = FakeBoard(controller)
+    worker = threading.Thread(target=sw.serial_worker, args=(user_data, cfg), daemon=True)
+    worker.start()
+    try:
+        for strength, expected in ((1.0, PULSE_PWM),
+                                   (0.0, PWM_FLOOR),
+                                   (0.5, HALF_KNOB_TAP),
+                                   (1.0, PULSE_PWM)):
+            cfg.update(motor_strength=strength)
+            user_data.serial_queue.put(dict(TAP))
+            assert board.next_motor() == (0, expected, 0), f"knob at {strength}"
+    finally:
+        user_data.shutdown_event.set()
+        worker.join(timeout=3)
+
+
+def test_a_bad_strength_does_not_stop_the_worker(pty_port):
+    """
+    Regression test: a NaN strength raised inside the loop and ended the
+    thread, so the motors went silent for the rest of the run.
+    """
+    path, controller = pty_port
+    cfg = config_with(serial_port=path, motor_strength=float("nan"))
+    user_data = WorkerUserData()
+    board = FakeBoard(controller)
+    worker = threading.Thread(target=sw.serial_worker, args=(user_data, cfg), daemon=True)
+    worker.start()
+    try:
+        user_data.serial_queue.put(dict(TAP))
+        assert board.next_motor() == (0, PULSE_PWM, 0)
+        assert worker.is_alive()
+    finally:
+        user_data.shutdown_event.set()
+        worker.join(timeout=3)

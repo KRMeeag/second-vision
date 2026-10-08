@@ -199,7 +199,7 @@ def _patch_espeak(monkeypatch, factory):
     spoken = []
     procs = []
 
-    def fake_start(text):
+    def fake_start(text, amplitude=None):
         spoken.append(text)
         p = factory(len(procs))
         procs.append(p)

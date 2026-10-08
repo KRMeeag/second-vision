@@ -1,6 +1,7 @@
 """Serial Worker — Consumes depth data, sends motor commands to ESP32."""
 
 import errno
+import math
 import queue
 import struct
 import time
@@ -14,6 +15,11 @@ try:
     PYSERIAL_AVAILABLE = True
 except ImportError:  # pragma: no cover — exercised only on machines without pyserial
     PYSERIAL_AVAILABLE = False
+
+# The motors' start threshold. Imported, not restated: _apply_strength() keeps
+# every felt tap above it, so measuring the motors and changing it in
+# core/haptics.py moves the strength knob's bottom end with it.
+from second_vision.core.haptics import PWM_FLOOR
 
 # Writes must not be able to wedge the worker thread. If the ESP32 stops
 # draining its buffer the kernel's TX queue fills, and a blocking write() would
@@ -130,11 +136,13 @@ def _log_serial_error(message: str) -> None:
 #   directly. The fields, types and ranges are unchanged; only the description
 #   was wrong.
 # ============================================================
-# CAUTION — config.motor_strength multiplies these duties on the way out (below),
-# which can push a shaped value back UNDER the motors' start threshold and undo
-# the PWM floor. Scaling belongs in the haptic stage, where the floor is known.
-# Left as-is for now: it is the existing behaviour and changing it is a UX
-# decision, not a transport one.
+# config.motor_strength (the panel's knob, 0.0-1.0) is applied on the way out by
+# _apply_strength(), which scales only the part of each duty ABOVE the motors'
+# start threshold (core/haptics.py PWM_FLOOR). The knob can soften a tap; it can
+# never push one under the floor or to 0 — switching the motors off is the
+# DEPTH rocker's job. The plain `duty * strength` used before October 2026 put
+# every rate-coded tap (always 255) under the floor below ~35% of the knob's
+# travel, and to 0 at the bottom of it, with the DEPTH rocker still ON.
 
 def serial_worker(user_data, config):
     """
@@ -246,11 +254,11 @@ def serial_worker(user_data, config):
             last_write_at = _heartbeat_if_due(port, last_write_at)
             continue
 
-        # Apply motor strength multiplier
+        # Apply the panel's strength knob — floor-preserving, see _apply_strength()
         strength = config.get("motor_strength")
-        left    = min(255, int(depth["left"] * strength))
-        right   = min(255, int(depth["right"] * strength))
-        center  = min(255, int(depth["center"] * strength))
+        left    = _apply_strength(depth["left"], strength)
+        right   = _apply_strength(depth["right"], strength)
+        center  = _apply_strength(depth["center"], strength)
 
         # Send motor update
         packet = _pack_motor_update(left, center, right)
@@ -269,6 +277,39 @@ def serial_worker(user_data, config):
     # vibration that never resolves, until the watchdog happens to clear it.
     _send_packet(port, _pack_motor_update(0, 0, 0))
     _close_port(port)
+
+def _apply_strength(duty: int, strength) -> int:
+    """
+    Scale one zone's duty by the panel's strength knob (config.motor_strength).
+
+    Only the part of the duty above the motors' start threshold is scaled:
+
+        PWM_FLOOR + (duty - PWM_FLOOR) * strength
+
+    so knob fully down is the weakest tap the motors still produce (PWM_FLOOR),
+    knob fully up is the duty unchanged, and a 0 stays exactly 0. A duty at or
+    below the floor has nothing above the threshold to scale and passes through.
+    strength == 1.0 — the SystemConfig default, and every run without a panel —
+    is therefore the identity: the wire carries what core/haptics.py decided.
+
+    Never raises on `strength`, which arrives over a serial line: an exception
+    here would kill this thread, nothing would be sent again, and the ESP32's
+    watchdog would stop the motors for the rest of the run. Values outside
+    0.0-1.0 are clamped; anything that is not a finite number is treated as
+    1.0, the default.
+    """
+    try:
+        strength = float(strength)
+    except (TypeError, ValueError):
+        strength = 1.0
+    if not math.isfinite(strength):
+        strength = 1.0
+    strength = min(1.0, max(0.0, strength))
+
+    duty = min(255, max(0, int(duty)))
+    if duty <= PWM_FLOOR:
+        return duty
+    return round(PWM_FLOOR + (duty - PWM_FLOOR) * strength)
 
 def _pack_motor_update(left, center, right) -> bytes:
     """Pack motor update into binary protocol."""

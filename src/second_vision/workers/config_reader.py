@@ -136,12 +136,21 @@ def _cast_value(key, value_str):
     # of these sets; a missing key fails silently and in the unsafe direction.
     bool_keys = {"tts_enabled", "vibration_enabled",
                  "depth_enabled", "detection_enabled", "hazard_detection"}
-    float_keys = {"motor_strength", "cooldown_seconds"}
+    float_keys = {"motor_strength", "tts_volume", "cooldown_seconds"}
+    # The two knobs. PROTOCOL.md fixes both at 0.00-1.00.
+    knob_keys = {"motor_strength", "tts_volume"}
 
     if key in bool_keys:
         return value_str.strip() in ("1","true","True", "yes", "YES", "on", "ON", "enabled", "ENABLED")
     elif key in float_keys:
-        return float(value_str)
+        value = float(value_str)
+        # float() also takes "nan", "inf" and "-0.50", which no knob position can
+        # produce. Raising sends the line to the caller's except: it is discarded
+        # and the last good value stays in force — the treatment receiver rule 3
+        # gives an unknown mode.
+        if key in knob_keys and not 0.0 <= value <= 1.0:
+            raise ValueError(f"{key} {value_str!r} is outside 0.00-1.00")
+        return value
     return value_str
 
 # ==================== SERIAL PLUMBING ====================

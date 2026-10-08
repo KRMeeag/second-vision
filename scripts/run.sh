@@ -12,12 +12,14 @@
 #   ./scripts/run.sh --input usb                             # real pipeline
 #   ./scripts/run.sh --input /dev/video0 --width 640 --height 480 --use-frame
 #
-# NOTE ON FLAGS: --mock is handled by main.py; everything else is parsed by the
-# hailo_apps pipeline parser (--input, --width, --height, --use-frame,
-# --show-fps, --disable-sync, ...) plus app.py's --labels-json / --det-hef-path.
-# --headless, --debug-display, --serial-port and --config-port are documented as
-# planned but are NOT registered yet — passing them will fail argparse. See
-# documentation/TASKS.md.
+# NOTE ON FLAGS: --mock, --serial-port (motor ESP32), --serial-baud and
+# --config-port (control panel) are handled by main.py's pre-parser, so they do
+# not appear in --help. Without --config-port the panel — rockers and strength
+# knob — is silently ignored. Everything else is parsed by the hailo_apps
+# pipeline parser (--input, --width, --height, --use-frame, --show-fps,
+# --disable-sync, ...) plus app.py's --labels-json / --det-hef-path.
+# --headless and --debug-display are documented as planned but are NOT
+# registered yet — passing them will fail argparse. See documentation/TASKS.md.
 
 set -euo pipefail
 
