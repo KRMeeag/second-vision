@@ -126,13 +126,13 @@ def test_recency_penalty_lowers_priority_and_decays():
 # Tier
 # ============================================================
 def test_tier_urgent_class_in_center():
-    # A car in the center is urgent regardless of its numeric priority.
-    assert compute_tier(0.1, "car", "center") == TIER_URGENT
+    # A vehicle in the center is urgent regardless of its numeric priority.
+    assert compute_tier(0.1, "vehicle", "center") == TIER_URGENT
 
 
 def test_tier_urgent_class_off_center_is_not_auto_urgent():
     # Same class on a side is only urgent if the score crosses the abs threshold.
-    assert compute_tier(0.1, "car", "left") == TIER_NORMAL
+    assert compute_tier(0.1, "vehicle", "left") == TIER_NORMAL
 
 
 def test_tier_absolute_threshold():
@@ -199,7 +199,7 @@ def _patch_espeak(monkeypatch, factory):
     spoken = []
     procs = []
 
-    def fake_start(text):
+    def fake_start(text, amplitude=None):
         spoken.append(text)
         p = factory(len(procs))
         procs.append(p)

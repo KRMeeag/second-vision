@@ -12,7 +12,9 @@ from second_vision.core.haptics import HapticMapper
 from second_vision.core.depth_utils import GROUND_HAZARD_ENABLED
 
 
-MOCK_LABELS = ["person", "car", "bicycle", "dog", "chair", "bottle"]
+# Mirrors the values of pipeline/callbacks.DETECTION_CLASS_MAP — the only labels
+# the real detection path can emit.
+MOCK_LABELS = ["person", "vehicle", "motorcycle", "animal", "chair", "table", "bench"]
 MOCK_ZONES = ["left", "center", "right"]
 
 

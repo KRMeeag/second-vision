@@ -136,7 +136,7 @@ def _cast_value(key, value_str):
     # of these sets; a missing key fails silently and in the unsafe direction.
     bool_keys = {"tts_enabled", "vibration_enabled",
                  "depth_enabled", "detection_enabled", "hazard_detection"}
-    float_keys = {"motor_strength", "cooldown_seconds"}
+    float_keys = {"motor_strength", "tts_volume", "cooldown_seconds"}
 
     if key in bool_keys:
         return value_str.strip() in ("1","true","True", "yes", "YES", "on", "ON", "enabled", "ENABLED")

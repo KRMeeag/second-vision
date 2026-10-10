@@ -26,6 +26,10 @@ class SystemConfig:
         self.config_port = None         # e.g. "/dev/ttyAMA3"
         # TTS
         self.tts_enabled = True
+        # The panel's volume knob, 0.0 - 1.0. 1.0 is espeak-ng's own default
+        # loudness, so a run without a panel sounds exactly as it always has.
+        # The knob never mutes: switching speech off is the DETECT rocker's job.
+        self.tts_volume = 1.0
         self.cooldown_seconds = 3.0
         # Features
         self.depth_enabled = True

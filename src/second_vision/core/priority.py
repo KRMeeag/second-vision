@@ -53,14 +53,13 @@ ZONE_WEIGHTS = {
 # Per-class importance. PLACEHOLDER values — the final detection class set isn't
 # settled yet (see handoff_v2), so this ships as an easily-edited table, not a
 # committed policy. Neutral default; a few likely-relevant classes nudged up.
+# Keyed on the MAPPED names from callbacks.DETECTION_CLASS_MAP ("vehicle", not
+# "car") — a raw COCO name here never matches and silently falls to the default.
 CLASS_WEIGHT_DEFAULT = 0.5
 CLASS_WEIGHTS = {
     "person": 0.7,
-    "car": 1.0,
-    "bicycle": 0.9,
+    "vehicle": 1.0,
     "motorcycle": 0.9,
-    "bus": 1.0,
-    "truck": 1.0,
 }
 
 # Soft cooldown: right after an object is announced its priority is knocked down
@@ -73,8 +72,8 @@ RECENCY_DECAY_SECONDS = 8.0
 # Urgency tier thresholds
 # ============================================================
 # Classes that count as urgent when they appear in the CENTER zone (collision
-# path). PLACEHOLDER, same caveat as CLASS_WEIGHTS.
-URGENT_CLASSES = {"car", "bus", "truck", "motorcycle", "bicycle"}
+# path). PLACEHOLDER, same caveat (and same mapped-name keying) as CLASS_WEIGHTS.
+URGENT_CLASSES = {"vehicle", "motorcycle"}
 # Absolute priority above which anything is urgent regardless of class/zone.
 URGENT_ABS_THRESHOLD = 3.2
 

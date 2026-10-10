@@ -21,6 +21,7 @@ from core/turn_event.py (ESP32 -> serial_worker.py -> TurnEvent). See
 _check_turn_mute() below.
 """
 
+import math
 import shutil
 import subprocess
 import time
@@ -41,13 +42,53 @@ from second_vision.core.priority import (
 #           absent (getattr default None) is tolerated the same way
 #           serial_worker.py tolerates a user_data without one.
 #   Output: Audio announcement via speaker (espeak-ng, pyttsx3 fallback).
-#   Config: config.tts_enabled
+#   Config: config.tts_enabled, config.tts_volume (the panel's volume knob)
 # ============================================================
 
 _ESPEAK_SPEED = 160
 _POLL_SECONDS = 0.05    # how often to check for a preempting item while speaking
 _IDLE_SECONDS = 0.02    # nap when the mailbox is empty
 _pyttsx3_engine = None
+
+# --- Volume: the control panel's volume knob ---------------------------------
+# config.tts_volume (0.0-1.0) sets espeak-ng's amplitude (-a). The knob runs
+# from _AMPLITUDE_FLOOR to _AMPLITUDE_MAX on an EVEN-DECIBEL scale, because the
+# pot is linear and hearing is not: interpolated geometrically, each tenth of
+# the knob is ~2 dB, instead of nearly all the audible change crowding into
+# the bottom of the travel. Measured on espeak-ng 1.52.0, output level tracks
+# 20*log10(a/100) closely: a=10 is -22.2 dB, a=25 -12.9 dB, a=50 -6.2 dB.
+#
+#   knob   0.00  0.15  0.25  0.50  0.75  1.00
+#   -a       10    14    18    32    56   100
+#   dB      -22   -17   -15   -10    -5     0
+#
+# 1.0 maps to 100, espeak-ng's own default, so a run without a panel sounds
+# exactly as it always has. Fully down is the floor, never silence: muting is
+# the DETECT rocker's job (tts_enabled), and a wearer who turned the knob all
+# the way down must still hear "car ahead". The floor was 25 (-13 dB) in the
+# first draft; 10 is the user's call (2026-10-09) that 0.15 must be clearly
+# quiet, not merely softer. PLACEHOLDER all the same — the field test sets it
+# (FIELD-TESTING.md U7): in street noise -22 dB may be inaudible. There is
+# headroom above 100 if full volume proves too quiet: a=140 is +2.9 dB and does
+# not clip; a=200 saturates.
+_AMPLITUDE_MAX = 100
+_AMPLITUDE_FLOOR = 10
+
+
+def _espeak_amplitude(volume) -> int:
+    """
+    espeak-ng amplitude for knob position `volume` (0.0-1.0). Never raises:
+    anything that is not a finite number is treated as 1.0, the default, and
+    values outside 0-1 are clamped.
+    """
+    try:
+        volume = float(volume)
+    except (TypeError, ValueError):
+        volume = 1.0
+    if not math.isfinite(volume):
+        volume = 1.0
+    volume = min(1.0, max(0.0, volume))
+    return round(_AMPLITUDE_FLOOR * (_AMPLITUDE_MAX / _AMPLITUDE_FLOOR) ** volume)
 
 # --- Turn-based mute -------------------------------------------------------
 # How long to hold off speaking after a 0x03 turn event.
@@ -123,27 +164,30 @@ def tts_worker(user_data, config):
             if not config.get("tts_enabled"):
                 continue
 
-            _speak_interruptible(item, mailbox, user_data)
+            # Read per item, so a turn of the knob is heard from the next
+            # utterance on.
+            amplitude = _espeak_amplitude(config.get("tts_volume"))
+            _speak_interruptible(item, mailbox, user_data, amplitude)
             _pace(mailbox, user_data)
         except Exception as e:  # never let the worker thread die
             print(f"[TTS] Error processing announcement: {e}")
 
 
-def _speak_interruptible(item, mailbox, user_data):
+def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX):
     """
-    Speak `item`. If a preempting item arrives mid-utterance, terminate the
-    current espeak process and switch to it — looping until an utterance
-    finishes naturally (or shutdown).
+    Speak `item` at espeak-ng `amplitude`. If a preempting item arrives
+    mid-utterance, terminate the current espeak process and switch to it —
+    looping until an utterance finishes naturally (or shutdown).
     """
     while item is not None and not user_data.shutdown_event.is_set():
         text = _text_for(item)
         print(f"[TTS] '{text}'")
 
-        proc = _start_espeak(text)
+        proc = _start_espeak(text, amplitude)
         if proc is None:
             # No espeak-ng available — fall back to a blocking, NON-interruptible
             # engine (dev machines only; the device has espeak-ng).
-            _speak_blocking(text)
+            _speak_blocking(text, amplitude)
             return
 
         next_item = None
@@ -186,19 +230,19 @@ def _text_for(item) -> str:
     return f"{item.get('label', 'unknown')} {item.get('zone', 'center')}"
 
 
-def _start_espeak(text: str):
+def _start_espeak(text: str, amplitude: int = _AMPLITUDE_MAX):
     """Start an espeak-ng subprocess (non-blocking). Returns the Popen, or None
     if espeak-ng isn't installed (caller falls back to a blocking engine)."""
     if shutil.which("espeak-ng"):
         return subprocess.Popen(
-            ["espeak-ng", "-s", str(_ESPEAK_SPEED), text],
+            ["espeak-ng", "-s", str(_ESPEAK_SPEED), "-a", str(amplitude), text],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
     return None
 
 
-def _speak_blocking(text: str) -> None:
+def _speak_blocking(text: str, amplitude: int = _AMPLITUDE_MAX) -> None:
     """pyttsx3 fallback when espeak-ng is unavailable. Blocking, not interruptible."""
     global _pyttsx3_engine
     try:
@@ -207,6 +251,8 @@ def _speak_blocking(text: str) -> None:
         if _pyttsx3_engine is None:
             _pyttsx3_engine = pyttsx3.init()
             _pyttsx3_engine.setProperty("rate", _ESPEAK_SPEED)
+        # pyttsx3 volume is 0.0-1.0, where 1.0 matches espeak-ng's default.
+        _pyttsx3_engine.setProperty("volume", amplitude / _AMPLITUDE_MAX)
         _pyttsx3_engine.say(text)
         _pyttsx3_engine.runAndWait()
     except Exception as e:

@@ -103,6 +103,41 @@ DISPLAY_PHRASE_HOLD_SECONDS = 2.0    # How long an event phrase stays on the deb
                                       # falling back to the generic "{label} {zone}" text — event
                                       # phrases only fire for one frame otherwise, too brief to read
 
+# ---- Detection class set (TEMPORARY — stock COCO HEF) ----
+# Bandaid until a custom-trained model exists: COCO label (exactly as the
+# yolo_hailortpp postprocess emits it) -> the class name the rest of the system
+# sees. Every key NOT in this map is dropped before tracking state, the overlay,
+# or TTS ever see it. Values are the only labels that reach compute_priority /
+# compute_tier, so core/priority.py's CLASS_WEIGHTS and URGENT_CLASSES must be
+# keyed on these values, not on raw COCO names.
+#
+# Wanted but absent from COCO, so not detectable yet: pole, door, pothole, stairs.
+# "vehicle" follows COCO's own vehicle supercategory, minus motorcycle (its own class).
+DETECTION_CLASS_MAP = {
+    "person": "person",
+    "dining table": "table",
+    "chair": "chair",
+    "bench": "bench",
+    "motorcycle": "motorcycle",
+    "bicycle": "vehicle",
+    "car": "vehicle",
+    "bus": "vehicle",
+    "truck": "vehicle",
+    "train": "vehicle",
+    "airplane": "vehicle",
+    "boat": "vehicle",
+    "bird": "animal",
+    "cat": "animal",
+    "dog": "animal",
+    "horse": "animal",
+    "sheep": "animal",
+    "cow": "animal",
+    "elephant": "animal",
+    "bear": "animal",
+    "zebra": "animal",
+    "giraffe": "animal",
+}
+
 # ---- Depth post-processing tuning ----
 # All the depth *math* tunables live in core/depth_utils.py; these only govern
 # how often the callback talks to the console and the preview process.
@@ -439,7 +474,12 @@ def _process_real_detections(element, buffer, user_data):
     PriorityMailbox with its priority/tier for the TTS worker to act on.
     """
     roi = hailo.get_roi_from_buffer(buffer)
-    detections = list(roi.get_objects_typed(hailo.HAILO_DETECTION))
+    # Off-list classes go here, before anything else reads them — head-turn
+    # detection, track history, the overlay and TTS all see only mapped classes.
+    detections = [
+        det for det in roi.get_objects_typed(hailo.HAILO_DETECTION)
+        if det.get_label() in DETECTION_CLASS_MAP
+    ]
 
     # Note: deliberately not returning early when `detections` is empty — the
     # stale-track cleanup below still needs to run on empty frames, otherwise
@@ -465,7 +505,7 @@ def _process_real_detections(element, buffer, user_data):
         if confidence < CONFIDENCE_THRESHOLD:
             continue
 
-        label = det.get_label()
+        label = DETECTION_CLASS_MAP[det.get_label()]
         bbox = det.get_bbox()
         track_id = _get_track_id(det)
         center_x = bbox.xmin() + (bbox.width() / 2.0)
