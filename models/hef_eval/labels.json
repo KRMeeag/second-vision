@@ -1,0 +1,19 @@
+{
+    "labels": [
+        "unlabeled",
+        "Person",
+        "Vehicle",
+        "Motorcycle",
+        "Pole",
+        "Animals",
+        "Doors",
+        "Chairs",
+        "Tables",
+        "Tricycle",
+        "Potholes",
+        "Trash Bins",
+        "Bicycle",
+        "Stairs",
+        "Bench"
+    ]
+}

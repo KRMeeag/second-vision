@@ -54,7 +54,7 @@ ZONE_WEIGHTS = {
 # settled yet (see handoff_v2), so this ships as an easily-edited table, not a
 # committed policy. Neutral default; a few likely-relevant classes nudged up.
 # Keyed on the MAPPED names from callbacks.DETECTION_CLASS_MAP ("vehicle", not
-# "car") — a raw COCO name here never matches and silently falls to the default.
+# "Vehicle") — a raw model label here never matches and silently falls to the default.
 CLASS_WEIGHT_DEFAULT = 0.5
 CLASS_WEIGHTS = {
     "person": 0.7,

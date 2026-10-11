@@ -103,39 +103,34 @@ DISPLAY_PHRASE_HOLD_SECONDS = 2.0    # How long an event phrase stays on the deb
                                       # falling back to the generic "{label} {zone}" text — event
                                       # phrases only fire for one frame otherwise, too brief to read
 
-# ---- Detection class set (TEMPORARY — stock COCO HEF) ----
-# Bandaid until a custom-trained model exists: COCO label (exactly as the
-# yolo_hailortpp postprocess emits it) -> the class name the rest of the system
-# sees. Every key NOT in this map is dropped before tracking state, the overlay,
-# or TTS ever see it. Values are the only labels that reach compute_priority /
-# compute_tier, so core/priority.py's CLASS_WEIGHTS and URGENT_CLASSES must be
-# keyed on these values, not on raw COCO names.
+# ---- Detection class set (custom 14-class HEF, models/hef_deploy) ----
+# Model label (exactly as the yolo_hailortpp postprocess emits it, i.e. as
+# spelled in the labels.json beside the HEF) -> the class name the rest of the
+# system sees. Every key NOT in this map is dropped before tracking state, the
+# overlay, or TTS ever see it. Values are the only labels that reach
+# compute_priority / compute_tier, so core/priority.py's CLASS_WEIGHTS and
+# URGENT_CLASSES must be keyed on these values, not on raw model labels.
 #
-# Wanted but absent from COCO, so not detectable yet: pole, door, pothole, stairs.
-# "vehicle" follows COCO's own vehicle supercategory, minus motorcycle (its own class).
+# Keys are the trained names, capitalised. A missing labels.json makes the
+# postprocess emit lowercase COCO names instead, which match nothing here —
+# detection goes silent rather than announcing a pole as "motorcycle".
+# "vehicle" keeps the old COCO-era grouping: bicycles (and now tricycles) are
+# vehicles, motorcycle stays its own class.
 DETECTION_CLASS_MAP = {
-    "person": "person",
-    "dining table": "table",
-    "chair": "chair",
-    "bench": "bench",
-    "motorcycle": "motorcycle",
-    "bicycle": "vehicle",
-    "car": "vehicle",
-    "bus": "vehicle",
-    "truck": "vehicle",
-    "train": "vehicle",
-    "airplane": "vehicle",
-    "boat": "vehicle",
-    "bird": "animal",
-    "cat": "animal",
-    "dog": "animal",
-    "horse": "animal",
-    "sheep": "animal",
-    "cow": "animal",
-    "elephant": "animal",
-    "bear": "animal",
-    "zebra": "animal",
-    "giraffe": "animal",
+    "Person": "person",
+    "Vehicle": "vehicle",
+    "Bicycle": "vehicle",
+    "Tricycle": "vehicle",
+    "Motorcycle": "motorcycle",
+    "Animals": "animal",
+    "Chairs": "chair",
+    "Tables": "table",
+    "Bench": "bench",
+    "Pole": "pole",
+    "Doors": "door",
+    "Potholes": "pothole",
+    "Stairs": "stairs",
+    "Trash Bins": "trash bin",
 }
 
 # ---- Depth post-processing tuning ----

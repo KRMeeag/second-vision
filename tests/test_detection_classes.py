@@ -1,12 +1,15 @@
 """
-Unit tests for the temporary detection class set (callbacks.DETECTION_CLASS_MAP).
+Unit tests for the detection class set (callbacks.DETECTION_CLASS_MAP).
 
-Two guarantees:
-  * Off-list COCO classes never reach tracking state, the overlay or TTS, and
-    on-list ones arrive under their mapped name ("car" -> "vehicle").
-  * core/priority.py's class tables are keyed on the mapped names. A raw COCO
-    key there never matches and silently drops a class to the default weight
+Three guarantees:
+  * Off-list labels never reach tracking state, the overlay or TTS, and
+    on-list ones arrive under their mapped name ("Tricycle" -> "vehicle").
+  * core/priority.py's class tables are keyed on the mapped names. A raw model
+    label there never matches and silently drops a class to the default weight
     or out of the urgent tier — the regression this file exists to catch.
+  * The labels.json beside each custom HEF lists the model's classes in the
+    model's own index order, and every one of them is mapped. Get the order
+    wrong and the postprocess names each box after a different class.
 
 Hardware-independent: `hailo` is replaced by a duck-typed stand-in (the
 mocked-hailo harness this project uses for callback logic). Run with:
@@ -14,14 +17,18 @@ mocked-hailo harness this project uses for callback logic). Run with:
     poetry run pytest tests/test_detection_classes.py -v
 """
 
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+MODEL_DIRS = [REPO_ROOT / "models" / "hef_deploy", REPO_ROOT / "models" / "hef_eval"]
+
 # No conftest/package install — put src/ on the path so `second_vision.*` resolves.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from second_vision.core import priority
 from second_vision.core.priority import TIER_URGENT, PriorityMailbox
@@ -134,32 +141,45 @@ def test_off_list_classes_are_dropped_entirely(run_frame):
     assert ud.tts_queue.peek() is None
 
 
+def test_coco_fallback_names_are_dropped(run_frame):
+    # Without labels.json the postprocess names the custom model's classes 0-2
+    # from the COCO table: "person", "bicycle", "car". None may get through —
+    # "bicycle" would be announced for what the model saw as a Vehicle.
+    ud = run_frame([_Det("person", 1), _Det("bicycle", 2), _Det("car", 3)])
+    assert ud.track_history == {}
+    assert ud.tts_queue.peek() is None
+
+
 def test_off_list_class_cannot_outrank_an_on_list_one(run_frame):
     # The couch is bigger, more confident and centred — it would win on priority
     # if it were scored at all.
     ud = run_frame([
         _Det("couch", 1, confidence=0.99, size=0.8),
-        _Det("chair", 2, confidence=0.75, center_x=0.1, size=0.1),
+        _Det("Chairs", 2, confidence=0.75, center_x=0.1, size=0.1),
     ])
     assert set(ud.track_history) == {2}
     payload = ud.tts_queue.peek()
     assert payload["label"] == "chair"
 
 
-@pytest.mark.parametrize("coco,mapped", [
-    ("person", "person"),
-    ("dining table", "table"),
-    ("chair", "chair"),
-    ("bench", "bench"),
-    ("motorcycle", "motorcycle"),
-    ("car", "vehicle"),
-    ("truck", "vehicle"),
-    ("bicycle", "vehicle"),
-    ("dog", "animal"),
-    ("horse", "animal"),
+@pytest.mark.parametrize("model_label,mapped", [
+    ("Person", "person"),
+    ("Vehicle", "vehicle"),
+    ("Bicycle", "vehicle"),
+    ("Tricycle", "vehicle"),
+    ("Motorcycle", "motorcycle"),
+    ("Animals", "animal"),
+    ("Chairs", "chair"),
+    ("Tables", "table"),
+    ("Bench", "bench"),
+    ("Pole", "pole"),
+    ("Doors", "door"),
+    ("Potholes", "pothole"),
+    ("Stairs", "stairs"),
+    ("Trash Bins", "trash bin"),
 ])
-def test_on_list_classes_arrive_under_mapped_name(run_frame, coco, mapped):
-    ud = run_frame([_Det(coco, 7)])
+def test_on_list_classes_arrive_under_mapped_name(run_frame, model_label, mapped):
+    ud = run_frame([_Det(model_label, 7)])
     assert ud.track_history[7]["label"] == mapped
     assert ud.tts_queue.peek()["label"] == mapped
 
@@ -167,7 +187,7 @@ def test_on_list_classes_arrive_under_mapped_name(run_frame, coco, mapped):
 def test_centred_vehicle_is_still_urgent_after_mapping(run_frame):
     # Before the tables were re-keyed, "vehicle" matched nothing in
     # URGENT_CLASSES and a centred car fell to the normal tier.
-    ud = run_frame([_Det("car", 1, confidence=0.75, size=0.05)])
+    ud = run_frame([_Det("Vehicle", 1, confidence=0.75, size=0.05)])
     payload = ud.tts_queue.peek()
     assert payload["label"] == "vehicle"
     assert payload["tier"] == TIER_URGENT
@@ -179,6 +199,7 @@ def test_centred_vehicle_is_still_urgent_after_mapping(run_frame):
 def test_map_emits_exactly_the_agreed_classes():
     assert set(callbacks.DETECTION_CLASS_MAP.values()) == {
         "person", "table", "vehicle", "chair", "animal", "motorcycle", "bench",
+        "pole", "door", "pothole", "stairs", "trash bin",
     }
 
 
@@ -186,3 +207,27 @@ def test_priority_tables_use_mapped_names_only():
     emitted = set(callbacks.DETECTION_CLASS_MAP.values())
     assert set(priority.CLASS_WEIGHTS) <= emitted
     assert priority.URGENT_CLASSES <= emitted
+
+
+# ============================================================
+# labels.json <-> model metadata <-> class map
+# ============================================================
+def _labels_json(model_dir):
+    return json.loads((model_dir / "labels.json").read_text())["labels"]
+
+
+@pytest.mark.parametrize("model_dir", MODEL_DIRS, ids=lambda d: d.name)
+def test_labels_json_follows_model_class_order(model_dir):
+    # HailoNMSDecode names class_id N with labels[N + 1], so index 0 is the
+    # "unlabeled" placeholder and the rest must be metadata.yaml's names in
+    # class-index order.
+    yaml = pytest.importorskip("yaml")
+    names = yaml.safe_load((model_dir / "metadata.yaml").read_text())["names"]
+    labels = _labels_json(model_dir)
+    assert labels[0] == "unlabeled"
+    assert labels[1:] == [names[i] for i in sorted(names)]
+
+
+@pytest.mark.parametrize("model_dir", MODEL_DIRS, ids=lambda d: d.name)
+def test_every_model_label_is_mapped(model_dir):
+    assert set(_labels_json(model_dir)[1:]) == set(callbacks.DETECTION_CLASS_MAP)

@@ -139,6 +139,23 @@ DEVICE_SETTLE_SECONDS = 1.0
 # exits anyway. A clean shutdown measures ~0.7 s. See shutdown().
 SHUTDOWN_FORCE_EXIT_SECONDS = 5.0
 
+# The team's custom-trained detector (14 classes, NMS on-chip, hailo8). Absolute,
+# built from this file's location, because resolve_hef_path() resolves a
+# relative path against the CWD — fine under run.sh, wrong anywhere else.
+# hef_deploy is the runtime build; hef_eval is the same network compiled with a
+# 0.001 NMS score threshold for mAP evaluation. At runtime the difference is
+# moot: hailonet's nms-score-threshold (thresholds_str below) overrides the
+# threshold baked into either HEF.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_DET_HEF_PATH = REPO_ROOT / "models" / "hef_deploy" / "best.hef"
+
+# Sidecar label file looked for next to the detection HEF. The yolo_hailortpp
+# postprocess falls back to the 80 COCO names when it gets no labels JSON, which
+# for a custom HEF means class 1 ("Vehicle") is emitted as "bicycle", class 3
+# ("Pole") as "motorcycle", and so on — and get_hef_labels_json() only knows
+# hailo's own HEF names (barcode, visdrone, 4_classes), not "best.hef".
+DET_LABELS_SIDECAR = "labels.json"
+
 
 def _hailort_service_available():
     """
@@ -234,8 +251,9 @@ class SecondVisionApp(GStreamerApp):
 
         parser.add_argument(
             "--det-hef-path",
-            default="yolov8s.hef",
-            help="Specific HEF model to use for detection (default: yolov8s.hef)",
+            default=str(DEFAULT_DET_HEF_PATH),
+            help="Specific HEF model to use for detection "
+                 "(default: models/hef_deploy/best.hef, the custom 14-class model)",
         )
 
         # DEBUG ONLY — temporary. Cycles pipeline_mode on a timer so mode switching can be
@@ -324,10 +342,21 @@ class SecondVisionApp(GStreamerApp):
         self.det_post_function_name = DETECTION_POSTPROCESS_FUNCTION
 
         self.labels_json = self.options_menu.labels_json
+        if self.labels_json is None and self.det_hef_path is not None:
+            # A labels.json shipped beside the HEF wins — see DET_LABELS_SIDECAR.
+            sidecar = Path(self.det_hef_path).with_name(DET_LABELS_SIDECAR)
+            if sidecar.exists():
+                self.labels_json = str(sidecar)
+                hailo_logger.info("Using labels JSON beside the HEF: %s", self.labels_json)
         if self.labels_json is None: # if no labels JSON file is provided, try auto-detect it from the HEF file
             self.labels_json = get_hef_labels_json(self.det_hef_path)
             if self.labels_json is not None:
                 hailo_logger.info("Auto detected Labels JSON: %s", self.labels_json)
+            else:
+                hailo_logger.warning(
+                    "No labels JSON for %s — the postprocess will emit COCO names. "
+                    "callbacks.DETECTION_CLASS_MAP is keyed on the custom model's "
+                    "labels, so every detection would be dropped.", self.det_hef_path)
 
         nms_score_threshold = 0.3
         nms_iou_threshold = 0.45
