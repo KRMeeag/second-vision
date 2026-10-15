@@ -43,12 +43,16 @@ decided whether to keep or revert its changes.
 - **ESP32 firmware is not changed.** Vibration patterns are produced from the Pi.
 - **Mock mode** is reachable only through `--mock`; nothing may switch into it automatically (D-13).
 
-## Developer model routing
+## Model routing
 
 The Lead picks one model per task before it starts, and records it here with the reason:
-- **`developer-sonnet`**: bounded, local, low-risk work.
+- **`developer-sonnet`**: bounded, local, low-risk work. Most tasks.
 - **`developer-opus`**: complex debugging, cross-module or threading/timing work, the
   GStreamer/Hailo lifecycle, and high-risk changes.
+
+The **Tester** runs on Sonnet, and on Opus whenever the task's Developer is Opus. The **Lead**
+runs on Sonnet; for an Opus task the user may start it on Opus
+(`claude --agent lead --model opus`).
 
 A task touching the AI pipeline is **not** automatically Opus. The rubric is in the Lead's
 instructions.
@@ -63,14 +67,17 @@ P1 = critical failsafes, done first (team, 2026-10-11). P2 = everything else.
 | T-01 | Glasses ESP32 link-loss failsafe | P1 | BACKLOG | REQ-CON-02, 03, 04 | TC-022-002 to 007 | T-00 | — | — | — |
 | T-02 | Control panel link-loss failsafe and last-session settings | P1 | BACKLOG | REQ-CON-05, 06 | TC-023-002, 004, 007 | T-00 (speech part) | — | — | — |
 | T-03 | Camera missing or removed never crashes the device | P1 | BACKLOG | REQ-CON-07, 08, 09 | TC-024-002, 003, 004 | T-00 (alert part only) | — | — | — |
-| T-03a | Camera removed while running: the program stays up and restarts vision when a camera returns (subtask of T-03; no alerts) | P1 | READY | REQ-CON-08 (removal half); REQ-DTA-08 (regression) | TC-024-003 (partial: not its REQ-CON-07 alert) | — | developer-opus: GStreamer/Hailo lifecycle (teardown, device release, rebuild) and main-loop timing shared with the panel thread | Before attempt 1: the user answers Q-A to Q-D in brief-1; the hardware must be free (`second-vision.service` was active, in mock mode, on 2026-10-15) | [brief-1 (draft)](reports/T-03a/brief-1.md) |
+| T-03a | Camera removed while running: the program stays up and restarts vision when a camera returns (subtask of T-03; no alerts) | P1 | READY | REQ-CON-08 (removal half); REQ-DTA-08 (regression) | TC-024-003 (partial: not its REQ-CON-07 alert) | pytest in my_hailo_env (T-10a): its tests need GStreamer | developer-opus: GStreamer/Hailo lifecycle (teardown, device release, rebuild) and main-loop timing shared with the panel thread | None for development (pre-start questions answered 2026-10-15, see brief-1). Device steps need the boot service stopped by the user first | [brief-1](reports/T-03a/brief-1.md) |
 | T-04 | Earphones missing or lost failsafe | P1 | BACKLOG | REQ-CON-10, 11, 12 | TC-025-002 to 007 | T-00 | — | — | — |
 | T-05 | Each model class gets its own spoken label | P2 | BACKLOG | REQ-DET-01, 02 | TC-001-001, 002 | — | — | — | — |
 | T-06 | Battery announcements and low-battery shutdown | P2 | BACKLOG | REQ-PWR-02, 04 | TC-028-*, TC-029-002 | T-00 (speech part) | — | — | — |
 | T-07 | "Device shutting down." on clean shutdown | P2 | BACKLOG | REQ-PWR-03 | TC-029-001 | — | — | — | — |
 | T-08 | Depth pipeline status and recovery | — | DEFERRED | REQ-DHP-06, 07 | TC-018-001, 002 | — | — | Deferred (D-08) | — |
+| T-10 | Test harness: pytest for GStreamer and device tests, fake boards, captured speech *(proposed)* | P1 | BACKLOG | — (enabler: automated checks for REQ-CON, REQ-PNL, REQ-PWR, REQ-DTA) | none directly; replaces most hands-on steps (MANUAL-TESTS.md, "How much of this can be automated") | the user installs pytest into my_hailo_env | — | Agents may not change environments: the user runs the install (task note) | — |
 
 Suggested order, for the Lead to confirm:
+0. **T-10a first** (small): T-03a's tests need GStreamer under pytest, which no environment
+   has yet.
 1. **T-03's no-crash core first.** It is the most serious failure, a crash, and it needs no alert
    mechanism.
 2. **Then T-00**, which unblocks the alert parts of T-01 to T-04.
@@ -113,13 +120,44 @@ crashes the whole program.
 - **What's known:** hailo-apps' own USB-camera lookup ends the program with `exit(1)` when there
   is no camera (`hailo_apps/python/core/gstreamer/gstreamer_app.py`, read only, never edited).
   The boot launcher passes `/dev/video0` directly instead.
-- **Not yet known:** where exactly the crash comes from. Reproducing it needs a person to unplug
-  the camera, so the first subtask is to reproduce and trace it.
+- **Seen in the system log (2026-10-15):** with the camera removed mid-run, the camera element
+  reports "Could not read from resource … poll error 1: Invalid argument (22)"; the library
+  turns it into a shutdown and the program exits with status 1. "No available devices" didn't
+  appear. Those five drops happened without anyone unplugging the camera; the team treats
+  them as a one-off. **If the camera drops out on its own again, flag it to the user.**
+- **Decided for T-03b (start-up without a camera), 2026-10-15:** remove the launcher's
+  automatic `--mock` fallback (`scripts/sv-main.sh:69-74`). Under the boot service it can
+  still be reached if the camera drops between the launcher's two checks. Also in T-03b's
+  scope under D-13: `main.py` enters mock mode by itself when `hailo_apps` fails to import
+  (`if pre_args.mock or not HAILO_AVAILABLE`, `main.py:160`).
 - **Constraints:**
   - The fix lives in this repo (`pipeline/app.py`, `main.py`).
   - Pipeline state changes go through `GLib.idle_add`, which is AGENTS.md Rule 4.
   - The Hailo device must be released and re-acquired as the docs describe.
 - **Risk notes:** the GStreamer/Hailo lifecycle, threading, and hardware-only reproduction.
+
+**T-10 (proposed 2026-10-15).** Fewer hands-on steps. The unit tests run in the Poetry
+environment, which has no GStreamer or HailoRT bindings. `my_hailo_env` has both but no
+pytest. So today nothing can test the pipeline automatically.
+- **Prerequisite, done once by the user** (agents may not change environments):
+  `/home/sv-rpi5/Projects/Second-Vision/second-vision-repo/my_hailo_env/bin/pip install pytest pytest-timeout`.
+  A dry run on 2026-10-15 showed it only adds pytest 9.1.1, pluggy 1.7.0, iniconfig 2.3.1 and
+  pytest-timeout 2.4.0, and upgrades nothing.
+- **Split:**
+  - **T-10a:** test levels. Markers `gst` (needs GStreamer, no devices) and `device` (needs
+    the Hailo chip, camera or boards) skip automatically when the bindings are missing, the
+    device is busy or `second-vision.service` is running. A default timeout makes a hung
+    teardown fail instead of freezing the run. Add the commands for each level, and a helper
+    that posts an error from a pipeline element and runs the GLib loop briefly. Needed by
+    T-03a.
+  - **T-10b:** fake boards on pseudo-terminals, plus captured speech. A glasses ESP32 that
+    answers or goes silent and records the motor packets. A control panel that sends
+    `S:key:value` lines and can go quiet. The phrases and volume the speech worker would play.
+    Needed by T-01, T-02, T-04 and the panel cases.
+  - Later: a fake battery gauge (with T-06), and a recorded video clip for running the real
+    pipeline without a camera (TC-013, TC-015).
+- **Scope:** `tests/` and `pyproject.toml` (test settings, `pytest-timeout` as a dev
+  dependency). No production code. Developer: Sonnet; it is test-side code only.
 
 **T-04.** How the Pi detects the earphones isn't specified (see W-19); `aplay -l` lists output
 devices.

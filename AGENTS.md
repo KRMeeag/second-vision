@@ -275,8 +275,9 @@ three-role workflow for working through the UAT requirements in `docs/testing/`:
 - **Tester** (`tester.md`): verifies every task independently and reports PASS, FAIL or
   BLOCKED with evidence.
 
-There is one implementation task at a time and every task is tested; the Lead decides. See
-`docs/testing/README.md`. **If your checkout has no `.claude/agents/`, ignore this section:
+There is one implementation task at a time and every task is tested; the Lead decides. A hook
+keeps each role to its own files and, in the shell, blocks sudo (one Hailo exception), package
+installs, service control and git writes. See `docs/testing/README.md`. **If your checkout has no `.claude/agents/`, ignore this section:
 this file is complete without it.** Every rule in this file binds all three roles. The role
 files can only narrow these rules, never loosen them.
 
@@ -409,6 +410,7 @@ argument through to `main.py`.
 | `docs/testing/TRACEABILITY.md`  | UAT case → requirement → task → test → status → evidence         |
 | `docs/testing/TASK-BOARD.md`    | UAT implementation tasks, priorities, blockers                   |
 | `docs/testing/DISAGREEMENTS.md` | Where the workbook and the code disagree, and the decisions      |
+| `docs/testing/MANUAL-TESTS.md`  | Every UAT case that needs a person, and how hands-on tests run   |
 
 The UAT workbook itself (`tests/Group2-SV_Test-Tracker.xlsx`) is authoritative but
 gitignored. Read it through `docs/testing/uat-snapshot.yaml`; never edit either by hand.

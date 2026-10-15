@@ -12,14 +12,24 @@ adds new ones.
 | `decision-<n>.md` | Lead | After reviewing attempt *n*: ACCEPTED, RETURNED or BLOCKED |
 
 **Baselines.** Before attempt 1 the Lead copies `src/`, `tests/` and `scripts/` to
-`.claude/baselines/<task>/`. That folder is local and not committed. Later attempts reuse it.
-The task's own changes, across all attempts, are then exactly:
+`.claude/baselines/<task>/` and touches `.stamp` there to mark the time. That folder is local
+and not committed. Later attempts reuse it. The task's own changes, across all attempts, are
+then exactly:
 
 ```bash
 for d in src tests scripts; do diff -ruN -x __pycache__ .claude/baselines/<task>/$d $d; done
 ```
 
-This holds even when earlier accepted work hasn't been committed yet.
+This holds even when earlier accepted work hasn't been committed yet. Changes outside the
+repository since the task began are listed by:
+
+```bash
+python3 .claude/tools/check_outside_writes.py .claude/baselines/<task>/.stamp
+```
+
+**Parked tasks.** A BLOCKED task's changes are copied to `.claude/baselines/<task>/parked/`
+and taken out of the working tree, so the next task starts clean. Resuming it starts a new
+attempt with a fresh baseline; the old folder moves to `.claude/baselines/<task>.parked-<n>/`.
 
 **Evidence levels**, as in TRACEABILITY.md:
 
@@ -45,6 +55,7 @@ A mocked test never proves a physical component works.
 - UAT cases: TC-… (see uat-snapshot.yaml for the verbatim text)
 - Priority / depends on:
 - Developer: developer-sonnet | developer-opus. Why: <one or two sentences against the routing rubric>
+- Tester model: sonnet | opus (opus when the Developer is)
 - Baseline: .claude/baselines/<task>/ (taken YYYY-MM-DD HH:MM, before attempt 1)
 
 ## Goal

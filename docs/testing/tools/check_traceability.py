@@ -7,7 +7,8 @@ Checks, without changing anything:
   - the workbook still matches the fingerprint recorded in uat-snapshot.yaml;
   - every snapshot case has exactly one row in TRACEABILITY.md, and no row is unknown;
   - every requirement ID cited in TRACEABILITY.md is defined in REQUIREMENTS.md;
-  - every task ID cited in TRACEABILITY.md exists on TASK-BOARD.md.
+  - every task ID cited in TRACEABILITY.md exists on TASK-BOARD.md;
+  - the generated case list in MANUAL-TESTS.md is current (tools/manual_tests.py).
 Prints the count of cases per status (to copy into TRACEABILITY.md's totals) and the
 requirements still marked AMBIGUOUS. Exits 1 if any check fails.
 
@@ -71,6 +72,11 @@ def main() -> int:
     ):
         if items:
             problems.append(f"{label}: {', '.join(items)}")
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import manual_tests  # noqa: E402  (sibling tool)
+    if manual_tests.current() != manual_tests.render():
+        problems.append("MANUAL-TESTS.md case list is out of date: run tools/manual_tests.py")
 
     print(f"{len(rows)} matrix rows, {len(cases)} snapshot cases, {len(defined)} requirements")
     print("cases per status:")

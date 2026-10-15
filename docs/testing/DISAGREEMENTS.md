@@ -200,6 +200,13 @@ Original record:
   error that crashes the whole program.
 - **Workbook change:** replace "proceed in mock mode temporarily" with "keep running without
   the camera and keep checking for one".
+- **Follow-up (team, 2026-10-15):** two code paths still enter mock mode without `--mock`
+  being typed, and both go in T-03b:
+  - `scripts/sv-main.sh:69-74` passes `--mock` itself when `/dev/video0` is missing. Its guard
+    for the boot service runs earlier, so the camera dropping between the two checks still
+    reaches it. Decided: remove the fallback.
+  - `main.py:160` runs mock mode when `hailo_apps` doesn't import. Under the same decision,
+    that becomes a clear error instead.
 
 ### D-14 · Strength knob at minimum · TC-032-002, TC-032-003 · DECIDED · Winner: CODE
 

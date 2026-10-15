@@ -52,6 +52,7 @@
 | 37 | Zone boundaries | `0.22 / 0.25 / 0.75 / 0.78`, hold-previous | Hysteresis holds the previous zone rather than dropping the detection |
 | 38 | Depth development location | Prototyping repo first, then port | Depth needs rapid iteration against live captures |
 | 39 | UAT work process | Requirements layer in `docs/testing/`; failsafes first; vision algorithms untouched | The working detection and depth chain is too risky to change; a crash or a silent failure matters more than a missing feature |
+| 40 | Strength knob at minimum | Knob multiplies motor commands; minimum = motors off | Team kept the current code (UAT D-14); the floor-preserving variant on `feat/depth-callback` must not come in by merge |
 
 ---
 
@@ -279,3 +280,18 @@ reach those boards reliably and must never flash firmware. Evidence is graded (u
 on the device, physically measured, observed by a person), so a mocked test is never reported
 as proof that hardware works.
 
+## D40: The strength knob multiplies motor commands; at minimum the motors are off
+
+*Decided by the team, 2026-10-15. Recorded in `docs/testing/DISAGREEMENTS.md` as D-14.*
+
+**What**: the control panel's strength knob (0.00 to 1.00) multiplies every motor command in
+`workers/serial_worker.py`. At minimum the motors are off; at the middle every command is
+halved. The UAT workbook's "minimal" vibration at minimum is corrected to "does not vibrate"
+(W-24).
+
+**Why**: the team chose to keep the code as it is on `feat/test-and-robustness`.
+
+**Watch at merge time**: commit `3797182` on `feat/depth-callback` does the opposite. It
+scales only the part of each command above the lightest felt tap, so the knob's minimum is
+still a felt tap. Merging that branch would silently reverse this decision. Whoever merges
+keeps this branch's scaling, or reopens the decision with the team.

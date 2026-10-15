@@ -1,8 +1,8 @@
 # T-03a · Camera removed while running: stay up, restart vision when a camera returns · Brief, attempt 1
 
-> **DRAFT, written during the 2026-10-15 dry run.** Not yet sent to a Developer. The Lead holds
-> it until the user has answered the pre-start questions at the end, records the answers, and
-> amends this file if they change anything. No baseline has been taken yet.
+> **Written during the 2026-10-15 dry run; the user's answers to the pre-start questions are
+> recorded at the end (2026-10-15).** Not yet sent to a Developer. No baseline has been taken
+> yet. The Lead reviews the answers, amends anything they change, then starts attempt 1.
 
 - Date: 2026-10-15
 - Requirements: REQ-CON-08, **only its "removed while running" half**. Quoted from REQUIREMENTS.md:
@@ -26,6 +26,11 @@
   source has failed, releasing and re-acquiring the Hailo device, and rebuilding. It is also
   timing on the GLib main loop, shared with a panel thread that can request rebuilds at any
   moment (`config_reader.py:103-104`).
+- Tester model: **opus**, because the Developer is Opus (the Lead's routing rule).
+- Test environment: the tests below need GStreamer, which only `my_hailo_env` has, and that
+  environment needs pytest first (task T-10a on the board). Run them with
+  `my_hailo_env/bin/python -m pytest`; the hardware-free suite still runs in the Poetry
+  environment.
 - Baseline: not taken yet. Before attempt 1 it goes to `.claude/baselines/T-03a/`.
 
 ## What happens today (checked by the Lead against the code, 2026-10-15)
@@ -133,8 +138,8 @@ Each criterion restates a requirement; the quoted words are the requirement's.
    - a panel mode switch is still announced ("<mode> mode") and recorded;
    - that mode switch neither ends the program nor tries to start a pipeline on the missing
      camera.
-3. **Motors not left on a stale reading.** This keeps today's end state; it is *pending the
-   user's answer to Q-B*. After the camera is lost, one zero motor command reaches the glasses.
+3. **Motors not left on a stale reading.** This keeps today's end state, confirmed by the user
+   (Q-B). After the camera is lost, one zero motor command reaches the glasses.
    It goes through the existing `serial_queue` contract dict, with all five keys and every value
    0 / False. It is not sent through a new channel.
 4. **Keeps checking; restarts on a camera.** REQ-CON-08: "the device keeps checking the USB ports
@@ -246,8 +251,16 @@ Mock evidence alone leaves criteria 1 to 4 at READY with partial evidence, never
   - a Hailo error. The team reported "No available devices", which has not been traced.
 
   Classify by the element that sent the message, not by its text alone. Leave every other
-  element's error on today's path. If the pre-start reproduction (Q-C) happens, the Lead adds its
-  log here before sending this brief.
+  element's error on today's path.
+
+  **Observed (system log, 2026-10-15, boot service on `deploy/v2`):** five exits between
+  19:35 and 19:49, each the same message from the camera element:
+  `GStreamer Error: gst-resource-error-quark: Could not read from resource. (9), debug:
+  ../sys/v4l2/gstv4l2object.c(6253): gst_v4l2_object_poll (): /GstPipeline:pipeline1/GstV4l2Src:so…
+  poll error 1: Invalid argument (22)`, then "Shutdown initiated", "Exiting with error", exit
+  status 1, and a systemd restart 5 s later. "No available devices" did not appear. Once
+  (19:35:56) the error came 2 s after a fresh start with the camera still attached, so R4's
+  "camera present but failing again" is a real path, not a hypothetical one.
 - **R4, rebuild onto a missing camera.** The library quits the main loop when the new pipeline
   fails (`gstreamer_app.py:599-603`, `:610-613`).
   - Only rebuild once a camera is present.
@@ -260,22 +273,32 @@ Mock evidence alone leaves criteria 1 to 4 at READY with partial evidence, never
   choose one and justify it in your report.
 - **R7, threading.** `trigger_rebuild()` is called from the panel thread. It must stay
   schedule-only (`GLib.timeout_add`) and never touch the pipeline directly.
-- **R8, motors.** Criterion 3 is pending the user's answer (Q-B below). If the answer changes it,
-  the Lead amends this brief before sending.
+- **R8, motors.** Settled: zero after a loss (Q-B).
 
-## Pre-start questions (Lead to user; this brief is not sent until they are answered)
+## Pre-start questions, with the user's answers (2026-10-15)
 
 - **Q-A. The device is in mock mode right now.**
   - On 2026-10-15 the boot service's process (PID 9718, active since 12:22:35) was
     `main.py --mock --serial-port /dev/serial0 --config-port /dev/ttyAMA3`.
   - Agents may not stop services.
   - Device verification of this task needs the service stopped either way.
+  - **Answer:** no action now. By 19:49 the service was running the real pipeline (process
+    title `Parallel-Depth-Detection-V4`); the mock run was earlier, before a reboot. The user
+    stops the service before the hands-on steps (MANUAL-TESTS.md, "Before a hands-on
+    session").
 - **Q-B. Motors after camera loss.** Proposed: zero, which is what happens today because the
   program exits. Criterion 3 depends on the answer.
+  - **Answer:** zero.
 - **Q-C. Reproduce before the Developer starts?** A person unplugs the camera once, with this
   branch run by hand, and the Lead records the exact log for R3.
+  - **Answer:** not needed; the system log already has the error (R3). Nobody unplugged the
+    camera at 19:35 to 19:49: the teammate holding it confirmed it. The user takes it as a
+    one-off and asks to treat it as an unplug for this task. **If the camera drops out again
+    without being unplugged, flag it to the user.**
 - **Q-D. The desk launcher's mock fallback** (`sv-main.sh:69-74`). This doesn't block this task;
   it affects T-03b.
+  - **Answer:** remove it (T-03b). Mock mode only through an explicit `--mock`
+    (DISAGREEMENTS.md D-13).
 
 ## For attempt > 1: failures to fix
 
