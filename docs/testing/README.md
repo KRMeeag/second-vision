@@ -13,6 +13,7 @@ agents) can work from, without reinterpreting the spreadsheet each time.
 | [reports/](reports/) | Per-task briefs, Developer reports, Tester reports, and Lead decisions, with templates | Each role writes its own |
 | [DISAGREEMENTS.md](DISAGREEMENTS.md) | Where the workbook and the code disagree, the decisions, and workbook defects to fix | Lead; decisions come from the team |
 | [DEVIATIONS.md](DEVIATIONS.md) | Every test run with different steps or inputs than the workbook | Tester |
+| [AGENT-GUIDE.md](AGENT-GUIDE.md) | How to run the agent workflow end to end: setup, starting the Lead, what happens in a task, when it needs you, committing, troubleshooting | Hand-written |
 | [MANUAL-TESTS.md](MANUAL-TESTS.md) | Every UAT case that needs a person (plugging hardware, listening, feeling), how a hands-on session runs, and each task's step-by-step procedure | Lead (procedures); the case list is generated |
 | [tools/extract_uat.py](tools/extract_uat.py) | Reads the workbook (never writes it) and refreshes the snapshot | — |
 | [tools/check_traceability.py](tools/check_traceability.py) | Read-only consistency check: every case traced once, every cited requirement and task defined, the workbook unchanged, the manual-test list current; prints the status counts | — |
@@ -25,7 +26,7 @@ files are run by three roles:
 
 | Role | Does | May edit |
 |---|---|---|
-| **Lead**: main session, `claude --agent lead` (Sonnet; `--model opus` for pipeline tasks) | Splits requirements into small tasks, picks the Developer model, briefs, reviews, accepts / returns / blocks, keeps the records | `docs/testing/` (not the snapshot), `documentation/` |
+| **Lead**: main session, started with `.claude/tools/lead.sh` (Sonnet; `--opus` for pipeline tasks) | Splits requirements into small tasks, picks the Developer model, briefs, reviews, accepts / returns / blocks, keeps the records | `docs/testing/` (not the snapshot), `documentation/` |
 | **Developer**: `developer-sonnet` or `developer-opus` | Implements one task, writes and runs tests, reports honestly | `src/`, `tests/`, `scripts/`, its report |
 | **Tester**: `tester` (Sonnet; Opus when the Developer was Opus) | Verifies every task independently; PASS / FAIL / BLOCKED with evidence | `tests/uat/`, its report, `DEVIATIONS.md` |
 
@@ -38,9 +39,10 @@ The gate:
 
 Nobody in the workflow runs git writes; the user commits. A hook
 (`.claude/hooks/role_guard.py`) keeps each role to its areas, for the file tools and for shell
-commands. In the shell it also blocks sudo (except `sudo fuser -v|-k /dev/hailo0`, the latter
-only while `second-vision.service` is stopped), package installs, service control, killing
-processes by name and git writes. Reading command text can't catch everything, so after each
+commands. In the shell it also blocks sudo, package installs, service control, killing processes by
+name and git writes. sudo has two exceptions: `sudo fuser -v|-k /dev/hailo0` (`-k` only while
+`second-vision.service` is stopped), and the simulated camera unplug
+`sudo .claude/tools/usb_sim.py`. Reading command text can't catch everything, so after each
 task the Lead also checks the installed libraries for changed files. Lifecycle states are in
 TASK-BOARD.md and report templates in `reports/README.md`.
 

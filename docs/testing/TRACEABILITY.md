@@ -76,6 +76,22 @@ A case is only `VERIFIED` at the level its requirement needs. A hardware case ba
 `unit` or `mock-integration` evidence stays `READY` or `BLOCKED`, with the partial evidence
 noted.
 
+**Per-device confirmation (team, 2026-10-16).** The hardware cases of one scenario (for
+example TC-022's seven glasses-link cases) are `VERIFIED` when both hold:
+1. every case has an automated test that passes, at the highest level the harness can reach:
+   fake boards, an injected error, the simulated camera unplug, the real devices;
+2. a person has confirmed the real device once for that scenario: one real unplug and replug,
+   one pass with the real panel. This is recorded as `user-observed`.
+
+Cases whose point *is* a person's judgement (how speech sounds, how strong the vibration
+feels) still need that judgement for each case. The aim is that failures are found and fixed
+before the team's human verification, so it needs fewer revisions.
+
+**Evidence the panel can see.** Every automated run that counts as evidence is saved as a
+log in `reports/<task>/evidence/`: the command, date and time, the commit, and pytest's
+per-test results, with the case ID in each test's name. Run it, then screenshot the
+terminal or the log.
+
 ---
 
 ## Implementation tasks

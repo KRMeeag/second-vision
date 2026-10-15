@@ -25,6 +25,9 @@ task that needs one.
    control panel (`/dev/ttyAMA3`), the earphones.
 4. **Afterwards, start the service again**: `sudo systemctl start second-vision`. Until then
    the device does nothing at boot.
+5. **If the camera seems gone after a simulated unplug**, run
+   `sudo .claude/tools/usb_sim.py attach --all`, or replug it. A reboot also restores it.
+   The tool re-attaches by itself after its `--for` time anyway.
 
 ## How a session runs
 
@@ -64,7 +67,9 @@ real board works (TRACEABILITY.md, "Evidence").
 ### T-03a · Camera removed while running · TC-024-003 (its no-crash part)
 
 *Status: planned. Steps from the Lead's brief ([reports/T-03a/brief-1.md](reports/T-03a/brief-1.md)).
-Run after the Tester's automated checks pass.*
+Run after the Tester's automated checks pass. The repeated unplugs, and stopping the program
+while the camera is gone, are covered on the device by the simulated unplug
+(`.claude/tools/usb_sim.py`). This is the one real-camera confirmation.*
 
 Needs the camera, the Hailo chip, the glasses ESP32, the control panel and the earphones,
 with the boot service stopped.
@@ -75,9 +80,7 @@ with the boot service stopped.
 | 2 | Person | Hold an object about 0.5 m in front of the camera | Do you feel vibration? |
 | 3 | Person | Unplug the camera, with the object still there | Does the vibration stop within a few seconds? (The Lead checks the program is still running.) |
 | 4 | Person | Wait about 30 s, then flip a panel mode switch | Do you hear "<mode> mode"? |
-| 5 | Person | Plug the camera back in, then show the object again | Does the vibration come back? |
-| 6 | Person | Repeat steps 3 to 5 twice, once using a different USB port | Same answers as 3 to 5 |
-| 7 | Lead | With the camera unplugged, stops the program | Does it exit? Do the motors stay off? |
+| 5 | Person | Plug the camera into a **different** USB port, then show the object again | Does the vibration come back? |
 
 ## Case list
 

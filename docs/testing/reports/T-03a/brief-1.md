@@ -176,6 +176,14 @@ Each criterion restates a requirement; the quoted words are the requirement's.
 
 Mock evidence alone leaves criteria 1 to 4 at READY with partial evidence, never VERIFIED.
 
+**Updated 2026-10-16 (team decisions):**
+- On the device, the Tester repeats the unplug and replug with the simulated camera unplug
+  (`sudo .claude/tools/usb_sim.py detach camera --for <s>` / `attach camera`, service
+  stopped). That counts as device-integration evidence.
+- The person then confirms the real camera **once** (MANUAL-TESTS.md, T-03a). Under the
+  per-device rule in TRACEABILITY.md that is enough user-observed evidence for criteria 1 to 4.
+- The Tester saves each run's log under `reports/T-03a/evidence/`.
+
 ### For the Developer: testing without a person
 
 - Use real GStreamer with no camera and no Hailo:

@@ -52,7 +52,7 @@ The Lead picks one model per task before it starts, and records it here with the
 
 The **Tester** runs on Sonnet, and on Opus whenever the task's Developer is Opus. The **Lead**
 runs on Sonnet; for an Opus task the user may start it on Opus
-(`claude --agent lead --model opus`).
+(`.claude/tools/lead.sh --opus`). Every role runs at extra-high effort (`xhigh`).
 
 A task touching the AI pipeline is **not** automatically Opus. The rubric is in the Lead's
 instructions.
@@ -148,8 +148,12 @@ pytest. So today nothing can test the pipeline automatically.
     the Hailo chip, camera or boards) skip automatically when the bindings are missing, the
     device is busy or `second-vision.service` is running. A default timeout makes a hung
     teardown fail instead of freezing the run. Add the commands for each level, and a helper
-    that posts an error from a pipeline element and runs the GLib loop briefly. Needed by
-    T-03a.
+    that posts an error from a pipeline element and runs the GLib loop briefly. An
+    **evidence run**: one command that runs every automated UAT test and saves a dated log
+    listing each case ID with PASS / FAIL, for the thesis panel. Needed by T-03a.
+  - The simulated camera unplug already exists: `.claude/tools/usb_sim.py` (local, root via
+    the hook's exception; see the Lead's instructions). Device tests use it rather than
+    their own sysfs writes.
   - **T-10b:** fake boards on pseudo-terminals, plus captured speech. A glasses ESP32 that
     answers or goes silent and records the motor packets. A control panel that sends
     `S:key:value` lines and can go quiet. The phrases and volume the speech worker would play.
