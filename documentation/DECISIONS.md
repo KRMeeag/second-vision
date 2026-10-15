@@ -51,6 +51,7 @@
 | 36 | "multiple X" composition | Compose with **all** phrase types | Restricting it to first sightings made it fire at most once ever |
 | 37 | Zone boundaries | `0.22 / 0.25 / 0.75 / 0.78`, hold-previous | Hysteresis holds the previous zone rather than dropping the detection |
 | 38 | Depth development location | Prototyping repo first, then port | Depth needs rapid iteration against live captures |
+| 39 | UAT work process | Requirements layer in `docs/testing/`; failsafes first; vision algorithms untouched | The working detection and depth chain is too risky to change; a crash or a silent failure matters more than a missing feature |
 
 ---
 
@@ -242,3 +243,39 @@ sits in tension with **D1** (threads over processes). The production math is che
 vectorized NumPy and is safe in-thread; the tension is only about the debug visualization
 path. The depth owner should make this call explicitly during the port rather than defaulting
 either way.
+
+## D39: UAT work runs through `docs/testing/`, failsafes first, vision algorithms untouched
+
+*Decided by the team, 2026-10-15.*
+
+**What**: work driven by the UAT workbook (`tests/Group2-SV_Test-Tracker.xlsx`) goes through
+the requirements layer in `docs/testing/`. The workbook stays authoritative; `REQUIREMENTS.md`,
+`TRACEABILITY.md` and `TASK-BOARD.md` are derived from it, and `DISAGREEMENTS.md` records
+every place where the workbook and the code disagree and which side changes.
+
+**Three rules for that work:**
+
+1. **The computer vision algorithms are not modified.** That covers the detection processing
+   in `pipeline/callbacks.py`, the depth math in `core/depth_utils.py` and the depth-to-motor
+   mapping in `core/haptics.py`. The current version works, and depth in particular was tested
+   by hand and the team is satisfied with it. Tables around them (spoken labels, priorities)
+   and the code that keeps the device alive around them (error handling, reconnects, alerts)
+   may change.
+2. **Critical failsafes come first** (P1): losing the glasses link, the control panel link,
+   the camera or the earphones must never crash the device or fail silently. Everything else
+   is P2.
+3. **Mock mode is for testing only**, reached only through `--mock`. A deployed device never
+   switches into it by itself; without a camera it keeps running and keeps checking for one
+   (`docs/testing/DISAGREEMENTS.md` D-13).
+
+**How the work is done (optional tooling)**: one checkout (`worktrees/kenth`) has a local,
+gitignored Lead / Developer / Tester agent workflow in `.claude/`. A Lead agent plans one task
+at a time, a Developer agent implements it, a Tester agent verifies it independently, and the
+Lead accepts or returns it. Nothing in the repo depends on it: anyone without `.claude/`
+follows `AGENTS.md` alone, and the rules above bind them the same way.
+
+**Why**: ESP32-only cases stay manual and outside the agents' scope, because the agents can't
+reach those boards reliably and must never flash firmware. Evidence is graded (unit, mocked,
+on the device, physically measured, observed by a person), so a mocked test is never reported
+as proof that hardware works.
+

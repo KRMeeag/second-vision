@@ -1,0 +1,282 @@
+# T-03a · Camera removed while running: stay up, restart vision when a camera returns · Brief, attempt 1
+
+> **DRAFT, written during the 2026-10-15 dry run.** Not yet sent to a Developer. The Lead holds
+> it until the user has answered the pre-start questions at the end, records the answers, and
+> amends this file if they change anything. No baseline has been taken yet.
+
+- Date: 2026-10-15
+- Requirements: REQ-CON-08, **only its "removed while running" half**. Quoted from REQUIREMENTS.md:
+  > when the device runs as deployed (started at boot) and the camera is absent at start-up or
+  > removed while running:
+  > - the program does not crash;
+  > - every other part keeps running: the glasses and panel links, speech, and the alerts above;
+  > - the device keeps checking the USB ports for a camera;
+  > - when a camera appears, the vision pipeline starts on it.
+  >
+  > It must never fall back to the testing mock mode.
+- Regression requirement: REQ-DTA-08, "Ctrl+C while detecting and speaking stops both threads after
+  their current loop, with no zombie processes."
+- UAT cases: TC-024-003, partly (see `uat-snapshot.yaml`, `Test Cases!A263:G263`). Its REQ-CON-08
+  part is this task. Its REQ-CON-07 part (the vibration pulses and the "Critical Error: Camera
+  cannot be reached" speech every 10 s) is **not** in this task: it waits for T-00 and becomes
+  T-03c. The case therefore stays NOT-BUILT after this task, with partial evidence noted.
+- Priority / depends on: P1 / none. The alert part, which needs T-00, is excluded.
+- Developer: **developer-opus**. Why: the routing rubric names "surviving camera removal (T-03)"
+  as Opus work. This is the GStreamer/Hailo pipeline lifecycle: tearing down a pipeline whose
+  source has failed, releasing and re-acquiring the Hailo device, and rebuilding. It is also
+  timing on the GLib main loop, shared with a panel thread that can request rebuilds at any
+  moment (`config_reader.py:103-104`).
+- Baseline: not taken yet. Before attempt 1 it goes to `.claude/baselines/T-03a/`.
+
+## What happens today (checked by the Lead against the code, 2026-10-15)
+
+When the camera is unplugged while the pipeline runs:
+
+1. The installed library's bus handler turns **any** GStreamer error into a shutdown. It sets
+   `error_occurred = True` and calls `self.shutdown()`
+   (`hailo_apps/python/core/gstreamer/gstreamer_app.py:481-485`). An end-of-stream from a
+   non-file source also calls `shutdown()` (`:497-505`).
+2. `SecondVisionApp.shutdown()` sets `shutdown_event`, which stops every worker, and starts a
+   5 s force-exit timer (`src/second_vision/pipeline/app.py:854-863`). Its docstring names this
+   exact case: "Bus errors land here too … an unplugged camera" (`app.py:850-852`).
+3. `run()` ends in `sys.exit(1)` because `error_occurred` is set (`gstreamer_app.py:751-753`).
+4. `main()`'s `finally` joins the workers and the process exits (`src/second_vision/main.py:171-177`).
+   On its way out the serial worker sends a zero motor command (`workers/serial_worker.py:267-270`).
+5. The boot service restarts the program after 5 s (`scripts/second-vision.service:57-58`). The
+   launcher then waits up to 60 s for `/dev/video0` and exits again if it never appears
+   (`scripts/sv-main.sh:39-57`). This loop repeats until the camera returns.
+
+So today, "removing the camera crashes the program" means the whole program ends:
+- speech stops;
+- the glasses link stops, and its heartbeat with it;
+- the panel is ignored.
+
+It comes back only through systemd's restart loop. Nothing inside the program watches for the
+camera.
+
+Two more facts any fix must respect:
+- **Stale motors.** While the program runs and no depth readings arrive, the serial worker sends
+  only heartbeats (`serial_worker.py:220-224`). The glasses board **holds its last motor command**
+  (`serial_worker.py:148-150`). A program that merely stays up would therefore leave the wearer
+  feeling the last obstacle reading indefinitely.
+- **The library's rebuild ends the program when the new pipeline fails to start.** It calls
+  `self.loop.quit()` on a PLAYING failure or an exception (`gstreamer_app.py:599-603`,
+  `:610-613`). A rebuild attempted while the camera is missing would end the program. That
+  includes a panel mode switch, which calls `app.trigger_rebuild()` (`config_reader.py:94-105`).
+
+## Goal
+
+When the camera is removed while the device runs, the program stays up:
+- speech, the glasses link and the panel keep working;
+- the dead pipeline is stopped and the Hailo device released;
+- the motors are not left on a stale reading;
+- the program keeps checking for a USB camera.
+
+When a camera appears, the vision pipeline starts on it again, in the mode currently selected,
+inside the same process, without mock mode at any point.
+
+## In scope
+
+- `src/second_vision/pipeline/app.py`, class `SecondVisionApp` only:
+  - recognise a failure or end-of-stream coming from the **camera source** and handle it
+    without calling `shutdown()`;
+  - keep a camera-lost state;
+  - tear down through the existing `_release_old_pipeline()`;
+  - check for a camera on the GLib main loop;
+  - rebuild through the existing `_rebuild_pipeline()` / `trigger_rebuild()` path;
+  - make `trigger_rebuild()` safe while the camera is missing;
+  - send one zero motor command through `serial_queue` (criterion 3).
+- New tests: `tests/test_camera_loss.py` (unit and mock-integration; no camera, no Hailo).
+- Anything else (for example `main.py`): stop and ask the Lead first, with the reason.
+
+## Out of scope: must not change
+
+- **Protected files:**
+  - the vision algorithms: `core/depth_utils.py`, `core/haptics.py`, and the detection and depth
+    processing in `pipeline/callbacks.py`;
+  - `firmware/`;
+  - every installed library (`my_hailo_env`, including `hailo_apps`; AGENTS.md Rule 1). Override
+    in the subclass; never patch.
+- **Contracts (Rule 2):**
+  - the `serial_queue` dict keeps exactly `left, center, right, hazard, hazard_severity`;
+  - `tts_queue` items are unchanged;
+  - worker entry signatures are unchanged (Rule 3).
+- **Workers:** `workers/tts_worker.py`, `workers/serial_worker.py` and `workers/config_reader.py`
+  are unchanged.
+- **Scripts:** `scripts/` is unchanged (`sv-main.sh`, `run.sh`, the service). The start-up case is
+  T-03b.
+- **No new user-facing output.** No spoken alert, no vibration pattern, no "camera has been
+  reconnected" phrase. Those are REQ-CON-07 (T-03c) and REQ-CON-09 (T-03d).
+- **No mock mode on any path (D-13).** No code may start the mock generators or pass `--mock`.
+- **Errors from any element other than the camera source** keep today's behaviour: shutdown, then
+  the boot service restarts the program.
+- **Mode switching with the camera present is unchanged:**
+  - `MIN_REBUILD_INTERVAL_SECONDS`;
+  - request coalescing;
+  - `_release_old_pipeline()`'s ordering;
+  - `_on_pipeline_rebuilt()`'s resets.
+- **The clean-shutdown path is unchanged in behaviour:** `shutdown()` and
+  `_force_exit_if_stuck()`.
+
+## Acceptance criteria
+
+Each criterion restates a requirement; the quoted words are the requirement's.
+
+1. **No crash.** REQ-CON-08: "the program does not crash". When the camera is removed while the
+   pipeline is running, the program keeps running: the same process, no exit, no traceback. This
+   holds in every pipeline mode, including "none", whose idle pipeline also holds the camera.
+2. **Everything else keeps running.** REQ-CON-08: "every other part keeps running: the glasses
+   and panel links, speech". While the camera is missing:
+   - the speech, glasses-link and panel threads stay alive;
+   - the glasses link keeps its heartbeat, so the camera loss causes no
+     "ESP32 stopped acknowledging";
+   - a panel mode switch is still announced ("<mode> mode") and recorded;
+   - that mode switch neither ends the program nor tries to start a pipeline on the missing
+     camera.
+3. **Motors not left on a stale reading.** This keeps today's end state; it is *pending the
+   user's answer to Q-B*. After the camera is lost, one zero motor command reaches the glasses.
+   It goes through the existing `serial_queue` contract dict, with all five keys and every value
+   0 / False. It is not sent through a new channel.
+4. **Keeps checking; restarts on a camera.** REQ-CON-08: "the device keeps checking the USB ports
+   for a camera; when a camera appears, the vision pipeline starts on it". While the camera is
+   missing, the program keeps checking for a USB camera. When one appears, the vision pipeline
+   starts on it:
+   - in the mode currently selected;
+   - inside the same process;
+   - with the Hailo device re-acquired, so no `HAILO_OUT_OF_PHYSICAL_DEVICES` and no
+     "not enough free devices".
+
+   A camera that comes back under a different `/dev/video*` node counts as "a camera appears".
+5. **Never mock mode.** REQ-CON-08: "It must never fall back to the testing mock mode" (D-13).
+   Nothing the camera loss sets off enters mock mode: no mock generator thread, no
+   `[MAIN] Running in MOCK mode`, no generated detections or depth.
+6. **Clean stop still works.** REQ-DTA-08 regression. With the camera missing, Ctrl+C, and
+   SIGTERM as a service stop sends it, still end the program cleanly:
+   - within the existing bounds (`SHUTDOWN_FORCE_EXIT_SECONDS`, the unit's `TimeoutStopSec=10`);
+   - motors at zero;
+   - no leftover process.
+
+   The full unit suite still passes.
+
+## Verification expectations
+
+| Criterion | Minimum evidence level for VERIFIED | Hardware needed |
+|---|---|---|
+| 1 | device-integration + user-observed (a person unplugs the camera); mock-integration first | camera, Hailo |
+| 2 | device-integration + user-observed (the person hears the mode announcement during the loss) | glasses ESP32, panel, earphones |
+| 3 | unit + device-integration + user-observed (the person feels the vibration stop after unplugging) | glasses ESP32 |
+| 4 | device-integration + user-observed (the person replugs, including into another port; vibration responds again) | camera, Hailo, glasses ESP32 |
+| 5 | unit + device-integration (log) | camera |
+| 6 | mock-integration + device-integration; unit suite | camera |
+
+Mock evidence alone leaves criteria 1 to 4 at READY with partial evidence, never VERIFIED.
+
+### For the Developer: testing without a person
+
+- Use real GStreamer with no camera and no Hailo:
+  - build the app without `__init__`, as `tests/test_pipeline_modes.py` does, or build a minimal
+    pipeline whose source element is named `source`;
+  - post an error from that element to the bus (`Gst.Message.new_error`) and run the GLib loop
+    briefly;
+  - assert that `shutdown()` is not called, that a zero dict arrives in `serial_queue`, and that
+    the check for a camera is scheduled;
+  - monkeypatch the camera lookup to report a camera, and assert that a rebuild follows on the
+    main loop;
+  - also cover: an error from a *non-source* element still shuts down; `trigger_rebuild()` during
+    the loss does not build; a shutdown during the loss exits.
+- Show that each new test **fails on the baseline**. Copy `.claude/baselines/T-03a/src` into a
+  scratch folder and point the test at it, or explain the method you used.
+- Don't run the real pipeline, unplug anything, or stop services. The device runs belong to the
+  Tester and to the Lead with the user. On 2026-10-15 `second-vision.service` was active.
+
+## References
+
+- **AGENTS.md:**
+  - Rules 1 and 2;
+  - Rule 3 (worker contracts);
+  - Rule 4: pipeline state changes only on the GLib main loop. The bus watch and
+    `GLib.timeout_add`/`idle_add` callbacks run there; never `set_state` from a worker thread;
+  - Rule 6: say where you checked each library call;
+  - Rule 7.
+- **Installed library, read only:**
+  `my_hailo_env/lib/python3.13/site-packages/hailo_apps/python/core/gstreamer/gstreamer_app.py`.
+  The Lead found it byte-identical to the workbench copy (`diff -q`, 2026-10-15). Relevant parts:
+  - `bus_call` 475-495;
+  - `on_eos` 497-505;
+  - `_rebuild_pipeline` 541-616;
+  - `shutdown` 618-639;
+  - `run` 694-756.
+- **Camera lookup:** `hailo_apps/python/core/common/camera_utils.py` `get_usb_video_devices()`
+  391-418, Linux branch 421-448.
+  - On Linux it returns **paths** (`/dev/videoN`), keeping only USB capture devices.
+  - It runs one `udevadm` subprocess per `/dev/video*` node.
+  - Note: `.hailo/memory/camera_and_display.md:19` in the workbench says it returns integer
+    indices. That is wrong for Linux; trust the source.
+- **hailo-apps docs** (`/home/sv-rpi5/Projects/Test-Projects/ai-test/hailo-apps`):
+  - `.hailo/memory/camera_and_display.md`: "Never assume `/dev/video0`";
+  - `.hailo/toolsets/core-framework-api.md`: `get_usb_video_devices`;
+  - `.hailo/instructions/gstreamer-pipelines.md`: watchdog and rebuild;
+  - `.hailo/memory/common_pitfalls.md`: `HAILO_OUT_OF_PHYSICAL_DEVICES`.
+
+  No hailo-apps document describes recovering from a camera unplug. The established pattern is
+  the library's own `_rebuild_pipeline()`, used for file looping and by the watchdog, together
+  with this repo's `_release_old_pipeline()`.
+- **This repo:**
+  - `pipeline/app.py`:
+    - 121-127 and 705-706: tearing down a v4l2 source mid-teardown has segfaulted;
+    - 665-725: `trigger_rebuild` / `_rebuild_pipeline`;
+    - 756-831: `_release_old_pipeline`;
+    - 833-887: shutdown and force exit;
+  - `workers/serial_worker.py` 148-150, 220-224, 267-270;
+  - `workers/config_reader.py` 94-105;
+  - `main.py` 159-177;
+  - `tests/test_pipeline_modes.py`.
+
+## Open risks: stop and report instead of guessing
+
+- **R1, teardown hang.** The pipeline's PAUSED→READY transition deadlocks about 1 stop in 4
+  (`app.py:843-847`). If tearing down after a camera loss can block the GLib main loop,
+  recovery silently never happens. Add no unbounded wait on the main loop. If you can't bound
+  the teardown, stop and report. Don't invent a fallback such as exiting the program.
+- **R2, native crash.** Tearing down a v4l2 source has segfaulted inside `gst_object_unref`
+  (`app.py:121-127`), and Python can't catch that. Report any segfault you see, even once.
+- **R3, the real unplug message is unknown.** It may be:
+  - an ERROR from `v4l2src name=source`;
+  - an end-of-stream;
+  - a Hailo error. The team reported "No available devices", which has not been traced.
+
+  Classify by the element that sent the message, not by its text alone. Leave every other
+  element's error on today's path. If the pre-start reproduction (Q-C) happens, the Lead adds its
+  log here before sending this brief.
+- **R4, rebuild onto a missing camera.** The library quits the main loop when the new pipeline
+  fails (`gstreamer_app.py:599-603`, `:610-613`).
+  - Only rebuild once a camera is present.
+  - Report what happens if the camera vanishes again mid-rebuild, and how you handled it.
+- **R5, `error_occurred`.** The library sets it on any ERROR, and then a later clean stop exits
+  with code 1 (`gstreamer_app.py:751-753`). Don't let a recovered camera loss turn a later clean
+  stop into an error exit, or report why it must.
+- **R6, cost of checking.** Each check runs `udevadm` once per video node, on the main loop if
+  done there. Keep checks cheap and their interval sensible. The requirement gives no interval;
+  choose one and justify it in your report.
+- **R7, threading.** `trigger_rebuild()` is called from the panel thread. It must stay
+  schedule-only (`GLib.timeout_add`) and never touch the pipeline directly.
+- **R8, motors.** Criterion 3 is pending the user's answer (Q-B below). If the answer changes it,
+  the Lead amends this brief before sending.
+
+## Pre-start questions (Lead to user; this brief is not sent until they are answered)
+
+- **Q-A. The device is in mock mode right now.**
+  - On 2026-10-15 the boot service's process (PID 9718, active since 12:22:35) was
+    `main.py --mock --serial-port /dev/serial0 --config-port /dev/ttyAMA3`.
+  - Agents may not stop services.
+  - Device verification of this task needs the service stopped either way.
+- **Q-B. Motors after camera loss.** Proposed: zero, which is what happens today because the
+  program exits. Criterion 3 depends on the answer.
+- **Q-C. Reproduce before the Developer starts?** A person unplugs the camera once, with this
+  branch run by hand, and the Lead records the exact log for R3.
+- **Q-D. The desk launcher's mock fallback** (`sv-main.sh:69-74`). This doesn't block this task;
+  it affects T-03b.
+
+## For attempt > 1: failures to fix
+
+Not applicable (attempt 1).

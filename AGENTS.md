@@ -1,4 +1,7 @@
-# CLAUDE.md — AI Agent Instructions for Second Vision
+# AGENTS.md — AI Agent Instructions for Second Vision
+
+> Read by every AI coding agent in this repo. Claude Code loads it through `CLAUDE.md`,
+> which imports this file.
 
 > **Project**: Second Vision — IoT-Based Smart Glass for the Visually Impaired  
 > **Hardware**: Raspberry Pi 5 + Hailo-8 AI Hat+ (26 TOPS) + ESP32 + vibration motors  
@@ -12,7 +15,7 @@ Second Vision is an assistive device for visually impaired users. It runs real-t
 
 - **Audio feedback** via TTS (espeak-ng) — announces detected objects with spatial zones ("person left", "car center")
 - **Haptic feedback** via 3 vibration motors (L/C/R on headband) — proportional to obstacle proximity from depth estimation
-- **Physical control panel** (Arduino) — switches/knobs for runtime configuration
+- **Physical control panel** (a second ESP32) — switches/knobs for runtime configuration
 
 The system uses the `hailo_apps` framework as an **installed library** (`pip install hailo-apps`). We extend it by subclassing, never by modifying library code.
 
@@ -20,34 +23,49 @@ The system uses the `hailo_apps` framework as an **installed library** (`pip ins
 
 ## Repository Structure
 
+This lists what each part *is*. For what is done or pending, see
+[documentation/TASKS.md](documentation/TASKS.md), not this tree.
+
 ```
-second-vision-repo/
-├── my_hailo_env/                  ← Python venv (hailo_apps installed here)
+second-vision-repo/                ← also checked out as git worktrees beside it
+├── CLAUDE.md                      ← Imports this file, for Claude Code
+├── AGENTS.md                      ← This file
+├── my_hailo_env/                  ← Python venv (hailo_apps installed here); a symlink in worktrees
 ├── src/
 │   ├── second_vision/
 │   │   ├── main.py                ← Entry point: python3 src/second_vision/main.py
 │   │   ├── main2.py               ← Temporary smoke-test script (deletion pending)
 │   │   ├── pipeline/
-│   │   │   ├── app.py             ← SecondVisionApp (extends GStreamerApp)
-│   │   │   ├── callbacks.py       ← on_det_frame (built), on_depth_frame (placeholder)
+│   │   │   ├── app.py             ← SecondVisionApp (extends GStreamerApp); builds the pipeline
+│   │   │   ├── callbacks.py       ← on_det_frame / on_depth_frame: detection and depth processing
 │   │   │   └── TBR-*.py           ← Draft/staging files, unwired — nothing imports them
 │   │   ├── workers/
-│   │   │   ├── tts_worker.py      ← Serialized, interruptible espeak-ng
-│   │   │   ├── serial_worker.py   ← Packing built; serial I/O still stubbed
-│   │   │   └── config_reader.py   ← Parsing built; serial I/O still stubbed
+│   │   │   ├── tts_worker.py      ← Speech: serialized, interruptible espeak-ng
+│   │   │   ├── serial_worker.py   ← Glasses ESP32 link: motor packets, heartbeat, ACK / link state
+│   │   │   └── config_reader.py   ← Control panel link: settings and mode switches
 │   │   ├── core/
 │   │   │   ├── config.py          ← SystemConfig (thread-safe shared state)
 │   │   │   ├── priority.py        ← PriorityMailbox + all TTS tunables
-│   │   │   └── depth_utils.py     ← Placeholder (real work in the prototyping repo)
-│   │   └── mock/
-│   │       └── data_generator.py  ← Fake data for --mock mode
+│   │   │   ├── depth_utils.py     ← Depth post-processing math
+│   │   │   ├── haptics.py         ← Depth readings → motor commands
+│   │   │   ├── depth_view.py      ← Depth debug display
+│   │   │   ├── calibration.py, capture.py, evaluate.py ← Depth calibration, capture, scoring
+│   │   │   └── imu_telemetry.py, turn_event.py ← Head-turn data from the glasses' IMU
+│   │   └── mock/                  ← Fake data for --mock mode (testing only)
 │   └── custom_depth_detection/    ← Older prototype drafts, not part of the app
+├── models/hef_deploy/, hef_eval/  ← Detection model (HEF) and labels.json
+├── firmware/
+│   ├── esp32_haptic_feedback/     ← Glasses ESP32: motors, BMI160
+│   └── control-panel/             ← Control panel ESP32: switches, knobs (PROTOCOL.md)
+├── hardware/PCB/                  ← Haptic mainboard PCB design
 ├── scripts/
 │   ├── run.sh                     ← Venv + Hailo env + PYTHONPATH, args passed through
-│   ├── env.sh                     ← Venv activation only
-│   └── sv-main.sh                 ← Fixed-argument launcher
-├── tests/
-│   └── test_priority.py           ← 19 tests (mailbox, scoring, tiers, preemption)
+│   ├── env.sh                     ← Venv activation only; must be `source`d
+│   ├── sv-main.sh                 ← Fixed-argument launcher, run by the boot service
+│   ├── second-vision.service, install-service.sh ← Start at boot (systemd)
+│   └── power_monitor.py, test_motor_packet.py, draft-run-*.sh ← Bench tools, drafts
+├── tests/                         ← Unit tests (test_*.py), hardware-free
+├── docs/testing/                  ← UAT requirements, traceability, task board, reports
 ├── documentation/                 ← Project documentation (team source of truth)
 │   ├── PROJECT.md                 ← Project overview, team, hardware specs
 │   ├── ARCHITECTURE.md            ← System architecture, data flow, protocols
@@ -56,6 +74,7 @@ second-vision-repo/
 │   ├── TASKS.md                   ← Status board — source of truth for what's done
 │   └── FIELD-TESTING.md           ← Real-world tuning scenarios (final activity)
 ├── .agents/                       ← Session handoffs. LOCAL to this machine only
+├── .claude/                       ← Local agent workflow (gitignored; may be absent)
 └── pyproject.toml
 ```
 
@@ -63,7 +82,8 @@ Notes that matter:
 
 - **`core/protocol.py` does not exist yet.** Packet packing currently lives inline in
   `workers/serial_worker.py`. Extracting it is a planned task.
-- **`config/` is empty.** There is no `defaults.yaml`; `SystemConfig` defaults are hardcoded.
+- **There is no settings file.** `SystemConfig` defaults are hard-coded and nothing is saved
+  between sessions. (Base checkouts may have an empty `config/` folder.)
 - **`.agents/` is local to this machine** and is not shared with the team. It is the
   narrative record (why, decisions, instructive failures). `documentation/` is what the team
   and their agents actually read.
@@ -78,13 +98,15 @@ Five workstreams run **concurrently**, each driven by a different team member wh
 reads these docs cold. Read [documentation/PLAN.md](documentation/PLAN.md) for the full
 picture and [documentation/TASKS.md](documentation/TASKS.md) for status.
 
-| Workstream | State |
-|---|---|
-| Object detection callbacks | Substantially built; recent fixes unvalidated on hardware |
-| Depth estimation callbacks | Placeholder here; approach still being designed in the prototyping repo |
-| TTS | Built, including priority/preemption. Tuning scheduled last |
-| ESP32 vibration motors | ESP32 side done; **RPi-side serial layer unimplemented** |
-| Control panel + mode switching | Stubbed; hardware in progress |
+The five workstreams:
+1. Object detection callbacks
+2. Depth estimation callbacks
+3. TTS
+4. ESP32 vibration motors
+5. Control panel + mode switching
+
+Their state lives in TASKS.md and PLAN.md, not here; this file stopped tracking it because
+it went stale.
 
 `documentation/ARCHITECTURE.md` carries a **shared-files map** showing which workstreams
 touch which files. It flags collision paths so you can coordinate — it is **not** an
@@ -94,9 +116,14 @@ ownership gate, and it does not forbid editing anything.
 
 ## Critical Rules
 
-### 1. Never modify the hailo_apps library
+### 1. Never modify installed libraries; all changes stay in this repo
 
 The `hailo_apps` package lives in `my_hailo_env/lib/python3.13/site-packages/hailo_apps/`. It is a third-party library. **Do not edit it.** Extend behavior by subclassing in `src/second_vision/`.
+
+The same applies to **every** installed package: anything in `my_hailo_env/`, the Poetry
+environment, or the system Python. No agent edits an installed library under any
+circumstances. All code changes are made inside this repository. If a fix seems to need a
+library change, stop and report it instead.
 
 ```python
 # CORRECT: Subclass GStreamerApp from the installed library
@@ -134,19 +161,25 @@ Queue dictionaries are the API between components. **Never change these keys wit
 `peek()` — `put_nowait()` and `get()` do not exist on it. It keeps the higher-priority of
 {stored, incoming}. `serial_queue` remains a plain FIFO `queue.Queue`.
 
-### 3. Stub pattern — replace internals, keep interface
+### 3. Worker contracts — keep the interface, change internals deliberately
 
-Every module has a clearly marked `# STUBS BELOW` section. When implementing real functionality:
+The workers began as stubs marked `# STUBS BELOW`. Those markers are gone: the serial and
+panel workers open real ports now. What still holds:
 
-- **Replace only the stub functions** (prefixed with `_`)
-- **Never change** the main worker loop, queue reading logic, or config checking
-- The worker function signature is the contract: `def tts_worker(user_data, config):`
+- **Worker entry signatures are contracts.** `main.py` starts each worker as
+  `tts_worker(user_data, config)`, `serial_worker(user_data, config)` and
+  `config_reader_worker(user_data, config)`.
+- **Change a worker's main loop, queue reading or config checks only when the task requires
+  it.** Keep Rule 4's threading guarantees, and name the change in your report.
+- Private `_prefixed` helpers are internals: change them freely within your task's scope.
 
 ### 4. Threading rules
 
 - All workers are `threading.Thread(daemon=True)` — they die when main exits
 - All workers check `user_data.shutdown_event.is_set()` in their loop
-- All workers use `queue.get(timeout=1.0)` — never blocking get
+- No worker waits forever. Queue waits always have a timeout: the serial worker polls
+  `serial_queue` every 0.25 s. The speech worker polls the `PriorityMailbox`, whose `take()`
+  never blocks.
 - **Never block the GStreamer callback** — use `put_nowait()`, catch `queue.Full`, drop the frame
 - GStreamer state changes (pipeline rebuild) MUST go through `GLib.idle_add()`, never called directly from worker threads
 
@@ -183,6 +216,13 @@ The hailo-apps repo at `/home/sv-rpi5/Projects/Test-Projects/ai-test/hailo-apps`
 
 **Never invent GStreamer pipeline strings or HailoRT API usage** when the prototyping repo already has established working implementations to reference. However, if the required functionality is not found in the prototyping repo, you may invent GStreamer pipeline strings or HailoRT API usage, but you MUST consult the hailo-apps documentation first. Never modify code in `hailo_apps` directly.
 
+**No assumptions from memory.** Before any change that touches the Hailo side of the system,
+confirm in the hailo-apps documentation and its examples that the function exists and
+behaves the way you intend. That covers GStreamer elements, HailoRT calls, `hailo_apps`
+classes or functions, HEF handling, and starting, stopping or rebuilding the pipeline.
+Check in the workbench repo above, or online at <https://github.com/hailo-ai/hailo-apps>,
+and say where you checked. "I remember it works this way" is not a check.
+
 ### 7. Verify before you trust — including this document
 
 Documentation records **what the developers intended**. Code records what is true. These
@@ -190,8 +230,8 @@ drift apart, and this project has already been bitten by it repeatedly.
 
 - **Check the current state of a file before acting on any description of it.** Read the
   function bodies. **Confirm the callers exist** — something implemented but never called is
-  not a working feature. (Real example: `_pack_heartbeat()` is fully written and has zero
-  callers, so no heartbeat is ever sent.)
+  not a working feature. (Real example: `_pack_heartbeat()` was fully written but had zero
+  callers, so for weeks no heartbeat was ever sent. It is called now, because someone checked.)
 - **When two sources disagree, never silently pick one.** Surface the disagreement to the
   user and say which one the code actually supports. Quietly resolving a conflict between a
   draft and production code has already shipped a real bug here.
@@ -219,6 +259,26 @@ how the current drift formed.
   **updating the documentation is your immediate next task.** Do not wait to be asked, and do
   not treat the port as finished until it is written down. The depth section of
   ARCHITECTURE.md is deliberately left unpinned until that moment.
+
+---
+
+## Agent workflow (Lead / Developer / Tester): optional, local
+
+Some checkouts (currently `worktrees/kenth`) have a gitignored `.claude/` folder. It holds a
+three-role workflow for working through the UAT requirements in `docs/testing/`:
+
+- **Lead** (`.claude/agents/lead.md`): runs as the main session. Plans and splits tasks,
+  chooses the Developer model, reviews, and accepts or returns work. Never edits production
+  code.
+- **Developer** (`developer-sonnet.md` and `developer-opus.md`): one role, the same
+  instructions on two models. Implements one task at a time and writes its tests.
+- **Tester** (`tester.md`): verifies every task independently and reports PASS, FAIL or
+  BLOCKED with evidence.
+
+There is one implementation task at a time and every task is tested; the Lead decides. See
+`docs/testing/README.md`. **If your checkout has no `.claude/agents/`, ignore this section:
+this file is complete without it.** Every rule in this file binds all three roles. The role
+files can only narrow these rules, never loosen them.
 
 ---
 
@@ -310,12 +370,20 @@ argument through to `main.py`.
 
 ## Testing
 
-- `--mock` flag runs the full system with fake data — no hardware needed
-- Each worker prints `[STUB]` prefixed messages when using stub implementations
-- **Run tests with `poetry run pytest tests/ -v`** — the system python and `my_hailo_env`
-  both lack pytest; only the Poetry env has it
-- `tests/test_priority.py` (19 tests) covers the mailbox, scoring, tiers, preemption, and
-  worker serialization against a fake espeak — no hardware needed
+- `--mock` runs the full system with fake data, no hardware needed. It is for testing only:
+  nothing may switch a deployed device into mock mode on its own.
+- **Run the unit tests with the base checkout's Poetry environment.** The system python and
+  `my_hailo_env` both lack pytest. In the base checkout, `poetry run pytest tests/ -q` works.
+  In a **git worktree** it does not: Poetry ties environments to the folder path and silently
+  creates a new, empty one. From a worktree, use:
+  ```bash
+  ~/.cache/pypoetry/virtualenvs/second-vision-repo-wwT_Rtha-py3.13/bin/python -m pytest tests/ -q
+  ```
+  That still tests the worktree's own code: each test file puts its own repo's `src/` first
+  on the import path.
+- `tests/` holds the unit tests, all hardware-free (mailbox and speech worker, serial packets
+  and link state, depth math, haptics, pipeline modes, detection classes, volume). UAT-level
+  tests go in `tests/uat/`.
 - Protocol encoding/decoding and `SystemConfig` can be tested without any hardware
 - For logic that runs inside a hailo callback, a mocked-hailo harness (duck-typed
   bbox/detection/ROI/track-id objects) has repeatedly caught real bugs that eyeballing
@@ -336,6 +404,14 @@ argument through to `main.py`.
 | `documentation/DECISIONS.md`    | Architectural decisions with rationale; superseded ones retained |
 | `documentation/PROJECT.md`      | Project overview, team, hardware                                 |
 | `documentation/FIELD-TESTING.md`| Real-world tuning scenarios — the final activity                 |
+| `docs/testing/README.md`        | The UAT requirements layer: how the files below fit together     |
+| `docs/testing/REQUIREMENTS.md`  | Normalized requirements derived from the UAT workbook            |
+| `docs/testing/TRACEABILITY.md`  | UAT case → requirement → task → test → status → evidence         |
+| `docs/testing/TASK-BOARD.md`    | UAT implementation tasks, priorities, blockers                   |
+| `docs/testing/DISAGREEMENTS.md` | Where the workbook and the code disagree, and the decisions      |
+
+The UAT workbook itself (`tests/Group2-SV_Test-Tracker.xlsx`) is authoritative but
+gitignored. Read it through `docs/testing/uat-snapshot.yaml`; never edit either by hand.
 
 `.agents/*.md` are session handoffs: rich narrative context, but **local to this machine**
 and not the status board. Where a handoff and `TASKS.md` disagree, verify against the code.

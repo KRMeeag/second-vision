@@ -229,3 +229,10 @@ my_hailo_env/
 
 # Agents context for development
 .agents/
+
+# Thesis UAT tracker - the authoritative copy is shared outside git
+tests/Group2-SV_Test-Tracker.xlsx
+~$*.xlsx
+
+# Claude Code workflow (Lead / Developer / Tester agents, hooks, baselines) - local to this checkout
+.claude/
