@@ -1,0 +1,9 @@
+ 0 scheduler never calls on_speak                   killed: 1 failed in 0.81s
+ 1 on_speak called while the lock is held           killed: 1 failed, 4 passed in 0.87s
+ 2 an error in on_speak propagates                  killed: 1 failed, 4 passed in 0.87s
+ 3 hook fires when raised, not when spoken          killed: 1 failed in 0.81s
+ 4 re-raising unchanged keeps the old hook          killed: 1 failed, 7 passed in 0.83s
+ 5 camera alert raised without the pattern          killed: 1 failed, 9 passed in 0.83s
+ 6 camera alert asks for the reconnect pattern      killed: 1 failed, 9 passed in 0.84s
+ 7 camera code needs a pattern player               killed: 1 failed, 16 passed in 0.95s
+ 8 pattern also played on the reconnect sentence    killed: 1 failed, 11 passed in 0.84s

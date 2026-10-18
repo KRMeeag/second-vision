@@ -119,6 +119,12 @@ Items arriving without `priority` / `tier` (mock data, mode announcements) are d
 `item_priority()` / `item_tier()` in `core/priority.py`. Announcements get `+inf` priority
 and urgent tier, so a physical mode switch is always heard.
 
+**Failsafe alerts** (D41, 2026-10-18) go through the same mailbox as `{"announce": str}`, but
+only via `user_data.alerts` (`core/alerts.py`, the alert scheduler), never offered directly.
+The speech worker asks `alerts.is_failsafe(item)`: an alert is spoken even with `tts_enabled`
+off, at `max(tts_volume, 0.30)`; every other item still obeys the switch and the knob. The
+queue keys are unchanged.
+
 ### Depth → Serial
 
 ```
@@ -131,6 +137,18 @@ GStreamer depth_callback → user_data.serial_queue.put_nowait({
 })
 ```
 
+**Failsafe vibration patterns** (D41, 2026-10-18): `user_data.patterns.play(name)`
+(`core/haptic_patterns.py`; reconnect, camera, earphones) from any thread. The serial worker
+plays a pattern by sending one ordinary motor packet per step, so the firmware is unchanged.
+While it plays, the pattern owns the motors, for at most 2.25 s:
+- depth duties are not sent, and the depth frames that arrive meanwhile are discarded;
+- a ground hazard among them is still sent;
+- the vibration switch is ignored, and the strength is `max(motor_strength, 0.30)` × duty
+  (plain multiply, as for depth).
+
+If the board stops answering, patterns are dropped. After a pattern, depth resumes on its next
+frame.
+
 ### Arduino → Config
 
 ```
@@ -140,6 +158,12 @@ Text protocol over serial (9600 baud):
   "M:detection\n"              → config.update(pipeline_mode="detection") + rebuild
   "B:announce_status\n"        → button event handler
 ```
+
+**"Is depth on?" and "is detection on?" come only from `pipeline_mode`.** The DEPTH and DETECT
+rockers reach the Pi only as the `M:` line. The panel never sends `depth_enabled` or
+`detection_enabled`, so those two `SystemConfig` fields stay True for the whole run, whatever the
+rockers say. Depth is on in mode `depth` or `both`, and detection in `detection` or `both`
+(`core/connections.py` `depth_on()`).
 
 ---
 
@@ -270,7 +294,9 @@ find a gate muting an urgent escalation, the gate is the bug — the bypass is i
 While speaking, the worker polls the mailbox every ~50 ms. A pending item preempts if it is
 urgent-tier **or** beats the current item's priority by more than `PREEMPT_MARGIN`. The
 `PREEMPT_USE_TIER` flag flips this to pure relative-margin; both paths are kept live for
-on-device A/B comparison.
+on-device A/B comparison. A pending item that would not be spoken does not preempt: with the
+speech switch off, a detection cannot cut a failsafe alert. A preempting item is spoken at its own
+volume.
 
 All tunables live in `core/priority.py`, plus the detection-side constants in
 `pipeline/callbacks.py`. See [FIELD-TESTING.md](FIELD-TESTING.md) for the symptom → parameter
@@ -349,6 +375,7 @@ coordinates directly on what lands and how it affects the other side.
 | `pipeline/callbacks.py` | depth (`_process_real_depth`), detection (`_process_real_detections`), TTS (tuning constants) |
 | `pipeline/app.py` | control (`get_pipeline_string`, `_connect_callback`), depth (branch wiring), detection (tracker params) |
 | `core/config.py`, `workers/config_reader.py` | control |
-| `workers/serial_worker.py`, `core/protocol.py` | firmware, depth (hazard fields) |
+| `workers/serial_worker.py`, `core/protocol.py` | firmware, depth (hazard fields), failsafe patterns (demo track) |
+| `workers/tts_worker.py`, `core/alerts.py`, `core/haptic_patterns.py` | TTS, failsafe alerts and patterns (demo track) |
 | `core/priority.py` | TTS |
 | `main.py` | all — worker startup and `user_data` construction |

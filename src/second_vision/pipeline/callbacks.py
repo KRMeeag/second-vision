@@ -77,6 +77,16 @@ except ImportError as exc:  # pragma: no cover — mock machines without cv2/num
     DEPTH_POSTPROC_AVAILABLE = False
     _DEPTH_IMPORT_ERROR = exc
 
+# The failsafe status drawn on the camera picture (core/status_view.py; numpy/cv2 only). Its own
+# guard, for the reason the depth block above gives: a missing display aid must never switch the
+# detection path off.
+try:
+    from second_vision.core.status_view import draw_status
+except ImportError:  # pragma: no cover — mock machines without cv2/numpy
+    draw_status = None
+STATUS_ERROR_LOG_SECONDS = 10.0
+_last_status_error_at = 0.0
+
 # priority.py is pure-Python (no hailo/gi) so it imports in mock mode too. It
 # owns the scoring/preemption tunables; this module only computes per-detection
 # priority/tier and offers the winner to the PriorityMailbox (user_data.tts_queue).
@@ -700,7 +710,25 @@ def _draw_detection_overlay(element, buffer, user_data, active_zones: set, det_l
     cv2.putText(frame_bgr, f"FPS: {fps:.1f}", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
+    # The failsafe checks, on the picture (core/status_view.py): what a tester and the TV see.
+    status = getattr(user_data, "status", None)
+    if status is not None and draw_status is not None:
+        try:
+            draw_status(frame_bgr, status, time.monotonic())
+        except Exception as exc:  # a display aid: it never costs the frame
+            _log_status_error(exc)
+
     user_data.set_frame(frame_bgr)
+
+
+def _log_status_error(exc) -> None:
+    """Report a status-drawing failure at most once every STATUS_ERROR_LOG_SECONDS."""
+    global _last_status_error_at
+    now = time.monotonic()
+    if now - _last_status_error_at < STATUS_ERROR_LOG_SECONDS:
+        return
+    _last_status_error_at = now
+    print(f"[CHECK] could not draw the status on the picture (throttled): {exc!r}")
 
 
 def _publish_motors(user_data, motors, hazard=False, severity=0) -> None:

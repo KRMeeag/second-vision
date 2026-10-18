@@ -3,6 +3,8 @@
 import errno
 import time
 
+from second_vision.core.connections import panel_back, panel_lost
+
 # The panel is optional hardware: the pipeline has to run on a dev machine with
 # no board attached, and sometimes no pyserial at all. Mirrors serial_worker.py.
 try:
@@ -40,6 +42,11 @@ def config_reader_worker(user_data, config, port_path, app):
     """Main config reader loop."""
 
     port = _open_config_port(port_path)
+    if port is None and port_path:
+        # A panel was asked for and its port cannot be opened: absent at start-up (F6). The port
+        # is not reopened, so the alert lasts the run. With no port asked for there is no panel
+        # to miss, and nothing is said.
+        _report_panel_link(user_data, "lost")
 
     # Panel liveness. Armed as soon as a port actually opens, NOT on the first
     # heartbeat: a panel that never beats at all is the failure most worth
@@ -67,6 +74,7 @@ def config_reader_worker(user_data, config, port_path, app):
                       f"first {ALIVE_TIMEOUT_SECONDS:.0f}s — the port opened but "
                       f"nothing is talking. Check the link wire and that the "
                       f"panel firmware is flashed.")
+            _report_panel_link(user_data, "lost")
 
         if not line:
             continue
@@ -108,6 +116,7 @@ def config_reader_worker(user_data, config, port_path, app):
                 if parts[1] == "alive":
                     if panel_missing:
                         print("[CONFIG] Control panel is back")
+                        _report_panel_link(user_data, "back")
                     last_alive = time.monotonic()
                     ever_alive = True
                     panel_missing = False
@@ -126,6 +135,26 @@ def config_reader_worker(user_data, config, port_path, app):
             print(f"[CONFIG] Parse error: {e}")
 
     _close_config_port(port)
+
+def _report_panel_link(user_data, state: str) -> None:
+    """
+    Tell the wearer the control panel link changed (F6, core/connections.py): "lost" raises
+    "Controller board cannot be reached. Using the current settings." (every 5 minutes); "back"
+    stops it and says the D-17 sentence. Does nothing without an alert scheduler on user_data.
+    Only short calls into the scheduler, never a wait; an error is logged, never raised into
+    the loop.
+    """
+    alerts = getattr(user_data, "alerts", None)
+    if alerts is None:
+        return
+    try:
+        if state == "lost":
+            panel_lost(alerts)
+        else:
+            panel_back(alerts)
+    except Exception as exc:  # the panel reader must go on
+        print(f"[CONFIG] Could not report the panel link {state}: {exc!r}")
+
 
 def _cast_value(key, value_str):
     """Convert string value to appropriate Python type."""

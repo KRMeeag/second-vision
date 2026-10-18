@@ -1,0 +1,72 @@
+.......................................................................F [  6%]
+......s................................................................. [ 13%]
+.....................................................sssssssssssssssssss [ 20%]
+..........................sssssssssssssssssssssssssssssssssssssssssssss. [ 27%]
+........................................................................ [ 34%]
+........................................................................ [ 41%]
+........................................................................ [ 48%]
+..............................................................ssssssssss [ 55%]
+sssssssssssssss.....................s.....s............................. [ 62%]
+........................................................................ [ 69%]
+........................................................................ [ 76%]
+.....ssssssssssssssss..............
+[tester-virtual] cut: 60 runs x 330 virtual s, forced loss events 2946, alert utterances cut 4555, dropped by switch 0, head-turn mute windows 0, alert utterances 6679, runs with a lost/doubled/cut alert: 0
+.
+[tester-virtual] drain: 60 runs x 330 virtual s, forced loss events 29301, alert utterances cut 1150, dropped by switch 0, head-turn mute windows 32542, alert utterances 3218, runs with a lost/doubled/cut alert: 0
+.
+[tester-virtual] tie: 60 runs x 330 virtual s, forced loss events 1455, alert utterances cut 1316, dropped by switch 0, head-turn mute windows 3479, alert utterances 3626, runs with a lost/doubled/cut alert: 0
+.
+[tester-virtual] off: 60 runs x 330 virtual s, forced loss events 2994, alert utterances cut 836, dropped by switch 2012, head-turn mute windows 0, alert utterances 2436, runs with a lost/doubled/cut alert: 0
+....s............ss....F.ssss..... [ 83%]
+..............sssss.s................................................... [ 90%]
+..ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 97%]
+ssssssssssssssssssssss                                                   [100%]
+=================================== FAILURES ===================================
+_ test_speech_switch_off_drops_alerts_without_a_storm_and_the_next_repeat_tries_again _
+
+rig = <function rig.<locals>.make at 0x7fff5505b4c0>
+
+    def test_speech_switch_off_drops_alerts_without_a_storm_and_the_next_repeat_tries_again(rig):
+        r = rig(default=0.3)
+        r.config.update(tts_enabled=False)
+        r.start()
+        t0 = time.monotonic()
+        r.ud.alerts.raise_alert("a", "x", interval=1.0)
+        time.sleep(3.5)
+        offers_while_off = [t for t, item in r.offers if item == {"announce": "x"}]
+>       assert r.texts() == []
+E       AssertionError: assert ['x', 'x', 'x'] == []
+E         
+E         Left contains 3 more items, first extra item: 'x'
+E         Use -v to get more diff
+
+tests/test_alerts_speech.py:373: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[ALERT] raised 'a': 'x' (every 1 s)
+[TTS] 'x'
+[TTS] 'x'
+[TTS] 'x'
+[TTS] 'x'
+_ test_req_con_03_speech_switch_off_drops_the_alert_without_a_storm_and_repeats_when_on _
+
+mk = <function mk.<locals>.make at 0x7fff54d8ff60>
+
+    def test_req_con_03_speech_switch_off_drops_the_alert_without_a_storm_and_repeats_when_on(mk):
+        clk = WarpClock()
+        rig = mk(clock=clk).start()
+        rig.config.update(tts_enabled=False)
+        rig.alerts.raise_alert("c", "ALERT x", interval=10.0)
+        time.sleep(2.0)
+>       assert rig.count("ALERT x") == 0
+E       AssertionError: assert 1 == 0
+E        +  where 1 = count('ALERT x')
+E        +    where count = <test_t00a_alert_scheduler.Rig object at 0x7fff54cfe200>.count
+
+tests/uat/test_t00a_alert_scheduler.py:716: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[ALERT] raised 'c': 'ALERT x' (every 10 s)
+[TTS] 'ALERT x'
+=========================== short test summary info ============================
+FAILED tests/test_alerts_speech.py::test_speech_switch_off_drops_alerts_without_a_storm_and_the_next_repeat_tries_again
+FAILED tests/uat/test_t00a_alert_scheduler.py::test_req_con_03_speech_switch_off_drops_the_alert_without_a_storm_and_repeats_when_on
+2 failed, 815 passed, 213 skipped in 264.74s (0:04:24)

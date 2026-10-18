@@ -323,6 +323,15 @@ keeps the wearer's choice of a quieter setting while still making sure the alert
 urgent object warning can cut it; D-17, "everything is connected" is said only when no other failsafe
 alert is still raised.
 
-**For whoever builds it**: today `workers/tts_worker.py` drops every item when `tts_enabled` is off, and
-`workers/serial_worker.py` sends nothing when `vibration_enabled` is off and multiplies every command by
-`motor_strength` (D40). The override has to be a property of the message, not a change to the switches.
+**Built (2026-10-18, demo item F1; `docs/testing/reports/DEMO/F1.md`)**: the override is a property of
+the message, never a change to the switches.
+- **Speech.** Every alert raised on the alert scheduler (`core/alerts.py`) is a failsafe alert.
+  `workers/tts_worker.py` speaks one even with `tts_enabled` off, at `failsafe_level(tts_volume)`.
+  An item that would not be spoken cannot cut in on it.
+- **Vibration.** A pattern from `core/haptic_patterns.py` is played by `workers/serial_worker.py` even
+  with `vibration_enabled` off, at duty × `failsafe_level(motor_strength)`.
+- **Strength scaling.** Plain multiply, the same as depth (D40), chosen by the user on 2026-10-18. The
+  alternative was to map the knob onto the motors' felt range above `PWM_FLOOR`. At the 30 % floor a
+  pattern's strong pulse is duty 76, under the unmeasured start threshold of 90 in `core/haptics.py`.
+  The device check confirms whether it is felt.
+- **A pattern holds the motors** for at most 2.25 s; a ground hazard is still sent during it.

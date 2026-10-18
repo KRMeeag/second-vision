@@ -1,0 +1,21 @@
+ 0 one reading is enough (no confirmation)          killed: 1 failed, 21 passed in 0.18s
+ 1 earphones not counted as missing (D-17)          killed: 1 failed, 18 passed in 0.16s
+ 2 silent alert gets spoken                         killed: 1 failed, 8 passed in 0.14s
+ 3 detection read from detection_enabled            killed: 1 failed, 15 passed in 0.14s
+ 4 spent back sentence not cleared at a loss        killed: 1 failed, 34 passed in 0.28s
+ 5 pattern repeats whatever the mode                killed: 1 failed, 23 passed in 0.19s
+ 6 no repeat at all                                 killed: 1 failed, 20 passed in 0.16s
+ 7 absent at start-up not treated as lost           killed: 1 failed, 20 passed in 0.16s
+ 8 camera microphone counts as earphones            killed: 1 failed, 1 passed in 0.12s
+ 9 HDMI output counts as earphones                  killed: 1 failed, 1 passed in 0.12s
+10 no earphones pattern when lost                   killed: 1 failed, 20 passed in 0.20s
+11 no reconnect pattern when back                   killed: 1 failed, 29 passed in 0.33s
+12 missing alert not cleared when back              killed: 1 failed, 29 passed in 0.31s
+13 always says Everything is connected              killed: 1 failed, 30 passed in 0.30s
+14 state moves before the action                    SURVIVED: 47 passed in 1.84s
+15 worker dies on an error                          killed: 1 failed, 43 passed, 1 warning in 1.45s
+16 poll interval 5 s                                killed: 1 failed, 46 passed in 1.80s
+17 unreadable tree raises                           killed: 1 failed, 6 passed in 0.15s
+18 worker ignores shutdown wait                     killed: 1 failed, 45 passed in 2.79s
+18 main.py never starts the worker                  killed: 1 failed, 49 passed in 2.02s
+19 worker ignores shutdown wait                     killed: 1 failed, 47 passed in 2.81s

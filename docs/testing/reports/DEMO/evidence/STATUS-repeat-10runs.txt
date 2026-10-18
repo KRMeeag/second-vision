@@ -1,0 +1,21 @@
+# tests/test_status_display.py and tests/test_camera_view.py: 10 runs in my_hailo_env, then 10 in Poetry
+89 passed in 9.85s
+89 passed in 9.84s
+89 passed in 9.82s
+89 passed in 9.84s
+89 passed in 9.87s
+89 passed in 9.83s
+89 passed in 9.82s
+89 passed in 9.82s
+89 passed in 9.84s
+89 passed in 9.83s
+86 passed, 3 skipped in 4.39s
+86 passed, 3 skipped in 4.39s
+86 passed, 3 skipped in 2.53s
+86 passed, 3 skipped in 4.40s
+86 passed, 3 skipped in 4.41s
+86 passed, 3 skipped in 4.39s
+86 passed, 3 skipped in 4.38s
+86 passed, 3 skipped in 4.40s
+86 passed, 3 skipped in 4.44s
+86 passed, 3 skipped in 4.42s

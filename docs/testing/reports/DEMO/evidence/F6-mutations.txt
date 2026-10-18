@@ -1,0 +1,14 @@
+ 0 silence is not reported                          killed: 1 failed, 2 passed in 0.27s
+ 1 the return is not reported                       killed: 1 failed, 7 passed in 0.48s
+ 2 absent at start-up is not reported               killed: 1 failed, 9 passed in 0.54s
+ 3 no panel asked for is reported as missing        killed: 1 failed, 10 passed in 0.58s
+ 4 panel not counted as missing for D-17            killed: 1 failed in 0.18s
+ 5 repeat every 30 s instead of 5 minutes           killed: 1 failed in 0.18s
+ 6 repeat only once                                 killed: 1 failed, 2 passed in 0.27s
+ 7 spent back sentence not cleared at a loss        killed: 1 failed, 14 passed in 0.70s
+ 8 missing alert not cleared at the return          killed: 1 failed, 7 passed in 0.48s
+ 9 always says Everything is connected              killed: 1 failed, 11 passed in 0.61s
+10 an error in the scheduler stops the reader       killed: 1 failed, 16 passed in 0.76s
+11 a reader without a scheduler fails               killed: 1 failed, 17 passed in 0.78s
+12 silence limit 60 s                               killed: 1 failed in 0.18s
+13 wording changed                                  killed: 1 failed in 0.18s

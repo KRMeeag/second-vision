@@ -28,7 +28,9 @@ os.environ["GST_PLUGIN_FEATURE_RANK"] = "vaapidecodebin:NONE"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from second_vision.core.alerts import AlertScheduler
+from second_vision.core.camera_view import CameraViewWatch
 from second_vision.core.config import SystemConfig
+from second_vision.core.haptic_patterns import PatternPlayer
 from second_vision.core.priority import PriorityMailbox
 from second_vision.core.imu_telemetry import ImuTelemetry
 from second_vision.core.turn_event import TurnEvent
@@ -56,7 +58,9 @@ except ImportError as _import_error:
 
 from second_vision.workers.tts_worker import tts_worker
 from second_vision.workers.alert_worker import alert_worker
+from second_vision.workers.earphones_worker import earphones_worker
 from second_vision.workers.serial_worker import serial_worker
+from second_vision.workers.status_worker import status_worker
 from second_vision.workers.config_reader import config_reader_worker
 from second_vision.mock.data_generator import mock_detection_generator, mock_depth_generator
 
@@ -96,6 +100,16 @@ class SecondVisionUserData(_UserDataBase):
         # alert worker polls it and the TTS worker reports back to it — see
         # core/alerts.py.
         self.alerts = AlertScheduler(self.tts_queue)
+        # Failsafe vibration patterns (reconnect, camera, earphones). Producers call
+        # user_data.patterns.play(); the serial worker plays them on the motors —
+        # see core/haptic_patterns.py.
+        self.patterns = PatternPlayer()
+        # The camera view check (blocked, too dark, too bright; core/camera_view.py). The
+        # pipeline feeds it a frame a second; the status worker reads it for the screen.
+        self.camera_view = CameraViewWatch(self.alerts)
+        # The failsafe checks at a glance (core/status_board.py), refreshed by the status
+        # worker; the camera picture draws it. None until the first read.
+        self.status = None
 
 
 def main():
@@ -184,7 +198,28 @@ def main():
     serial_thread.start()
     workers.append(serial_thread)
     print("[MAIN] Serial worker started")
-    
+
+    # Earphones worker — looks once a second for the USB earphones and reports lost and
+    # back (vibration pattern, no speech while they are out; core/connections.py). Starts
+    # in mock mode too: the earphones are real hardware even when nothing else is.
+    earphones_thread = threading.Thread(
+        target=earphones_worker, args=(user_data, config),
+        daemon=True, name="earphones-watch"
+    )
+    earphones_thread.start()
+    workers.append(earphones_thread)
+    print("[MAIN] Earphones worker started")
+
+    # Status worker — the failsafe checks as text, twice a second: printed to the terminal
+    # on each change, and kept on user_data.status for the camera picture to draw.
+    status_thread = threading.Thread(
+        target=status_worker, args=(user_data, config),
+        daemon=True, name="status-board"
+    )
+    status_thread.start()
+    workers.append(status_thread)
+    print("[MAIN] Status worker started")
+
     # 4. Start pipeline OR mock generators
     #
     # try/finally rather than straight-line code: GStreamerApp.run() ends in
@@ -232,8 +267,11 @@ def _run_mock_mode(user_data, config, workers):
     depth_thread.start()
     workers.append(depth_thread)
     
-    print("[MOCK] Generators running. Press Ctrl+C to stop.")
     try:
+        # Inside the try: a Ctrl+C that arrives just after this line (a test sends one the moment it
+        # reads it) must be caught here too. Outside it, it could land while the main thread waits for
+        # the GIL behind the worker threads, before the try began, and end the program with -2.
+        print("[MOCK] Generators running. Press Ctrl+C to stop.")
         while not user_data.shutdown_event.is_set():
             time.sleep(0.5)
     except KeyboardInterrupt:

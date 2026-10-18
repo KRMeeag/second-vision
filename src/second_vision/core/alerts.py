@@ -12,7 +12,9 @@ Usage (from any thread; none of these calls waits for the speech worker)::
 
     # "wording X every 30 s while depth is on, once otherwise":
     alerts.raise_alert("controller-missing", "Controller board not connected",
-                       interval=30.0, repeat=lambda: config.get("depth_enabled"))
+                       interval=30.0, repeat=lambda: depth_on(config))
+    # (core/connections.py depth_on: pipeline_mode "depth" or "both". Not
+    #  config.get("depth_enabled"): the panel never sends it, so it stays True.)
     # ...the scheduler asks config each tick, so a depth switch-off mid-run needs no code.
     # Without a callable, switch it by hand:  alerts.set_repeat("controller-missing", False)
 
@@ -40,9 +42,14 @@ What it does, and what the callers can rely on:
     item it offers (see "Speech worker side") and speaks the alert again as soon as the
     channel is free, a once-only alert included. A head-turn mute does not discard it: the
     alert waits in the slot and is spoken when the mute ends.
-  * Speech switched off (config.tts_enabled False): the worker drops the item. That counts
-    as delivered (no storm of re-offers); the next repeat tries again as normal. Whether a
-    failsafe alert should override the switch is the user's open question D-15.
+  * A silent alert (`speak=False`) is raised and counted but never spoken: see raise_alert().
+  * `on_speak` (raise_alert) is called each time an utterance of the alert starts: the hook for a
+    vibration that goes with the sentence.
+  * Every alert raised here is a failsafe alert (D41): it is spoken even with the speech
+    switch off (config.tts_enabled False), at the volume knob's level but never under 30 %
+    (failsafe_level below). Neither changes a setting; detections and mode announcements still
+    obey the switch and the knob. An item the worker drops after all (an error) counts as
+    delivered (no storm of re-offers); the next repeat tries again as normal.
   * An alert is offered only when the worker is idle and the slot is empty or holds a
     detection item (which it replaces, as any announcement does). It never overwrites an
     announcement.
@@ -53,8 +60,9 @@ What it does, and what the callers can rely on:
     one delays every alert and the stop.
 
 Speech worker side (workers/tts_worker.py; producers never call these): `take()` instead of
-mailbox.take(), `drain()` instead of mailbox.take() in the head-turn drain, and
-`finish(item, SPOKEN | CUT | DROPPED)` when an item ends. They run under the scheduler's
+mailbox.take(), `drain()` instead of mailbox.take() in the head-turn drain, `is_failsafe(item)`
+to tell an alert from everything else, and `finish(item, SPOKEN | CUT | DROPPED)` when an item
+ends. They run under the scheduler's
 lock, which is what makes "was my item taken, replaced or still waiting?" exact: the
 scheduler never has to guess from timing.
 
@@ -72,19 +80,42 @@ from typing import Callable, Optional, Union
 
 SPOKEN = "spoken"      # the utterance ran to its end
 CUT = "cut"            # the utterance was terminated for a preempting item
-DROPPED = "dropped"    # the worker took the item and did not speak it (speech switched off, error)
+DROPPED = "dropped"    # the worker took the item and did not speak it (an error)
 
 RepeatFlag = Union[bool, Callable[[], bool]]
+
+# D41: a failsafe alert is spoken, and a failsafe vibration pattern played, even with the wearer's
+# switch off, at the knob's own level but never under this. It is on the knob's 0.0-1.0 scale, the
+# value the panel reports: tts_volume for speech, motor_strength for vibration.
+FAILSAFE_MIN_LEVEL = 0.30
+
+
+def failsafe_level(knob) -> float:
+    """
+    The level a failsafe alert or pattern uses for knob position `knob`: the knob's own level,
+    never under FAILSAFE_MIN_LEVEL. Never raises: anything that is not a finite number counts as
+    1.0, the knob's default, and values above 1.0 are clamped.
+    """
+    try:
+        knob = float(knob)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(knob):
+        return 1.0
+    return max(FAILSAFE_MIN_LEVEL, min(1.0, knob))
 
 
 class _Alert:
     """One raised alert: what to say, how often, and where it stands."""
 
     def __init__(self, name: str, text: str, interval: Optional[float],
-                 repeat: RepeatFlag, seq: int, now: float):
+                 repeat: RepeatFlag, seq: int, now: float, speak: bool = True,
+                 on_speak: Optional[Callable[[], None]] = None):
         self.name = name
         self.text = text
         self.interval = interval
+        self.speak = speak                  # False: raised and counted, never offered to speech
+        self.on_speak = on_speak            # called each time the speech worker starts the utterance
         self.seq = seq                      # raise order, breaks ties between alerts due together
         self.pending = True                 # an utterance is owed that was not delivered yet
         self.pending_since = now            # ...since this time (raise time, or the time it was lost)
@@ -93,7 +124,9 @@ class _Alert:
         self.repeat_value = False if callable(repeat) else bool(repeat)
 
     def due_at(self) -> Optional[float]:
-        """When the next utterance falls due, or None if none is owed (a spent once-alert)."""
+        """When the next utterance falls due, or None if none is owed (a spent once-alert, a silent one)."""
+        if not self.speak:
+            return None
         if self.pending:
             return self.pending_since
         if self.interval is not None and self.repeat_value and self.last_start is not None:
@@ -128,12 +161,14 @@ class AlertScheduler:
         self._seq = 0
         self._flight: Optional[_Flight] = None   # at most ONE item of ours in the channel
         self._busy = None                        # the item the speech worker is handling now
+        self._last_spoken = None                 # (text, clock time) of the last alert utterance started
 
     # ------------------------------------------------------------------
     # Producer API (any thread)
     # ------------------------------------------------------------------
     def raise_alert(self, name: str, text: str, interval: Optional[float] = None,
-                    repeat: RepeatFlag = True) -> None:
+                    repeat: RepeatFlag = True, speak: bool = True,
+                    on_speak: Optional[Callable[[], None]] = None) -> None:
         """
         Raise the alert `name` saying `text`; `interval` seconds between repeats, None = once.
 
@@ -143,6 +178,19 @@ class AlertScheduler:
         `repeat`; with a different text or interval it replaces the alert, which is then
         spoken at once. Raises ValueError for an empty name or text, or an interval that
         is not a positive number (a bug in the caller, not a runtime condition).
+
+        `speak=False` raises a silent alert: it is listed by raised() and is_raised() until
+        clear(), and is never offered to the speech worker. For a part that is missing but has
+        nothing to be said about it (the earphones: there is nothing to speak through), so that
+        "everything is connected" can still see it (core/connections.py, D-17). `text` then only
+        describes it, and `interval` and `repeat` have no effect.
+
+        `on_speak`, if given, is called with no arguments each time the speech worker STARTS
+        saying this alert (so on every repeat, and again if an utterance was cut and is said
+        anew), on the speech worker's thread, after the scheduler's lock is released. It must
+        return at once (a pattern player's play() does). An exception in it is logged and
+        changes nothing. For a vibration that goes with the sentence (the camera's *beep beep*,
+        core/haptic_patterns.py). Raising the same alert again unchanged replaces it.
         """
         if not isinstance(name, str) or not name:
             raise ValueError("alert name must be a non-empty string")
@@ -153,15 +201,18 @@ class AlertScheduler:
             raise ValueError(f"alert interval must be a positive number or None, got {interval!r}")
         with self._lock:
             current = self._alerts.get(name)
-            if current is not None and current.text == text and current.interval == interval:
+            if (current is not None and current.text == text and current.interval == interval
+                    and current.speak == speak):
                 self._set_repeat_locked(current, repeat)
+                current.on_speak = on_speak
                 return
             if current is not None:
                 self._withdraw_locked(current)
             self._seq += 1
-            self._alerts[name] = _Alert(name, text, interval, repeat, self._seq, self._clock())
-        print(f"[ALERT] raised '{name}': '{text}' "
-              f"({'once' if interval is None else f'every {interval:g} s'})")
+            self._alerts[name] = _Alert(name, text, interval, repeat, self._seq, self._clock(), speak,
+                                        on_speak)
+        how = ("silent" if not speak else "once" if interval is None else f"every {interval:g} s")
+        print(f"[ALERT] raised '{name}': '{text}' ({how})")
 
     def set_repeat(self, name: str, repeat: RepeatFlag) -> bool:
         """Switch the repeat of a raised alert on or off (or give it a callable). False if not raised."""
@@ -195,6 +246,15 @@ class AlertScheduler:
         with self._lock:
             return [a.name for a in sorted(self._alerts.values(), key=lambda a: a.seq)]
 
+    def last_spoken(self):
+        """
+        (text, clock time) of the last alert the speech worker started saying, or None. For the
+        on-screen and terminal status (core/status_board.py): a bone-conduction earphone is heard
+        by the wearer only, so the screen shows what was said.
+        """
+        with self._lock:
+            return self._last_spoken
+
     # ------------------------------------------------------------------
     # The scheduler's own step (alert_worker calls it every 0.05 s; tests call it by hand)
     # ------------------------------------------------------------------
@@ -220,6 +280,7 @@ class AlertScheduler:
     # ------------------------------------------------------------------
     def take(self):
         """Take the pending item from the mailbox, noting it as being handled. For mailbox.take()."""
+        on_speak = name = None
         with self._lock:
             item = self._mailbox.take()
             if item is not None:
@@ -228,7 +289,15 @@ class AlertScheduler:
                 if flight is not None and flight.item is item:
                     flight.speaking = True
                     flight.started_at = self._clock()
-            return item
+                    on_speak, name = flight.alert.on_speak, flight.alert.name
+                    self._last_spoken = (flight.alert.text, flight.started_at)
+        if on_speak is not None:
+            # Outside the lock, so the callback may call the scheduler and cannot hold it up.
+            try:
+                on_speak()
+            except Exception as e:  # never let the speech worker die
+                print(f"[ALERT] on_speak of '{name}' failed: {e}")
+        return item
 
     def drain(self):
         """
@@ -240,6 +309,16 @@ class AlertScheduler:
             if flight is not None and not flight.speaking and self._mailbox.peek() is flight.item:
                 return None
             return self._mailbox.take()
+
+    def is_failsafe(self, item) -> bool:
+        """
+        True if `item` is the alert this scheduler put in the speech channel. Every alert raised
+        here is a failsafe alert (D41), spoken even with the speech switch off; anything else (a
+        detection, a mode announcement) is not.
+        """
+        with self._lock:
+            flight = self._flight
+            return flight is not None and flight.item is item
 
     def finish(self, item, outcome: str) -> None:
         """The worker is done with `item`: SPOKEN (ran to its end), CUT, or DROPPED."""

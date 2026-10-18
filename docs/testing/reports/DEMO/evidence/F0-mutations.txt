@@ -1,0 +1,14 @@
+ 0 no alert inside the loss handler                 killed: 1 failed, 2 passed in 0.77s
+ 1 no alert when the teardown ends                  killed: 1 failed, 108 passed in 1.77s
+ 2 no alert when started without a camera           killed: 1 failed, 1 passed in 0.77s
+ 3 the return is never announced                    killed: 1 failed, 4 passed in 0.78s
+ 4 the spent reconnected sentence is not withdrawn at a loss killed: 1 failed, 19 passed in 0.85s
+ 5 a stale confirmation still announces             killed: 1 failed, 16 passed in 0.84s
+ 6 a confirmation ignores the camera state          killed: 1 failed, 17 passed in 0.91s
+ 7 repeat every 5 s                                 killed: 1 failed in 0.77s
+ 8 the missing sentence keeps repeating after the pipeline runs killed: 1 failed, 15 passed in 0.83s
+ 9 the missing alert is not cleared at the confirmation killed: 1 failed, 4 passed in 0.80s
+10 no confirmation window                           killed: 1 failed, 11 passed in 0.81s
+11 reconnected said though the camera was never missing killed: 1 failed, 107 passed in 1.77s
+12 an error from the scheduler stops the camera handling killed: 1 failed, 111 passed in 1.81s
+13 wording changed                                  killed: 1 failed in 0.76s

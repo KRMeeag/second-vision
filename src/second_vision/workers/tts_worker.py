@@ -26,7 +26,7 @@ import shutil
 import subprocess
 import time
 
-from second_vision.core.alerts import CUT, DROPPED, SPOKEN
+from second_vision.core.alerts import CUT, DROPPED, SPOKEN, failsafe_level
 from second_vision.core.priority import (
     MIN_UTTERANCE_GAP,
     TIER_URGENT,
@@ -47,7 +47,9 @@ from second_vision.core.priority import (
 #           (take / drain / finish); the queue items themselves are unchanged.
 #           Absent (getattr default None) -> exactly the behaviour without it.
 #   Output: Audio announcement via speaker (espeak-ng, pyttsx3 fallback).
-#   Config: config.tts_enabled, config.tts_volume (the panel's volume knob)
+#   Config: config.tts_enabled, config.tts_volume (the panel's volume knob). A
+#           failsafe alert (the scheduler's own item, D41) is spoken even with
+#           tts_enabled off, at failsafe_level(tts_volume); see _item_amplitude().
 # ============================================================
 
 _ESPEAK_SPEED = 160
@@ -94,6 +96,22 @@ def _espeak_amplitude(volume) -> int:
         volume = 1.0
     volume = min(1.0, max(0.0, volume))
     return round(_AMPLITUDE_FLOOR * (_AMPLITUDE_MAX / _AMPLITUDE_FLOOR) ** volume)
+
+
+def _item_amplitude(item, config, alerts=None):
+    """
+    espeak-ng amplitude to speak `item` at, or None when it must not be spoken.
+
+    A failsafe alert (D41: the alert scheduler's own item) is spoken even with the speech switch
+    off, at the volume knob's level but never under 30 % (failsafe_level). Everything else obeys
+    the switch and the knob exactly as before. Reads config, never writes it: the override lasts
+    for that one item.
+    """
+    if alerts is not None and alerts.is_failsafe(item):
+        return _espeak_amplitude(failsafe_level(config.get("tts_volume")))
+    if not config.get("tts_enabled"):
+        return None
+    return _espeak_amplitude(config.get("tts_volume"))
 
 # --- Turn-based mute -------------------------------------------------------
 # How long to hold off speaking after a 0x03 turn event.
@@ -176,15 +194,16 @@ def tts_worker(user_data, config):
             continue
 
         try:
-            if not config.get("tts_enabled"):
-                if alerts is not None:
-                    alerts.finish(item, DROPPED)    # dropped on purpose: counts as delivered
-                continue
-
             # Read per item, so a turn of the knob is heard from the next
             # utterance on.
-            amplitude = _espeak_amplitude(config.get("tts_volume"))
-            _speak_interruptible(item, mailbox, user_data, amplitude)
+            amplitude = _item_amplitude(item, config, alerts)
+            if amplitude is None:                   # speech switch off, not a failsafe alert
+                if alerts is not None:
+                    alerts.finish(item, DROPPED)    # frees the channel for the scheduler
+                continue
+
+            _speak_interruptible(item, mailbox, user_data, amplitude,
+                                 amplitude_for=lambda it: _item_amplitude(it, config, alerts))
             _pace(mailbox, user_data)
         except Exception as e:  # never let the worker thread die
             print(f"[TTS] Error processing announcement: {e}")
@@ -192,16 +211,26 @@ def tts_worker(user_data, config):
                 alerts.release(DROPPED)             # never leave the scheduler waiting on it
 
 
-def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX):
+def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX, amplitude_for=None):
     """
     Speak `item` at espeak-ng `amplitude`. If a preempting item arrives
     mid-utterance, terminate the current espeak process and switch to it —
     looping until an utterance finishes naturally (or shutdown).
 
-    With user_data.alerts present, every item ends with a finish() call (SPOKEN or CUT)
-    so the alert scheduler knows what became of the alert it offered.
+    `amplitude_for(item)` (the worker passes _item_amplitude) gives each preempting item its
+    own amplitude, or None when it must not be spoken; such an item does not preempt. Without
+    it, every item is spoken at `amplitude`. This is what keeps the failsafe override to the
+    alert itself: with the speech switch off, a detection cannot cut an alert and then be
+    spoken, nor take on the alert's raised volume.
+
+    With user_data.alerts present, every item ends with a finish() call (SPOKEN, CUT, or
+    DROPPED) so the alert scheduler knows what became of the alert it offered.
     """
     alerts = getattr(user_data, "alerts", None)
+
+    def speakable(candidate) -> bool:
+        return amplitude_for is None or amplitude_for(candidate) is not None
+
     while item is not None and not user_data.shutdown_event.is_set():
         text = _text_for(item)
         print(f"[TTS] '{text}'")
@@ -222,7 +251,7 @@ def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX):
                 proc.terminate()
                 return
             pending = mailbox.peek()
-            if pending is not None and preempts(pending, item):
+            if pending is not None and preempts(pending, item) and speakable(pending):
                 proc.terminate()
                 cut = True
                 # claim the preempting item
@@ -230,6 +259,16 @@ def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX):
                 break
             time.sleep(_POLL_SECONDS)
 
+        if next_item is not None and amplitude_for is not None:
+            next_amplitude = amplitude_for(next_item)
+            if next_amplitude is None:
+                # The switch went off between the look and the take: the claimed item is
+                # dropped, as it would have been on the idle path. The cut stays a cut.
+                if alerts is not None:
+                    alerts.finish(next_item, DROPPED)
+                next_item = None
+            else:
+                amplitude = next_amplitude
         if alerts is not None:
             alerts.finish(item, CUT if cut else SPOKEN)
         item = next_item  # None -> utterance finished naturally, loop exits

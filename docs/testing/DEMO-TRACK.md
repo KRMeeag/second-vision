@@ -16,13 +16,14 @@ back to the workbook at full rigour, starting from this file.
 
 | Item | What | Device needed? | Est. | Status |
 |---|---|---|---|---|
-| F0 | Finish the spoken camera alerts (T-03c1) | yes, for its check | 1 h | code done by the Developer, unreviewed; no report |
-| F1 | Vibration patterns from the Pi, and the D-15 override for alerts | at the end | 2.5 h | not started |
-| F2 | Glasses board lost / back | at the end | 1.5 h | not started |
-| F3 | Earphones lost / back | at the end | 2 h | not started |
-| F4 | Camera alert vibration (beep beep with the spoken alert) | at the end | 0.5 h | not started |
-| F5 | Camera blocked / too dark / too bright | yes | 2 h | not started |
-| F6 | Control panel lost / back (no saved settings) | at the end | 1 h | not started |
+| F0 | Finish the spoken camera alerts (T-03c1) | yes, for its check | 1 h | reviewed 2026-10-19: no defect found, 2 stale comments fixed, 14 of 14 mutants caught, both suites green; device check (14 opt-in device tests, camera out and back by ear) pending; `reports/DEMO/F0.md` |
+| F1 | Vibration patterns from the Pi, and the D-15 override for alerts | at the end | 2.5 h | code + unit tests done 2026-10-18, both suites green; device check (feel each pattern) pending; `reports/DEMO/F1.md` |
+| F2 | Glasses board lost / back | at the end | 1.5 h | code + unit tests done 2026-10-18, both suites green; device check (pull the cable, plug it back) pending; `reports/DEMO/F2.md` |
+| F3 | Earphones lost / back | at the end | 2 h | code + unit tests done 2026-10-18, both suites green; device check (take the earphones out, put them back) pending; `reports/DEMO/F3.md` |
+| F4 | Camera alert vibration (beep beep with the spoken alert) | at the end | 0.5 h | code + unit tests done 2026-10-19, both suites green; device check (camera out: a pulse pair with each sentence) pending; `reports/DEMO/F4.md` |
+| F5 | Camera blocked / too dark / too bright | yes | 2 h | code + unit and real-GStreamer tests done 2026-10-19, both suites green; **performance run and device check pending** (need the service stopped); thresholds are placeholders until real footage; `reports/DEMO/F5.md` |
+| F6 | Control panel lost / back (no saved settings) | at the end | 1 h | code + unit tests done 2026-10-19, both suites green; device check (unplug the panel, wait, plug it back) pending; `reports/DEMO/F6.md` |
+| S1 | The failsafe checks on screen (cv2) and in the terminal, for testing and for the panel (the user's request, 2026-10-19) | at the end | 1 h | code + tests done 2026-10-19, both suites green; not seen on the device yet; `reports/DEMO/STATUS-DISPLAY.md` |
 | F8 | The demo run: one script and one rehearsal on the real device, evidence logs | yes | 2 h | not started |
 | F7 | (if time) An alert in progress finishes before an urgent warning cuts it (D-16) | no | 1 h | optional |
 
@@ -45,7 +46,8 @@ checks F0 to F6 together, then F8. If time runs out, F7 goes first, then F5's "t
 - **Done means:** the item's behaviour below works; new unit tests pass; the whole suite passes in the
   Poetry environment (`~/.cache/pypoetry/virtualenvs/second-vision-repo-wwT_Rtha-py3.13/bin/python -m pytest tests/ -q`)
   and in `my_hailo_env` (`my_hailo_env/bin/python -m pytest tests/ -q`); a short note in
-  `docs/testing/reports/DEMO/<item>.md` (what changed, what was tested, what wasn't); this table updated.
+  `docs/testing/reports/DEMO/<item>.md` (what changed, what was tested, what wasn't); this table updated;
+  the item's row and device steps in [DEMO-CHECKLIST.md](DEMO-CHECKLIST.md) (the user's device-session list).
   Long test output goes to `docs/testing/reports/DEMO/evidence/`; read only its summary lines.
 - Keep each session short: read what the item needs, not the whole repo.
 
@@ -68,6 +70,9 @@ checks F0 to F6 together, then F8. If time runs out, F7 goes first, then F5's "t
   `repeat` may be a callable; `set_repeat`, `clear`, `is_raised`, `raised()`), its worker
   `workers/alert_worker.py`, created as `user_data.alerts`. Speech goes through the speech worker.
 - Speech: `workers/tts_worker.py` drops every item while `tts_enabled` is off; volume from `tts_volume`.
+- Vibration patterns (F1): `core/haptic_patterns.py`, `user_data.patterns.play(PATTERN_RECONNECT |
+  PATTERN_CAMERA | PATTERN_EARPHONES)` from any thread; the serial worker plays them. Failsafe floor:
+  `core/alerts.py` `failsafe_level()`. Every scheduler alert is spoken with the speech switch off.
 - Glasses link: `workers/serial_worker.py`, class with `update(ack_seen, now)` returning `"down"`/`"up"`
   on a change (the link tracker). Motor packets `_pack_motor_update`, heartbeats keep the board's watchdog
   fed; `vibration_enabled` and `motor_strength` gate and scale motor duties.
@@ -111,6 +116,10 @@ Absent at start-up counts as down. **Tests:** link tracker transitions drive the
 while off (no speech: there is nothing to speak through). Back: the reconnect pattern and the D-17
 sentence. Must not slow the pipeline (a sysfs read per second). **Tests:** fake sysfs or an injected
 check. **Device check:** `usb_sim.py detach earphones --for 20`, then one real unplug.
+**From F2:** put the earphones' wording and logic in `core/connections.py`, beside the glasses'. "Detection
+on" is `pipeline_mode` `detection` or `both` (the panel never sends `detection_enabled`). The earphones have
+no spoken alert, so `reconnect_text()` cannot see them as missing: give it a way to (and test that the
+glasses' return while the earphones are out does not say "Everything is connected").
 
 ### F4 · Camera alert vibration
 **Do:** with the camera alert (F0), play the camera *beep beep* each time the alert is spoken (every
@@ -132,6 +141,8 @@ of one core. **Device check:** cover the lens with a hand, then a cap; shine a t
 the current settings." every 5 minutes. When it is back: clear it and say the D-17 sentence. Saving
 settings between sessions (T-02a) is **not** in the demo. **Tests:** fake clock and fake lines.
 **Device check:** unplug the panel, wait 30 s, plug it back.
+**From F2:** add the panel's missing alert name to `MISSING_ALERTS` in `core/connections.py`, and its wording
+and lost/back functions beside the glasses' (clear the spent "back" sentence at every loss).
 
 ### F8 · The demo run
 **Do:** one written demo sequence (normal use; camera out and back; glasses board out and back; earphones
@@ -142,7 +153,7 @@ F0 to F6. Write `reports/DEMO/F8.md` with what was seen, heard and felt.
 
 ### F7 · (if time) Let an alert finish (D-16)
 **Do:** a failsafe alert in progress is not cut by an urgent object warning until it finishes (2 to 3 s).
-The four strict `xfail` tests from T-00a become passing tests.
+The four strict `xfail` tests from T-00a (two test functions, one run with three delays) become passing tests.
 
 ## After demo day
 

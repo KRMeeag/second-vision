@@ -1,0 +1,18 @@
+ 0 the silent earphones alert is not shown          killed: 1 failed, 1 passed in 0.72s
+ 1 a part never asked for shows as in use           killed: 1 failed, 2 passed in 0.73s
+ 2 the view is judged with no camera                killed: 1 failed, 1 passed in 0.72s
+ 3 clear before any check                           killed: 1 failed, 4 passed in 0.73s
+ 4 the terminal repeats itself                      killed: 1 failed, 14 passed in 0.74s
+ 5 brightness alone prints                          killed: 1 failed, 14 passed in 0.75s
+ 6 colour in the journal                            killed: 1 failed, 14 passed in 0.74s
+ 7 no banner for a problem                          killed: 1 failed, 19 passed in 0.74s
+ 8 what was said stays forever                      killed: 1 failed, 21 passed in 0.75s
+ 9 no short labels on a small frame                 SURVIVED: 39 passed in 4.87s
+10 the overlay does not draw it                     killed: 1 failed, 36 passed in 2.48s
+11 a dark screen over the live picture              killed: 1 failed, 31 passed in 2.48s
+12 the app ignores main's view check                killed: 1 failed, 35 passed in 2.48s
+13 the worker keeps nothing for the screen          killed: 1 failed, 25 passed in 3.76s
+14 what was said is not recorded                    killed: 1 failed, 12 passed in 0.76s
+15 main starts no status worker                     killed: 1 failed, 38 passed in 62.51s (0:01:02)
+ 9 no short labels on a small frame                 killed: 1 failed, 22 passed in 0.78s
+ 9 no short labels on a small frame                 killed: 1 failed, 22 passed in 0.74s

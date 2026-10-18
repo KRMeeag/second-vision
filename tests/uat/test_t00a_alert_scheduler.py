@@ -707,19 +707,24 @@ def test_req_con_03_alert_replaced_in_the_slot_by_a_tie_is_spoken_after_the_repl
     assert [u["text"] for u in rig.utts()] == ["MODE depth mode", "ALERT x"]
 
 
-def test_req_con_03_speech_switch_off_drops_the_alert_without_a_storm_and_repeats_when_on(mk):
+def test_req_con_03_speech_switch_off_does_not_silence_the_alert_d41(mk):
+    """D41 (F1, 2026-10-18): with the speech switch off the alert is still spoken, once per repeat (no
+    storm), at the 30 % volume floor; switching speech on changes nothing for it. Until F1 this test
+    checked the opposite (dropped while off), the behaviour T-00a kept while D-15 was open."""
     clk = WarpClock()
     rig = mk(clock=clk).start()
-    rig.config.update(tts_enabled=False)
+    rig.config.update(tts_enabled=False, tts_volume=0.0)
     rig.alerts.raise_alert("c", "ALERT x", interval=10.0)
-    time.sleep(2.0)
-    assert rig.count("ALERT x") == 0
-    assert len(alert_take_times(rig)) == 1, "alert re-offered in a storm while the speech switch is off"
+    assert wait_until(lambda: rig.count("ALERT x") == 1, 2.0), "not spoken with the speech switch off"
+    time.sleep(1.0)
+    assert rig.count("ALERT x") == 1 and len(alert_take_times(rig)) == 1, "re-offered in a storm"
+    assert rig.utts("ALERT x")[0]["amp"] == str(tw._espeak_amplitude(0.30)), "not at the 30 % floor"
     rig.config.update(tts_enabled=True)
     time.sleep(1.0)
-    assert rig.count("ALERT x") == 0, "a dropped utterance counts as delivered: no immediate re-offer"
+    assert rig.count("ALERT x") == 1, "switching speech on re-offered the alert"
     clk.warp(11.0)
-    assert wait_until(lambda: rig.count("ALERT x") == 1, 3.0)
+    assert wait_until(lambda: rig.count("ALERT x") == 2, 3.0)
+    assert rig.config.get("tts_enabled") is True and rig.config.get("tts_volume") == 0.0
 
 
 def test_req_con_03_tts_worker_error_while_the_alert_is_in_flight_does_not_wedge_or_storm(mk, monkeypatch):
@@ -858,7 +863,9 @@ def test_req_con_03_loss_path_randomised_runs_with_the_real_worker(mk, path):
     if path == "cut":
         assert total["cuts"] >= runs, "the cut path was not really exercised"
     if path == "off":
-        assert total["dropped"] >= runs // 2, "the speech-off path was not really exercised"
+        # D41 (F1): with the speech switch off an alert is spoken, never dropped. Until F1 this
+        # asserted the opposite (dropped >= runs // 2) to prove the drop path was exercised.
+        assert total["dropped"] == 0, "an alert was dropped with the speech switch off"
     assert total["forced"] >= runs, "the loss path was not forced"
 
 

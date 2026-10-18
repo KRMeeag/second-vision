@@ -122,7 +122,9 @@ def test_t03b_con08_mock_flag_still_runs_mock_mode_without_hailo(main_mod, monke
 
     rec = main_mod.recorder
     assert rec.mock_runs == 1 and rec.pipeline_runs == 0
-    assert rec.threads == ["tts-worker", "alert-scheduler", "serial-writer"]
+    # F3 added the earphones watcher to the always-started workers (core/connections.py), and the
+    # status display the status worker (core/status_board.py).
+    assert rec.threads == ["tts-worker", "alert-scheduler", "serial-writer", "earphones-watch", "status-board"]
     assert rec.panel_readers == 1
     assert "Running in MOCK mode" in capsys.readouterr().out
 
@@ -143,7 +145,9 @@ def test_t03b_con08_hailo_present_and_no_mock_flag_runs_the_pipeline(main_mod, m
 
     rec = main_mod.recorder
     assert rec.pipeline_runs == 1 and rec.mock_runs == 0
-    assert rec.threads == ["tts-worker", "alert-scheduler", "serial-writer"]
+    # F3 added the earphones watcher to the always-started workers (core/connections.py), and the
+    # status display the status worker (core/status_board.py).
+    assert rec.threads == ["tts-worker", "alert-scheduler", "serial-writer", "earphones-watch", "status-board"]
     assert "MOCK" not in capsys.readouterr().out
 
 

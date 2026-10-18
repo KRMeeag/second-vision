@@ -5,6 +5,9 @@ import queue
 import struct
 import time
 
+from second_vision.core.alerts import failsafe_level
+from second_vision.core.connections import glasses_back, glasses_lost
+
 # Guarded like every other optional dependency in this project: a missing
 # pyserial must degrade to "no board attached", not take the whole pipeline
 # down. The depth and haptics work runs on machines with no ESP32 and
@@ -119,7 +122,16 @@ def _log_serial_error(message: str) -> None:
 #             hazard                 bool       debounced + latched ground break
 #             hazard_severity        int 0-255  break SIZE; 0 when hazard is False
 #   Output: Binary packets to ESP32 via USB serial
-#   Config: config.motor_strength
+#   Config: config.motor_strength, config.vibration_enabled
+#   Also:   user_data.patterns — optional core/haptic_patterns.py PatternPlayer.
+#           While a failsafe pattern plays it owns the motors (D41): depth
+#           duties wait, the vibration switch does not apply, and the strength
+#           is failsafe_level(motor_strength). Absent -> exactly as before.
+#   Also:   user_data.alerts — optional core/alerts.py AlertScheduler. The link
+#           going down (or a requested port that cannot be opened) raises
+#           "Vibration is not working"; coming back clears it, plays the
+#           reconnect pattern and says the D-17 sentence (core/connections.py).
+#           Absent -> exactly as before.
 #
 #   The zone values arrive as PWM DUTY, already shaped by core/haptics.py — they
 #   are not perception scores for this worker to interpret. This worker is
@@ -153,7 +165,15 @@ def serial_worker(user_data, config):
          wearer still trusts and which is no longer telling them anything.
     """
     port = _open_serial_port(config)
+    if port is None and config.get("serial_port"):
+        # A board was asked for and its port cannot be opened: absent at start-up
+        # (REQ-CON-02). The port is not reopened, so the alert lasts the run. With
+        # no port asked for there is no board to miss, and nothing is said.
+        _report_glasses_link(user_data, config, "down")
     link = LinkHealth()
+    # getattr for the same reason as imu_telemetry below: a user_data without a
+    # pattern player runs exactly as before.
+    patterns = getattr(user_data, "patterns", None)
     # Seeded to now, not 0.0: at 0.0 the loop would fire a heartbeat on its very
     # first iteration, before anything has had a chance to need one.
     last_write_at = time.monotonic()
@@ -214,8 +234,30 @@ def serial_worker(user_data, config):
                   "Check power and cable; will resume automatically if it answers")
             _send_packet(port, _pack_motor_update(0, 0, 0))
             last_write_at = time.monotonic()
+            _report_glasses_link(user_data, config, "down")
         elif transition == "up":
             print("[SERIAL] ESP32 responding again — resuming motor updates")
+            # Before the pattern block below, so the reconnect pattern starts this pass.
+            _report_glasses_link(user_data, config, "up")
+
+        # A failsafe pattern (core/haptic_patterns.py) owns the motors while it
+        # plays. It is given up when the board stops answering, like every
+        # other motor command (invariant 3), and woken for at each step
+        # boundary rather than at the depth queue's pace.
+        if patterns is not None:
+            tick = None
+            if link.down:
+                # Not poll(): a pattern asked for this instant must not start either.
+                patterns.abort("the glasses board is not answering")
+            else:
+                tick = patterns.poll(time.monotonic())
+            if tick is not None:
+                last_write_at = _play_pattern_step(port, tick, config, last_write_at)
+                last_write_at = _heartbeat_if_due(port, last_write_at)
+                user_data.shutdown_event.wait(
+                    min(QUEUE_POLL_SECONDS, max(0.0, tick.wake_at - time.monotonic())))
+                _drain_during_pattern(port, user_data.serial_queue, config)
+                continue
 
         try:
             depth = user_data.serial_queue.get(timeout=QUEUE_POLL_SECONDS)
@@ -269,6 +311,63 @@ def serial_worker(user_data, config):
     # vibration that never resolves, until the watchdog happens to clear it.
     _send_packet(port, _pack_motor_update(0, 0, 0))
     _close_port(port)
+
+def _report_glasses_link(user_data, config, state: str) -> None:
+    """
+    Tell the wearer the glasses link changed (F2, core/connections.py): "down" raises
+    "Vibration is not working"; "up" stops it, plays the reconnect pattern and says the D-17
+    sentence. Does nothing without an alert scheduler on user_data. Only short calls into the
+    scheduler and the pattern player, never a wait; an error is logged, never raised into the
+    loop.
+    """
+    alerts = getattr(user_data, "alerts", None)
+    if alerts is None:
+        return
+    try:
+        if state == "down":
+            glasses_lost(alerts, config)
+        else:
+            glasses_back(alerts, getattr(user_data, "patterns", None))
+    except Exception as exc:  # the motor link must go on
+        print(f"[SERIAL] Could not report the glasses link {state}: {exc!r}")
+
+
+def _play_pattern_step(port, tick, config, last_write_at: float) -> float:
+    """
+    Send the pattern step that begins now, if one does. Returns the time of the
+    most recent write, for the caller to carry forward.
+
+    The vibration switch is not consulted, and the strength is the knob's level
+    but never under 30 % (failsafe_level, D41), by the same plain multiply as the
+    depth duties. Read per step, so a turn of the knob applies from the next one.
+    """
+    if tick.duty is None:
+        return last_write_at
+    duty = min(255, int(tick.duty * failsafe_level(config.get("motor_strength"))))
+    _send_packet(port, _pack_motor_update(duty, duty, duty))
+    return time.monotonic()
+
+
+def _drain_during_pattern(port, serial_queue, config) -> None:
+    """
+    Discard the depth frames that arrived while a pattern had the motors, so the
+    depth stream resumes on a fresh frame rather than a backlog of stale ones.
+
+    A ground hazard among them is still sent, when vibration is on, as on the
+    normal path: a pattern is never a reason to hide a drop-off. The firmware
+    holds the pattern's step during the hazard pulse and restores it after.
+    """
+    hazard = None
+    while True:
+        try:
+            depth = serial_queue.get_nowait()
+        except queue.Empty:
+            break
+        if depth.get("hazard"):
+            hazard = depth
+    if hazard is not None and config.get("vibration_enabled"):
+        _send_packet(port, _pack_hazard_alert(hazard["hazard_severity"]))
+
 
 def _pack_motor_update(left, center, right) -> bytes:
     """Pack motor update into binary protocol."""

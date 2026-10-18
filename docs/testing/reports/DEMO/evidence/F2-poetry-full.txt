@@ -1,0 +1,24 @@
+........................................................................ [  6%]
+......s................................................................. [ 13%]
+.....................................................sssssssssssssssssss [ 20%]
+..........................sssssssssssssssssssssssssssssssssssssssssssss. [ 27%]
+........................................................................ [ 34%]
+........................................................................ [ 40%]
+........................................................................ [ 47%]
+........................................................................ [ 54%]
+................sssssssssssssssssssssssss.....................s.....s... [ 61%]
+........................................................................ [ 68%]
+........................................................................ [ 75%]
+...............................ssssssssssssssss..............
+[tester-virtual] cut: 60 runs x 330 virtual s, forced loss events 2946, alert utterances cut 4555, dropped by switch 0, head-turn mute windows 0, alert utterances 6679, runs with a lost/doubled/cut alert: 0
+.
+[tester-virtual] drain: 60 runs x 330 virtual s, forced loss events 29301, alert utterances cut 1150, dropped by switch 0, head-turn mute windows 32542, alert utterances 3218, runs with a lost/doubled/cut alert: 0
+.
+[tester-virtual] tie: 60 runs x 330 virtual s, forced loss events 1455, alert utterances cut 1316, dropped by switch 0, head-turn mute windows 3479, alert utterances 3626, runs with a lost/doubled/cut alert: 0
+.
+[tester-virtual] off: 60 runs x 330 virtual s, forced loss events 2994, alert utterances cut 836, dropped by switch 2012, head-turn mute windows 0, alert utterances 2436, runs with a lost/doubled/cut alert: 0
+....s... [ 81%]
+.........ss......ssss...................sssss.s......................... [ 88%]
+............................ssssssssssssssssssssssssssssssssssssssssssss [ 95%]
+ssssssssssssssssssssssssssssssssssssssssssssssss                         [100%]
+843 passed, 213 skipped in 277.16s (0:04:37)

@@ -1,0 +1,25 @@
+ 0 dark threshold 20 instead of 40                  killed: 1 failed in 0.83s
+ 1 no mean rule for dark                            killed: 1 failed, 15 passed in 0.84s
+ 2 never too bright                                 killed: 1 failed, 11 passed in 0.84s
+ 3 p95 boundary not strict                          killed: 1 failed, 15 passed in 0.84s
+ 4 one check is enough                              killed: 1 failed in 0.82s
+ 5 view is back never said                          killed: 1 failed, 21 passed in 0.92s
+ 6 old alert kept on dark to bright                 killed: 1 failed, 21 passed in 0.91s
+ 7 spent back sentence not cleared                  killed: 1 failed, 25 passed in 0.92s
+ 8 reset keeps the alerts                           killed: 1 failed, 26 passed in 0.93s
+ 9 state moves before the alerts                    killed: 1 failed, 21 passed in 0.91s
+10 grey is the plain channel mean                   killed: 1 failed, 2 passed in 0.82s
+11 every pixel sampled                              killed: 1 failed, 1 passed in 0.82s
+12 repeat every 10 s                                killed: 1 failed in 0.82s
+13 a good check does not break the run              killed: 1 failed, 19 passed in 0.90s
+14 the probe stays on every frame                   killed: 1 failed, 32 passed in 0.95s
+15 requests stack up                                SURVIVED: 50 passed in 6.27s
+16 a replaced pipeline keeps its probe              killed: 1 failed, 40 passed in 0.96s
+17 asks while the camera is not running             killed: 1 failed, 34 passed in 0.95s
+18 mode none still checked                          killed: 1 failed, 38 passed in 0.96s
+19 camera loss leaves the view alert                killed: 1 failed, 45 passed in 0.97s
+20 run() starts no timer                            killed: 1 failed, 46 passed in 0.97s
+21 a frame after the camera failed is judged        killed: 1 failed, 37 passed in 1.11s
+22 a frame error escapes into the stream            killed: 1 failed, 41 passed in 1.01s
+23 the wrong element                                killed: 1 failed, 30 passed in 0.95s
+15 requests stack up                                killed: 1 failed, 31 passed in 0.99s

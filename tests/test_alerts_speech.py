@@ -362,21 +362,29 @@ def test_an_alert_replaced_in_the_slot_by_a_mode_announcement_is_spoken_after_it
     assert r.texts() == ["depth mode", "x"] and not any(u["cut"] for u in r.utterances())
 
 
-def test_speech_switch_off_drops_alerts_without_a_storm_and_the_next_repeat_tries_again(rig):
+def test_speech_switch_off_does_not_silence_an_alert_and_it_keeps_its_cadence(rig):
+    """D41 (F1, 2026-10-18): a failsafe alert is spoken with the speech switch off, on its cadence and at
+    no less than 30 % volume; switching speech on changes nothing for it. Until F1 this test checked the
+    opposite (dropped while off, no storm), the behaviour T-00a kept while D-15 was open."""
     r = rig(default=0.3)
-    r.config.update(tts_enabled=False)
+    r.config.update(tts_enabled=False, tts_volume=0.0)
     r.start()
     t0 = time.monotonic()
     r.ud.alerts.raise_alert("a", "x", interval=1.0)
     time.sleep(3.5)
     offers_while_off = [t for t, item in r.offers if item == {"announce": "x"}]
-    assert r.texts() == []
     assert 3 <= len(offers_while_off) <= 5, f"offers while the switch was off: {len(offers_while_off)}"
     assert all(abs((t - t0) - round(t - t0)) <= 0.35 for t in offers_while_off), "offers are not on the 1 s cadence"
+    assert len(r.texts()) == len(offers_while_off) or len(r.texts()) == len(offers_while_off) - 1, \
+        "every offer is spoken (the last may still be starting)"
+    floor = str(tw._espeak_amplitude(0.30))
+    assert all(u["argv"][u["argv"].index("-a") + 1] == floor for u in r.utterances()), "not at the 30 % floor"
+    n = len(offers_while_off)
     r.config.update(tts_enabled=True)
-    assert r.wait_for(lambda: len(r.texts()) >= 1, 3)
+    time.sleep(1.0)
     r.stop()
     assert set(r.texts()) == {"x"}
+    assert len([t for t, item in r.offers if item == {"announce": "x"}]) <= n + 1, "switching speech on re-offered it"
 
 
 def test_a_failure_while_speaking_an_alert_does_not_leave_the_scheduler_waiting(rig, monkeypatch):
@@ -563,20 +571,16 @@ def test_real_worker_randomised_runs_never_lose_double_or_cut_an_alert(rig, path
         total_events += chaos.events + len(off_windows)
         try:
             if path == "off":
-                # Alerts spoken while the switch was off would be a bug; the rest is checked as for any path.
+                # D41 (F1): the speech switch no longer silences a failsafe alert, so the alerts are
+                # checked as on every other path, cadence included. What the switch still silences
+                # is everything else: no detection or mode announcement starts well inside an off
+                # window (an utterance in hand when the switch went off may finish). Until F1 this
+                # checked the opposite: alerts silenced, cadence not checkable.
                 for w0, w1 in off_windows:
-                    # An utterance in hand when the switch went off may finish, and may be followed
-                    # by the item that cut it (today's behaviour); nothing starts later than that.
-                    inside = [u for u in r.utterances() if u["text"] in by_text and w0 + 0.9 < u["start"] < w1 - 0.1]
+                    inside = [u for u in r.utterances()
+                              if u["text"] not in by_text and w0 + 0.9 < u["start"] < w1 - 0.1]
                     assert not inside, f"spoken with the switch off: {inside}"
-                # Dropped items count as delivered and leave no trace in the log, so the cadence
-                # cannot be checked from it; everything else can (no doubling, no cut by an alert,
-                # nothing overlapping), and every alert must be spoken again after the last switch-on.
-                check_real_log(r, specs, raised_at, end, loss_times, cadence=False)
-                for name, text, interval in specs:
-                    starts = [u["start"] for u in r.utterances() if u["text"] == text and not u["cut"]]
-                    if interval is not None and off_windows and off_windows[-1][1] < end - interval - 1.5:
-                        assert any(s > off_windows[-1][1] for s in starts), f"{name} never spoken after the switch came back"
+                check_real_log(r, specs, raised_at, end, loss_times)
             else:
                 check_real_log(r, specs, raised_at, end, loss_times)
         except AssertionError as e:

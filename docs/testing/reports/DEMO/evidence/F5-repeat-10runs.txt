@@ -1,0 +1,21 @@
+# tests/test_camera_view.py: 10 runs in my_hailo_env (with the 3 real-GStreamer tests), then 10 in Poetry
+50 passed in 5.61s
+50 passed in 5.62s
+50 passed in 5.61s
+50 passed in 5.62s
+50 passed in 5.61s
+50 passed in 5.60s
+50 passed in 5.61s
+50 passed in 5.61s
+50 passed in 5.61s
+50 passed in 5.60s
+47 passed, 3 skipped in 0.39s
+47 passed, 3 skipped in 0.36s
+47 passed, 3 skipped in 0.39s
+47 passed, 3 skipped in 0.37s
+47 passed, 3 skipped in 0.36s
+47 passed, 3 skipped in 0.37s
+47 passed, 3 skipped in 0.37s
+47 passed, 3 skipped in 0.36s
+47 passed, 3 skipped in 0.36s
+47 passed, 3 skipped in 0.36s

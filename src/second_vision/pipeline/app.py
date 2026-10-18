@@ -36,6 +36,7 @@ from hailo_apps.python.core.common.defines import (
     DETECTION_POSTPROCESS_FUNCTION,
     DETECTION_POSTPROCESS_SO_FILENAME,
 )
+from hailo_apps.python.core.common.buffer_utils import get_caps_from_pad, get_numpy_from_buffer
 from hailo_apps.python.core.common.hef_utils import get_hef_labels_json
 from hailo_apps.python.core.common.camera_utils import get_usb_video_devices
 
@@ -59,7 +60,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # src/ on the path too so those absolute imports resolve when app.py is run directly.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import callbacks
+from second_vision.core.camera_view import VIEW_CHECK_SECONDS, CameraViewWatch
+from second_vision.core.haptic_patterns import PATTERN_CAMERA
 from second_vision.core.priority import PriorityMailbox
+from second_vision.core.status_view import status_canvas
 
 hailo_logger = get_logger(__name__)
 
@@ -182,9 +186,9 @@ CAMERA_STILL_LOOKING_LOG_SECONDS = 60.0
 # camera again that alert is cleared and CAMERA_BACK_TEXT is said once. The names key the
 # alerts: the "back" alert is once-only, and the scheduler keeps a spent once-alert raised
 # until it is cleared, so it is cleared on every loss (_raise_camera_missing) or the second
-# return would be silent. Whether these override the speech switch is the user's open
-# question D-15: the scheduler's behaviour (the worker drops an alert while speech is off) is
-# untouched here.
+# return would be silent. Like every scheduler alert, both are failsafe alerts (D41): spoken
+# even with the speech switch off, at max(volume knob, 30 %). The scheduler and the speech worker
+# do that; nothing here.
 #
 # "Running" is not yet "back": set_state(PLAYING) of a live camera returns before the camera
 # has streamed, and a camera that another process holds fails a few milliseconds later
@@ -200,6 +204,14 @@ CAMERA_MISSING_SECONDS = 10.0
 CAMERA_ALERT_BACK = "camera-reconnected"
 CAMERA_BACK_TEXT = "Camera has been reconnected"
 CAMERA_BACK_CONFIRM_SECONDS = 1.0
+
+# ---- Camera view check: blocked, too dark, too bright (F5; core/camera_view.py) ----
+# Where the frame is taken: the src pad of the last element of hailo_apps' SOURCE_PIPELINE, its
+# frame-rate capsfilter (gstreamer_helper_pipelines.SOURCE_PIPELINE: `capsfilter name={name}_fps_caps`,
+# name "source"). Every mode passes through it (_build_dual, _build_detection_only, _build_depth_only,
+# _build_idle) before any inference, and its caps are video/x-raw, format=RGB, at the app's width and
+# height (hailo_apps' get_caps_from_pad / get_numpy_from_buffer read them, as their docs show).
+CAMERA_VIEW_ELEMENT = f"{CAMERA_SOURCE_NAME}_fps_caps"
 
 # Camera states. Written only on the GLib main loop; other threads only read.
 CAMERA_OK = "ok"              # a pipeline is running on a camera
@@ -484,6 +496,10 @@ class SecondVisionApp(GStreamerApp):
     _camera_missing_since = None        # monotonic time the program began waiting for a camera
     _placeholder_watched = False        # run() is about to attach its bus watch to the parked pipeline
     _camera_back_token = 0              # which "camera is back" confirmation is current (see _announce_camera_back)
+    _camera_view = None                 # the view check (core/camera_view.py), made on first use
+    _view_probe = None                  # (pad, probe id) of the frame request still waiting, or None
+    _view_lock = threading.Lock()       # guards _view_probe: the main loop sets it, the streaming thread clears it
+    _view_errors = 0                    # failed checks, for a log line that does not flood the journal
 
     def _depth_branch(self):
         """Depth branch fragments: (wrapper, callback, sink)."""
@@ -1055,8 +1071,10 @@ class SecondVisionApp(GStreamerApp):
     # it is taken down before its first buffer (see _launch_on_camera), and a
     # camera that fails at the start, or goes in the first half second, did
     # exactly that.
-    # Nothing here starts mock mode or plays a motor pattern. The only speech is the two
-    # camera alerts (_raise_camera_missing, _announce_camera_back, _confirm_camera_back).
+    # Nothing here starts mock mode. The only speech is the two camera alerts
+    # (_raise_camera_missing, _announce_camera_back, _confirm_camera_back), and the only
+    # vibration is the camera pattern that goes with the missing-camera sentence (F4: its
+    # on_speak, played by the serial worker; nothing here touches the motors).
     # ------------------------------------------------------------------
 
     def bus_call(self, bus, message, loop):
@@ -1272,16 +1290,30 @@ class SecondVisionApp(GStreamerApp):
         it does not start over. It cancels a return that is waiting for its confirmation. Does
         nothing more when user_data has no scheduler (the standalone user data). Talks to the
         alert scheduler only: no GStreamer call, no wait; an error is logged and never stops
-        the camera handling. T-03c2 (the beep beep) is to add its vibration here.
+        the camera handling.
+
+        F4: the camera *beep beep* (core/haptic_patterns.py PATTERN_CAMERA) goes with the
+        sentence: the alert carries it as its on_speak, so the scheduler asks the pattern
+        player for it each time the speech worker starts saying "Critical Error: ...", at the
+        loss and on every repeat, not only when this method runs. Without a pattern player on
+        user_data the sentence is said as before.
+
+        F5: a "camera is blocked / too bright" alert of the view check is withdrawn silently here:
+        with no camera there is no view to judge, and this alert says what matters.
         """
         self._camera_back_token += 1
         alerts = getattr(self.user_data, "alerts", None)
         if alerts is None:
             return
+        patterns = getattr(self.user_data, "patterns", None)
         try:
+            if self._camera_view is not None:
+                self._camera_view.reset()      # F5: the view alerts give way to this one
             alerts.clear(CAMERA_ALERT_BACK)
             alerts.raise_alert(CAMERA_ALERT_MISSING, CAMERA_MISSING_TEXT,
-                               interval=CAMERA_MISSING_SECONDS)
+                               interval=CAMERA_MISSING_SECONDS,
+                               on_speak=(None if patterns is None
+                                         else lambda: patterns.play(PATTERN_CAMERA)))
         except Exception as exc:  # the camera handling must go on
             hailo_logger.warning("Could not raise the missing-camera alert: %r", exc)
 
@@ -1329,6 +1361,124 @@ class SecondVisionApp(GStreamerApp):
         except Exception as exc:  # the camera handling must go on
             hailo_logger.warning("Could not announce that the camera is back: %r", exc)
         return False
+
+    # ---- Camera view check (F5) ----------------------------------------------------------
+    def _camera_view_watch(self):
+        """
+        The view check: user_data.camera_view when main.py made one (the status worker reads the same
+        object for the screen), else one made here on first use for user_data's alert scheduler; None
+        without a scheduler.
+        """
+        if self._camera_view is None:
+            shared = getattr(self.user_data, "camera_view", None)
+            alerts = getattr(self.user_data, "alerts", None)
+            if shared is not None:
+                self._camera_view = shared
+            elif alerts is not None:
+                self._camera_view = CameraViewWatch(alerts)
+        return self._camera_view
+
+    def _camera_view_tick(self) -> bool:
+        """
+        Main loop timer, every VIEW_CHECK_SECONDS (run() starts it). Ask for one camera frame for the
+        view check: a ONE-SHOT buffer probe on CAMERA_VIEW_ELEMENT's src pad, which removes itself on
+        the next buffer (_on_view_buffer returns REMOVE). So the camera's streaming thread runs no
+        Python at all between checks; a probe on every frame would make it wait for the GIL behind the
+        depth callback (~15 ms of Python per frame) 30 times a second. Adding a probe is not a state
+        change and is safe while the pipeline plays (this file's priming uses add_probe the same way).
+
+        Nothing is asked for while the camera is not running (state not OK: the camera-missing alert
+        takes over) or while both rockers are off (mode none: there are no obstacle warnings to miss,
+        so the view alerts are withdrawn). Never raises; returns False (the timer ends) only once the
+        program is stopping.
+        """
+        if self._shutting_down:
+            return False
+        try:
+            self._request_view_frame()
+        except Exception as exc:  # the main loop must go on
+            self._log_view_error("could not ask for a frame", exc)
+        try:
+            self._push_status_screen()
+        except Exception as exc:  # a display aid: never worth stopping the timer for
+            self._log_view_error("could not draw the status screen", exc)
+        return True
+
+    def _push_status_screen(self):
+        """
+        Main loop, once a second. The failsafe status (user_data.status, core/status_board.py) is drawn
+        on the live camera picture by the detection overlay (callbacks._draw_detection_overlay). When no
+        live picture is drawn, a dark screen with the status is shown instead, so the window never sits
+        frozen on an old frame: no camera, depth-only (the overlay is the detection branch's), or both
+        rockers off. Only when the display process runs (--use-frame); set_frame() never waits.
+        """
+        if not getattr(getattr(self, "options_menu", None), "use_frame", False):
+            return
+        status = getattr(self.user_data, "status", None)
+        if status is None:
+            return
+        mode = self.current_mode()
+        if self._camera_state != CAMERA_OK:
+            note = "No camera picture: looking for the camera"
+        elif mode == MODE_DEPTH:
+            note = "Depth only: the camera picture is in the depth window"
+        elif mode == MODE_NONE:
+            note = "Both rockers off: nothing runs"
+        else:
+            return          # the detection overlay draws the status on the live picture
+        self.user_data.set_frame(status_canvas(self.video_width, self.video_height, status,
+                                               time.monotonic(), note))
+
+    def _request_view_frame(self):
+        """Main loop. Put the one-shot probe on the live pipeline's source, unless one still waits."""
+        watch = self._camera_view_watch()
+        if watch is None or self._camera_state != CAMERA_OK:
+            return
+        if self.current_mode() == MODE_NONE:
+            watch.reset()
+            return
+        pipeline = self.pipeline
+        element = pipeline.get_by_name(CAMERA_VIEW_ELEMENT) if pipeline is not None else None
+        pad = element.get_static_pad("src") if element is not None else None
+        if pad is None:
+            return
+        with self._view_lock:
+            stale = self._view_probe
+            if stale is not None and stale[0] is pad:
+                return                  # the last request has had no frame yet: do not stack another
+            self._view_probe = (pad, pad.add_probe(Gst.PadProbeType.BUFFER, self._on_view_buffer))
+        if stale is not None:           # waiting on a pipeline that a rebuild has since replaced
+            try:
+                stale[0].remove_probe(stale[1])
+            except Exception:
+                pass
+
+    def _on_view_buffer(self, pad, info):
+        """
+        The camera's streaming thread, one buffer about once a second. Hands that frame to the view
+        check and removes the probe. The buffer itself goes on untouched and at once: the frame is
+        copied (get_numpy_from_buffer), the check works on 1,200 of its pixels. Any error is logged
+        and the probe still removed; it never stops the stream.
+        """
+        with self._view_lock:
+            if self._view_probe is not None and self._view_probe[1] == info.id:
+                self._view_probe = None
+        try:
+            watch = self._camera_view
+            buffer = info.get_buffer()
+            if (watch is not None and buffer is not None and not self._shutting_down
+                    and self._camera_state == CAMERA_OK):
+                fmt, width, height = get_caps_from_pad(pad)
+                watch.observe_frame(get_numpy_from_buffer(buffer, fmt, width, height))
+        except Exception as exc:  # never let the check touch the stream
+            self._log_view_error("could not check a frame", exc)
+        return Gst.PadProbeReturn.REMOVE
+
+    def _log_view_error(self, what, exc):
+        """A warning for the first failure and then one a minute, not one a second."""
+        self._view_errors += 1
+        if self._view_errors == 1 or self._view_errors % 60 == 0:
+            hailo_logger.warning("Camera view check %s (%r; %d so far)", what, exc, self._view_errors)
 
     def _start_camera_watch(self):
         """Main loop. Start the camera watcher thread unless it is already running."""
@@ -1815,7 +1965,8 @@ class SecondVisionApp(GStreamerApp):
         library sets that PAUSED and PLAYING, which changes nothing, and runs the
         main loop, and a stop ends it with the library's cleanup and exit code.
 
-        Two additions, both only in that state. The camera watcher is started
+        Three additions. In every state, the camera view check's timer (F5,
+        _camera_view_tick). And two only in that state. The camera watcher is started
         from the loop's first iteration (_begin_waiting), the same thread and the
         same main loop as after a camera loss, and after the library has started
         the optional display process, so that process is never forked from a
@@ -1831,6 +1982,10 @@ class SecondVisionApp(GStreamerApp):
             else:
                 self._placeholder_watched = True
                 GLib.idle_add(self._begin_waiting)
+        if getattr(self.user_data, "alerts", None) is not None:
+            # F5: the camera view check, once a second for the whole run (it pauses by itself while
+            # no camera runs). Without an alert scheduler there is nobody to tell, so no timer.
+            GLib.timeout_add(int(VIEW_CHECK_SECONDS * 1000), self._camera_view_tick)
         super().run()
 
     def _begin_waiting(self):
@@ -1931,6 +2086,8 @@ class SecondVisionApp(GStreamerApp):
             return  # detection overlay is live in the other modes
         if not getattr(self.options_menu, "use_frame", False):
             return  # no display process running
+        if getattr(self.user_data, "status", None) is not None:
+            return  # the status screen (_push_status_screen) already explains it, once a second
 
         canvas = np.zeros((self.video_height, self.video_width, 3), dtype=np.uint8)
         lines = [

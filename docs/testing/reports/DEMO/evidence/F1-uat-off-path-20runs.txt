@@ -1,0 +1,268 @@
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[ALERT] 'g' was cut; will be spoken again
+[TTS] 'MODE 1'
+[TTS] 'ALERT g30'
+[ALERT] 'g' was cut; will be spoken again
+[TTS] 'MODE 2'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[TTS] 'DET 8'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'DET 3'
+[TTS] 'ALERT f10'
+[TTS] 'DET 5'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'DET 7'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'MODE 1'
+[TTS] 'ALERT f10'
+[TTS] 'DET 2'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'MODE 1'
+[TTS] 'ALERT f10'
+[TTS] 'MODE 2'
+[TTS] 'ALERT f10'
+[TTS] 'DET 4'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'MODE 1'
+[TTS] 'ALERT f10'
+[TTS] 'DET 2'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'MODE 5'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'DET 1'
+[TTS] 'MODE 2'
+[TTS] 'ALERT f10'
+[TTS] 'DET 3'
+[TTS] 'ALERT f10'
+[TTS] 'DET 4'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'MODE 2'
+[TTS] 'ALERT f10'
+[TTS] 'DET 3'
+[TTS] 'MODE 4'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'DET 3'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[TTS] 'MODE 6'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'MODE 1'
+[TTS] 'ALERT f10'
+[ALERT] 'f' was cut; will be spoken again
+[TTS] 'MODE 2'
+[TTS] 'ALERT f10'
+[TTS] 'DET 4'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[ALERT] 'f' was cut; will be spoken again
+[TTS] 'MODE 7'
+[TTS] 'ALERT f10'
+[TTS] 'MODE 9'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'MODE 1'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[TTS] 'DET 4'
+[TTS] 'MODE 5'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'DET 7'
+[TTS] 'DET 8'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'DET 2'
+[TTS] 'ALERT f10'
+[TTS] 'MODE 4'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'DET 5'
+[TTS] 'MODE 6'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[ALERT] 'f' was cut; will be spoken again
+[TTS] 'MODE 2'
+[TTS] 'ALERT f10'
+[TTS] 'DET 3'
+[TTS] 'ALERT f10'
+[TTS] 'MODE 5'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'DET 8'
+[TTS] 'MODE 9'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'MODE 7'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[ALERT] 'f' was cut; will be spoken again
+[TTS] 'MODE 5'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'DET 7'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'DET 1'
+[TTS] 'ALERT f10'
+[TTS] 'DET 4'
+[TTS] 'ALERT f10'
+[TTS] 'DET 6'
+[TTS] 'DET 7'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'DET 9'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[ALERT] 'f' was cut; will be spoken again
+[TTS] 'MODE 2'
+[TTS] 'ALERT f10'
+[TTS] 'DET 4'
+[TTS] 'DET 5'
+[TTS] 'ALERT f10'
+[ALERT] 'f' was cut; will be spoken again
+[TTS] 'MODE 6'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'DET 9'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[ALERT] 'g' was cut; will be spoken again
+[TTS] 'MODE 1'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'DET 3'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'MODE 1'
+[TTS] 'ALERT f10'
+[TTS] 'MODE 2'
+[TTS] 'DET 3'
+[TTS] 'ALERT f10'
+[TTS] 'DET 4'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[ALERT] 'f' was cut; will be spoken again
+[TTS] 'MODE 5'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'DET 1'
+[TTS] 'ALERT f10'
+[TTS] 'DET 3'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'DET 6'
+[TTS] 'ALERT f10'
+[ALERT] raised 'f': 'ALERT f10' (every 10 s)
+[ALERT] raised 'g': 'ALERT g30' (every 30 s)
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[TTS] 'DET 1'
+[TTS] 'ALERT f10'
+[ALERT] 'f' was cut; will be spoken again
+[TTS] 'MODE 3'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT f10'
+[TTS] 'ALERT g30'
+[ALERT] 'g' was cut; will be spoken again
+[TTS] 'MODE 8'
+[TTS] 'ALERT g30'
+[TTS] 'ALERT f10'
+[TTS] 'DET 9'
+[tester] loss path 'off': 20 runs, {'cuts': 20, 'forced': 100, 'dropped': 0, 'mutes': 0, 'ticks': 144}
+.
+1 passed in 120.47s (0:02:00)
