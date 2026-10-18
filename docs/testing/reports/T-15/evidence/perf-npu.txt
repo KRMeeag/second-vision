@@ -1,0 +1,25 @@
+perf_sample npu
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 180.0 --live --sudo-vcgencmd --label npu --out /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/reports/T-15/evidence --app-log /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/reports/T-15/evidence/perf-npu-app.log
+samples: 18 every 10 s; app found: yes
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: 0x0
+
+temperature: min 59.5, mean 61.8, max 62.8 C
+CPU clock: min 1800.0, mean 2366.7, max 2400.0 MHz
+system memory used: min 3007.7, mean 3021.0, max 3048.4 MB
+app CPU: min 58.1, mean 72.2, max 75.5 % of one core
+app resident memory: min 198.1, mean 198.2, max 198.3 MB
+busiest core: min 22.2, mean 27.9, max 36.4 %
+CPU clock below its maximum in 1 of 18 samples (lowest 1800 MHz, at 61 to 61 C): short dips; thermal throttling is judged by the flags below
+throttle flags seen (vcgencmd get_throttled): 0x0 (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+depth FPS, the app's own counter (an average since start, so it hides dips): median 29.6, min 28.9
+detection FPS, the app's own counter (same): median 29.7, min 29.0
+camera-to-callback delay: median 100 ms, p95 129 ms, p99 134 ms, max 135 ms (232 lines)
+frame rate per 15-frame window (after the first minute, 231 windows): median 29.9, 5th percentile 21.1, 1st percentile 19.2, min 18.9 FPS; longest window 0.79 s (15 frames take 0.50 s at 30 FPS); windows over 1 s: 0
+stability (REQ-DTA-09): not judged, the run is shorter than 7 minutes
+
+stop: exited 0 0.5 s after Ctrl+C
+stand-in glasses received 5290 packets
+after: temp=60.9'C, throttled=0x0
+screenshots: {'mid': 'ok', 'end': 'ok'}

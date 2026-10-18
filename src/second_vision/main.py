@@ -27,18 +27,22 @@ os.environ["GST_PLUGIN_FEATURE_RANK"] = "vaapidecodebin:NONE"
 # absolute imports below can't resolve without src/ on the path too.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from second_vision.core.alerts import AlertScheduler
 from second_vision.core.config import SystemConfig
 from second_vision.core.priority import PriorityMailbox
 from second_vision.core.imu_telemetry import ImuTelemetry
 from second_vision.core.turn_event import TurnEvent
 
-# Conditional imports — don't crash if hailo isn't installed (mock mode)
+# Conditional imports — this module must still import where hailo_apps is missing, so that
+# --mock works there. Without --mock, main() refuses to run in that case (see main()).
 HAILO_AVAILABLE = True
+HAILO_IMPORT_ERROR = None
 try:
     from hailo_apps.python.core.common.hailo_logger import get_logger
     from hailo_apps.python.core.gstreamer.gstreamer_app import app_callback_class
-except ImportError:
+except ImportError as _import_error:
     HAILO_AVAILABLE = False
+    HAILO_IMPORT_ERROR = _import_error
     import logging
     get_logger = logging.getLogger
     # Minimal stub of app_callback_class for mock mode
@@ -51,6 +55,7 @@ except ImportError:
         def get_count(self): return self.frame_count
 
 from second_vision.workers.tts_worker import tts_worker
+from second_vision.workers.alert_worker import alert_worker
 from second_vision.workers.serial_worker import serial_worker
 from second_vision.workers.config_reader import config_reader_worker
 from second_vision.mock.data_generator import mock_detection_generator, mock_depth_generator
@@ -86,6 +91,11 @@ class SecondVisionUserData(_UserDataBase):
         # 0x03 packets arrive. Consume-once, not persistent state — see
         # core/turn_event.py.
         self.turn_event = TurnEvent()
+        # System alerts that repeat on a schedule ("controller board not connected"
+        # every 30 s). Producers call user_data.alerts.raise_alert()/clear(); the
+        # alert worker polls it and the TTS worker reports back to it — see
+        # core/alerts.py.
+        self.alerts = AlertScheduler(self.tts_queue)
 
 
 def main():
@@ -116,6 +126,22 @@ def main():
     )
     pre_args, remaining = pre_parser.parse_known_args()
 
+    # Mock mode is reachable ONLY by --mock (decision D-13, REQ-CON-08). It used to start
+    # on its own when hailo_apps could not be imported, announcing objects that are not
+    # there and driving the motors from fake depth on a device nobody is watching. Now
+    # that case stops here, before any worker exists: a message that says what is
+    # missing and how to ask for mock mode on purpose, and a non-zero exit, so the boot
+    # service (Restart=always) retries and the cause is in the journal.
+    if not pre_args.mock and not HAILO_AVAILABLE:
+        print(
+            f"[MAIN] ERROR: hailo_apps cannot be imported ({HAILO_IMPORT_ERROR}). Second Vision "
+            "needs it for the camera pipeline and does NOT fall back to mock mode on its own "
+            "(decision D-13). Start it through scripts/run.sh, which activates my_hailo_env, "
+            "or fix the environment. To run without hardware ON PURPOSE, pass --mock.",
+            file=sys.stderr, flush=True,
+        )
+        sys.exit(1)
+
     # 1. Shared config
     config = SystemConfig()
     if pre_args.serial_port:
@@ -140,6 +166,16 @@ def main():
     workers.append(tts_thread)
     print("[MAIN] TTS worker started")
     
+    # Alert worker — runs the alert scheduler (core/alerts.py); idle until a task
+    # raises an alert. Always starts, like the TTS worker it feeds.
+    alert_thread = threading.Thread(
+        target=alert_worker, args=(user_data, config),
+        daemon=True, name="alert-scheduler"
+    )
+    alert_thread.start()
+    workers.append(alert_thread)
+    print("[MAIN] Alert worker started")
+
     # Serial worker — always starts (stub prints, real sends to ESP32)
     serial_thread = threading.Thread(
         target=serial_worker, args=(user_data, config),
@@ -157,7 +193,7 @@ def main():
     # close — and "[MAIN] Done." never printed. finally runs on SystemExit and
     # KeyboardInterrupt alike, then lets them propagate with the exit code intact.
     try:
-        if pre_args.mock or not HAILO_AVAILABLE:
+        if pre_args.mock:
             print("[MAIN] Running in MOCK mode (no hardware)")
             # The panel is real hardware even when nothing else is, and mock mode
             # exists precisely to develop without a camera or Hailo (D26). app=None

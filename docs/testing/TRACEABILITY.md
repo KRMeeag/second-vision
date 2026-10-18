@@ -55,6 +55,7 @@ so they are not rewritten):
 | `DEFERRED` | Set aside for now |
 | `OUT-SCOPE` | Outside the project's scope |
 | `OUT-ESP32` | Runs on the ESP32; outside the agentic workflow |
+| `AWAITING-HANDS-ON` | Every automated check passes; waiting for the person's one-time confirmation of the real device |
 | `VERIFIED` | The Lead accepted a task whose Tester report shows this case's checks `PASS`; the Evidence column says at what level |
 | `FAILED` | A Tester report shows a reproducible `FAIL` that is still open |
 | `BLOCKED` | Verification couldn't run (hardware unavailable, missing dependency, open question); the Evidence column says why |
@@ -211,27 +212,27 @@ case waits on.
 | UAT | Requirement | Subsystem | Task | Test | Status | Workbook | Evidence |
 |---|---|---|---|---|---|---|---|
 | TC-022-001 | REQ-CON-01 | `app` `serial` | — | assisted | READY | — | — |
-| TC-022-002 | REQ-CON-02, 03 | `serial` `tts` `panel` | T-01 | assisted | NOT-BUILT | — | — |
-| TC-022-003 | REQ-CON-02, 03 | `serial` `tts` `panel` | T-01 | assisted | NOT-BUILT | — | — |
-| TC-022-004 | REQ-CON-02, 03 | `serial` `tts` `panel` | T-01 | assisted | NOT-BUILT | — | — |
-| TC-022-005 | REQ-CON-02, 03 | `serial` `tts` `panel` | T-01 | assisted | NOT-BUILT | — | — |
-| TC-022-006 | REQ-CON-03 | `serial` `tts` `panel` | T-01 | assisted | NOT-BUILT | — | — |
-| TC-022-007 | REQ-CON-04 | `serial` `tts` `haptics` | T-01 | assisted | NOT-BUILT | — | — |
+| TC-022-002 | REQ-CON-02, 03 | `serial` `tts` `panel` | T-01a (speech), T-00c (speech switch off, D-15) | assisted | NOT-BUILT | — | — |
+| TC-022-003 | REQ-CON-02, 03 | `serial` `tts` `panel` | T-01a, T-00c | assisted | NOT-BUILT | — | — |
+| TC-022-004 | REQ-CON-02, 03 | `serial` `tts` `panel` | T-01a, T-00c | assisted | NOT-BUILT | — | — |
+| TC-022-005 | REQ-CON-02, 03 | `serial` `tts` `panel` | T-01a, T-00c | assisted | NOT-BUILT | — | — |
+| TC-022-006 | REQ-CON-03 | `serial` `tts` `panel` | T-01a, T-00c | assisted | NOT-BUILT | — | — |
+| TC-022-007 | REQ-CON-04 | `serial` `tts` `haptics` | T-00b (pattern), T-01b (sentence, D-17) | assisted | NOT-BUILT | — | — |
 | TC-023-001 | REQ-CON-01 | `panel` | — | assisted | READY | — | — |
-| TC-023-002 | REQ-CON-05 | `panel` `tts` | T-02 | assisted | NOT-BUILT | — | — |
-| TC-023-004 | REQ-CON-05 | `panel` `tts` | T-02 | assisted | NOT-BUILT | — | — |
-| TC-023-007 | REQ-CON-06 | `panel` `tts` | T-02 | assisted | NOT-BUILT | — | — |
+| TC-023-002 | REQ-CON-05 | `panel` `tts` | T-02b, T-00c | assisted | NOT-BUILT | — | — |
+| TC-023-004 | REQ-CON-05 | `panel` `tts` | T-02a (settings), T-02b, T-00c | assisted | NOT-BUILT | — | — |
+| TC-023-007 | REQ-CON-06 | `panel` `tts` | T-02c (D-17) | assisted | NOT-BUILT | — | — |
 | TC-024-001 | REQ-CON-01 | `app` | — | assisted | READY | — | — |
-| TC-024-002 | REQ-CON-07, 08 | `app` `tts` `serial` `haptics` | T-03 | assisted | NOT-BUILT | — | — |
-| TC-024-003 | REQ-CON-07, 08 | `app` `tts` `serial` `haptics` | T-03 | assisted | NOT-BUILT | — | — |
-| TC-024-004 | REQ-CON-09 | `app` `tts` | T-03 | assisted | NOT-BUILT | — | — |
+| TC-024-002 | REQ-CON-07, 08 | `app` `tts` `serial` `haptics` | T-03b (start-up half), T-03c1 (spoken alert, in work), T-03c2 (beep beep, needs T-00b), T-00c (speech switch off, D-15) | assisted · unit+device: `tests/uat/test_tc024_002_camera_absent_at_start.py` (90), gst: `tests/test_startup_without_camera.py` (16), unit: `tests/test_launcher.py` (41), `tests/test_main_startup.py` (5) | NOT-BUILT | — | **REQ-CON-08 half: AWAITING-HANDS-ON** (T-03b attempt 1, 2026-10-17): all automated checks pass at `device-integration` with the simulated unplug ([test-report-1](reports/T-03b/test-report-1.md), [decision-1](reports/T-03b/decision-1.md)); the person's one real start without a camera is missing (MANUAL-TESTS.md). REQ-CON-07 half (beep beep + spoken alert every 10 s): not built, T-03c. The workbook's "proceed in mock mode" is overruled by D-13 |
+| TC-024-003 | REQ-CON-07, 08 | `app` `tts` `serial` `haptics` | T-03a (removal half), T-03c1 (spoken alert, in work), T-03c2 (beep beep, needs T-00b), T-00c (speech switch off, D-15) | assisted · device: `tests/uat/test_tc024_003_camera_removed.py` (51), gst: `tests/uat/test_tc024_003_start_paths_gst.py` (4), `tests/test_camera_loss.py` (31) | NOT-BUILT | — | **REQ-CON-08 half: AWAITING-HANDS-ON** (T-03a attempt 2, 2026-10-17): all automated checks pass at `device-integration` with the simulated unplug ([test-report-2](reports/T-03a/test-report-2.md), [decision-2](reports/T-03a/decision-2.md)); the person's one real pull and replug is missing (MANUAL-TESTS.md). REQ-CON-07 half (beep beep + spoken alert every 10 s): not built, T-03c |
+| TC-024-004 | REQ-CON-09 | `app` `tts` | T-03c1 (merged T-03d), T-00c | assisted | NOT-BUILT | — | — |
 | TC-025-001 | REQ-CON-01 | `audio` | — | assisted | READY | — | — |
-| TC-025-002 | REQ-CON-10, 11 | `audio` `serial` `haptics` `panel` | T-04 | assisted | NOT-BUILT | — | — |
-| TC-025-003 | REQ-CON-10, 11 | `audio` `serial` `haptics` `panel` | T-04 | assisted | NOT-BUILT | — | — |
-| TC-025-004 | REQ-CON-10, 11 | `audio` `serial` `haptics` `panel` | T-04 | assisted | NOT-BUILT | — | — |
-| TC-025-005 | REQ-CON-10, 11 | `audio` `serial` `haptics` `panel` | T-04 | assisted | NOT-BUILT | — | — |
-| TC-025-006 | REQ-CON-10, 11 | `audio` `serial` `haptics` `panel` | T-04 | assisted | NOT-BUILT | — | — |
-| TC-025-007 | REQ-CON-12 | `audio` `tts` `serial` `haptics` | T-04 | assisted | NOT-BUILT | — | — |
+| TC-025-002 | REQ-CON-10, 11 | `audio` `serial` `haptics` `panel` | T-04a (needs T-00b; D-18) | assisted | NOT-BUILT | — | — |
+| TC-025-003 | REQ-CON-10, 11 | `audio` `serial` `haptics` `panel` | T-04a (needs T-00b; D-18) | assisted | NOT-BUILT | — | — |
+| TC-025-004 | REQ-CON-10, 11 | `audio` `serial` `haptics` `panel` | T-04a (needs T-00b; D-18) | assisted | NOT-BUILT | — | — |
+| TC-025-005 | REQ-CON-10, 11 | `audio` `serial` `haptics` `panel` | T-04a (needs T-00b; D-18) | assisted | NOT-BUILT | — | — |
+| TC-025-006 | REQ-CON-10, 11 | `audio` `serial` `haptics` `panel` | T-04a (needs T-00b; D-18) | assisted | NOT-BUILT | — | — |
+| TC-025-007 | REQ-CON-12 | `audio` `tts` `serial` `haptics` | T-04b (needs T-00b; D-17) | assisted | NOT-BUILT | — | — |
 | TC-026-001 | REQ-UPS-01 | `power` | — | manual | READY | Passed | — |
 | TC-026-002 | REQ-UPS-02 | `power` | — | manual | READY | Passed | — |
 | TC-026-003 | REQ-UPS-03 | `power` | — | manual | READY | Passed | — |

@@ -1,0 +1,2065 @@
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-03b/src/second_vision/main.py src/second_vision/main.py
+--- .claude/baselines/T-03b/src/second_vision/main.py	2026-10-11 05:17:04.512705278 +0800
++++ src/second_vision/main.py	2026-10-17 16:19:22.942620913 +0800
+@@ -32,13 +32,16 @@
+ from second_vision.core.imu_telemetry import ImuTelemetry
+ from second_vision.core.turn_event import TurnEvent
+ 
+-# Conditional imports — don't crash if hailo isn't installed (mock mode)
++# Conditional imports — this module must still import where hailo_apps is missing, so that
++# --mock works there. Without --mock, main() refuses to run in that case (see main()).
+ HAILO_AVAILABLE = True
++HAILO_IMPORT_ERROR = None
+ try:
+     from hailo_apps.python.core.common.hailo_logger import get_logger
+     from hailo_apps.python.core.gstreamer.gstreamer_app import app_callback_class
+-except ImportError:
++except ImportError as _import_error:
+     HAILO_AVAILABLE = False
++    HAILO_IMPORT_ERROR = _import_error
+     import logging
+     get_logger = logging.getLogger
+     # Minimal stub of app_callback_class for mock mode
+@@ -116,6 +119,22 @@
+     )
+     pre_args, remaining = pre_parser.parse_known_args()
+ 
++    # Mock mode is reachable ONLY by --mock (decision D-13, REQ-CON-08). It used to start
++    # on its own when hailo_apps could not be imported, announcing objects that are not
++    # there and driving the motors from fake depth on a device nobody is watching. Now
++    # that case stops here, before any worker exists: a message that says what is
++    # missing and how to ask for mock mode on purpose, and a non-zero exit, so the boot
++    # service (Restart=always) retries and the cause is in the journal.
++    if not pre_args.mock and not HAILO_AVAILABLE:
++        print(
++            f"[MAIN] ERROR: hailo_apps cannot be imported ({HAILO_IMPORT_ERROR}). Second Vision "
++            "needs it for the camera pipeline and does NOT fall back to mock mode on its own "
++            "(decision D-13). Start it through scripts/run.sh, which activates my_hailo_env, "
++            "or fix the environment. To run without hardware ON PURPOSE, pass --mock.",
++            file=sys.stderr, flush=True,
++        )
++        sys.exit(1)
++
+     # 1. Shared config
+     config = SystemConfig()
+     if pre_args.serial_port:
+@@ -157,7 +176,7 @@
+     # close — and "[MAIN] Done." never printed. finally runs on SystemExit and
+     # KeyboardInterrupt alike, then lets them propagate with the exit code intact.
+     try:
+-        if pre_args.mock or not HAILO_AVAILABLE:
++        if pre_args.mock:
+             print("[MAIN] Running in MOCK mode (no hardware)")
+             # The panel is real hardware even when nothing else is, and mock mode
+             # exists precisely to develop without a camera or Hailo (D26). app=None
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-03b/src/second_vision/pipeline/app.py src/second_vision/pipeline/app.py
+--- .claude/baselines/T-03b/src/second_vision/pipeline/app.py	2026-10-17 12:03:27.126713827 +0800
++++ src/second_vision/pipeline/app.py	2026-10-17 16:32:46.298328770 +0800
+@@ -456,6 +456,7 @@
+     _camera_good_node = None            # the last node frames actually came from
+     _frames_at_camera_start = 0         # frame count when the pipeline last started on a camera
+     _camera_missing_since = None        # monotonic time the program began waiting for a camera
++    _placeholder_watched = False        # run() is about to attach its bus watch to the parked pipeline
+ 
+     def _depth_branch(self):
+         """Depth branch fragments: (wrapper, callback, sink)."""
+@@ -634,7 +635,16 @@
+         frame, so wrapping both would double-count. In a single-branch mode the
+         one branch present has to be the wrapped one, otherwise the frame counter
+         freezes and the watchdog reads a healthy pipeline as a stall.
++
++        Nothing to wire while the program waits for a camera: the library's
++        run() calls this on the empty placeholder of a start without a camera
++        (_start_without_camera), which has no callback identity, and a warning
++        for each would read as a fault. The pipeline that starts when a camera
++        appears is wired by _launch_on_camera(), in the state STARTING.
+         """
++        if self._camera_state == CAMERA_WAITING:
++            return
++
+         disable_callback = self.options_menu.disable_callback
+         mode = self.current_mode()
+ 
+@@ -1635,6 +1645,115 @@
+                 and not os.path.exists(str(self.video_source)))
+ 
+     # ------------------------------------------------------------------
++    # Camera absent at start-up (REQ-CON-08, absent half)
++    #
++    # The boot launcher passes --input /dev/video0 whether or not a camera is
++    # attached. With no such node the library's run() would set a pipeline with
++    # Hailo elements to PAUSED: the camera element fails, and the Hailo elements
++    # that had already left NULL are rolled back before their first buffer, which
++    # HailoRT 4.23.0 does not survive (see _launch_on_camera). Measured with the
++    # code before this change on this Pi, 2026-10-17, 25 fresh starts without a
++    # camera: SIGSEGV in 4; the other 21 survived only because the bus error
++    # reached the camera-loss path, which tears the unfed Hailo pipeline down.
++    # So when the node is not there at launch no pipeline is built at all:
++    #   1. create_pipeline() (the constructor): _start_without_camera() parks the
++    #      empty pipeline, state WAITING, one zero motor dict queued     (main thread)
++    #   2. run() (the library's, unchanged otherwise): a one-shot idle starts
++    #      the camera watcher from the loop's first iteration            (main loop)
++    #   3. from here on exactly the camera-loss path: _camera_watch ->
++    #      _on_camera_found -> _start_on_camera -> _launch_on_camera, the staged
++    #      and primed start, in the mode current at that moment.
++    # A camera that is there at launch keeps the library's path untouched.
++    # ------------------------------------------------------------------
++
++    def create_pipeline(self):
++        """
++        The library's create_pipeline(), except when this is a USB camera and its
++        node does not exist: then the program starts without a pipeline and waits
++        for a camera (_start_without_camera). Called once, by the constructor.
++        """
++        if self._camera_node_missing():
++            self._start_without_camera()
++            return
++        super().create_pipeline()
++
++    def _start_without_camera(self):
++        """
++        Constructor time. What create_pipeline() does instead of building the
++        pipeline: what the library's create_pipeline() leaves behind (GStreamer
++        initialised, the main loop) plus the state a camera loss ends in: an
++        empty pipeline parked in self.pipeline (so a stop takes the normal
++        shutdown() and run() cleanup), state WAITING, one zero motor dict (the
++        glasses hold their last command, and nothing else says "off" until a
++        pipeline runs). The watcher thread is started later, by run().
++
++        trigger_rebuild() already records a mode switch while the state is not
++        OK, so a panel switch from the first second is kept and the pipeline that
++        starts when a camera appears is built for it. Nothing is built here, so
++        no Hailo element exists to be taken down.
++        """
++        Gst.init(None)
++        self.loop = GLib.MainLoop()
++        self._park_empty_pipeline()
++        self._camera_state = CAMERA_WAITING
++        self._camera_missing_since = time.monotonic()
++        self._stop_motors()
++        hailo_logger.warning(
++            "No camera at start-up: %s does not exist. The vision pipeline is not built. "
++            "Speech, the glasses link and the panel run; the program looks for a USB camera "
++            "every %g s and starts the vision pipeline, in the mode current then, when one "
++            "appears.", self.video_source, CAMERA_POLL_SECONDS)
++
++    def run(self):
++        """
++        The library's run(). When the program started without a camera
++        (_start_without_camera) it runs on the parked empty pipeline: the
++        library sets that PAUSED and PLAYING, which changes nothing, and runs the
++        main loop, and a stop ends it with the library's cleanup and exit code.
++
++        Two additions, both only in that state. The camera watcher is started
++        from the loop's first iteration (_begin_waiting), the same thread and the
++        same main loop as after a camera loss, and after the library has started
++        the optional display process, so that process is never forked from a
++        process with a second thread mid-look. And a stop that arrived before
++        this point (a signal during the constructor: shutdown() then finds no
++        pipeline and no loop and only records itself) would never reach
++        loop.quit(), and the program would run until the shutdown timer forced
++        it out; so the loop is told to quit as soon as it runs.
++        """
++        if self._camera_state == CAMERA_WAITING:
++            if self._shutting_down:
++                GLib.idle_add(self.loop.quit)
++            else:
++                self._placeholder_watched = True
++                GLib.idle_add(self._begin_waiting)
++        super().run()
++
++    def _begin_waiting(self):
++        """
++        Main loop, first iteration of a start without a camera. One-shot.
++
++        Undoes what the library's run() did to the parked pipeline and starts
++        the watcher. run() set the placeholder PLAYING and gave its bus a watch;
++        the pipeline that starts on a camera replaces it in self.pipeline, and
++        GStreamer reports a CRITICAL when an element is dropped while still
++        PLAYING (the placeholder a camera loss parks is never started, so
++        _launch_on_camera does not set it NULL). So: NULL (immediate, it holds
++        nothing), and the watch removed once, only if run() attached it.
++        """
++        if self._shutting_down or self._camera_state != CAMERA_WAITING:
++            return False
++        placeholder = self.pipeline
++        placeholder.set_state(Gst.State.NULL)
++        if self._placeholder_watched:
++            self._placeholder_watched = False
++            bus = placeholder.get_bus()
++            if bus is not None:
++                bus.remove_signal_watch()
++        self._start_camera_watch()
++        return False
++
++    # ------------------------------------------------------------------
+     # DEBUG ONLY — mode monitoring, active only under --cycle-modes.
+     # Everything below is observability for the mode-switching demo and can be
+     # removed with mock/mode_cycler.py once the Arduino control panel drives
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-03b/tests/test_launcher.py tests/test_launcher.py
+--- .claude/baselines/T-03b/tests/test_launcher.py	1970-01-01 08:00:00.000000000 +0800
++++ tests/test_launcher.py	2026-10-17 16:22:11.441697483 +0800
+@@ -0,0 +1,188 @@
++"""
++T-03b: the boot launcher scripts/sv-main.sh (REQ-CON-08, "camera absent at start-up").
++
++What it must do: build the same command line as before when a camera is attached, and, when no
++camera is attached, start the program anyway (so the glasses link, the panel and the speech run
++and the program looks for a camera itself) instead of waiting for the camera and exiting, or
++falling back to mock mode. Mock mode is never passed, with or without SV_SERVICE=1 (decision D-13).
++
++Unit level, hardware-free: the launcher is run for real (bash), but its last step, scripts/run.sh,
++is replaced by a stub that records the arguments it was called with. The environment variable
++SV_RUN_SH points the launcher at the stub. Nothing else is started: no program, no camera, no
++Hailo chip, no service.
++
++    ~/.cache/pypoetry/virtualenvs/second-vision-repo-wwT_Rtha-py3.13/bin/python -m pytest tests/test_launcher.py -v
++
++SV_LAUNCHER_UNDER_TEST (an environment variable) names another sv-main.sh: a copy of the baseline
++launcher, to show that these tests fail on it (red before green). The launcher is run only if it
++can be redirected to the stub, so a test run can never start the real program: either it honours
++SV_RUN_SH, or its own scripts/run.sh is a stub (a scratch tree built for that purpose, marked
++STUB-RUN-SH inside).
++"""
++
++import os
++import re
++import subprocess
++import time
++from pathlib import Path
++
++import pytest
++
++REPO = Path(__file__).resolve().parent.parent
++LAUNCHER = Path(os.environ.get("SV_LAUNCHER_UNDER_TEST") or REPO / "scripts" / "sv-main.sh")
++SERVICE_UNIT = LAUNCHER.parent / "second-vision.service"
++STUB = """#!/bin/bash
++# STUB-RUN-SH: records its arguments, starts nothing.
++printf '%s\\n' "$@" > "$STUB_ARGS_FILE"
++exit 0
++"""
++LAUNCH_SECONDS = 5.0     # the launcher with a stub takes milliseconds; the old one waited up to 60 s
++
++
++def redirectable(launcher: Path) -> bool:
++    if "SV_RUN_SH" in launcher.read_text():
++        return True
++    sibling = launcher.parent / "run.sh"
++    return sibling.exists() and "STUB-RUN-SH" in sibling.read_text()
++
++
++@pytest.fixture
++def launch(tmp_path):
++    """launch(...) -> (arguments the stub was called with or None, completed process, seconds)."""
++    if not redirectable(LAUNCHER):
++        pytest.fail(f"{LAUNCHER} cannot be pointed at a stub run.sh: refusing to run it, it would "
++                    "start the real program", pytrace=False)
++    stub = tmp_path / "stub-run.sh"
++    stub.write_text(STUB)
++    stub.chmod(0o755)
++    args_file = tmp_path / "args.txt"
++    camera = tmp_path / "video0"
++    panel = tmp_path / "ttyAMA3"
++    panel.touch()
++
++    def run(*, camera_present: bool, panel_present: bool = True, display=None, wayland=None,
++            service=None, extra_env=None):
++        if camera_present:
++            camera.touch()
++        elif camera.exists():
++            camera.unlink()
++        if panel_present:
++            panel.touch()
++        elif panel.exists():
++            panel.unlink()
++        if args_file.exists():
++            args_file.unlink()
++        env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path),
++               "SV_RUN_SH": str(stub), "STUB_ARGS_FILE": str(args_file),
++               "SERIAL_PORT": "/dev/test-serial", "CONFIG_PORT": str(panel), "INPUT": str(camera),
++               # The old launcher waited this long for a camera under SV_SERVICE=1; kept short so
++               # a run against the old launcher fails quickly instead of waiting 60 s. The current
++               # launcher ignores it.
++               "CAMERA_WAIT_SECONDS": "2"}
++        if display is not None:
++            env["DISPLAY"] = display
++        if wayland is not None:
++            env["WAYLAND_DISPLAY"] = wayland
++        if service is not None:
++            env["SV_SERVICE"] = service
++        env.update(extra_env or {})
++        began = time.monotonic()
++        done = subprocess.run([str(LAUNCHER)], env=env, capture_output=True, text=True,
++                              timeout=30, cwd=tmp_path)
++        took = time.monotonic() - began
++        args = args_file.read_text().splitlines() if args_file.exists() else None
++        return args, done, took
++
++    run.camera_path = str(camera)
++    run.panel_path = str(panel)
++    return run
++
++
++def expected(camera: str, panel: str | None, frame: bool) -> list[str]:
++    """The command line the launcher has always built (baseline sv-main.sh, camera present)."""
++    args = ["--input", camera, "--width", "640", "--height", "480"]
++    if frame:
++        args.append("--use-frame")
++    args += ["--serial-port", "/dev/test-serial"]
++    if panel is not None:
++        args += ["--config-port", panel]
++    return args
++
++
++DISPLAYS = [
++    pytest.param({}, False, id="headless"),
++    pytest.param({"display": ":0"}, True, id="DISPLAY"),
++    pytest.param({"wayland": "wayland-0"}, True, id="WAYLAND_DISPLAY"),
++]
++SERVICES = [pytest.param(None, id="no-SV_SERVICE"), pytest.param("0", id="SV_SERVICE=0"),
++            pytest.param("1", id="SV_SERVICE=1")]
++
++
++@pytest.mark.parametrize("service", SERVICES)
++@pytest.mark.parametrize("display, frame", DISPLAYS)
++@pytest.mark.parametrize("panel_present", [True, False], ids=["panel-port", "no-panel-port"])
++def test_t03b_con08_camera_attached_builds_the_same_command_line(launch, panel_present, display, frame,
++                                                                 service):
++    """Criterion 7: with a camera attached nothing changes (display rule, missing panel port included)."""
++    args, done, took = launch(camera_present=True, panel_present=panel_present, service=service, **display)
++
++    assert done.returncode == 0, done.stderr
++    assert args == expected(launch.camera_path, launch.panel_path if panel_present else None, frame)
++    assert took < LAUNCH_SECONDS
++
++
++@pytest.mark.parametrize("service", SERVICES)
++@pytest.mark.parametrize("display, frame", DISPLAYS)
++@pytest.mark.parametrize("panel_present", [True, False], ids=["panel-port", "no-panel-port"])
++def test_t03b_con08_no_camera_still_starts_the_program_and_never_mock(launch, panel_present, display, frame,
++                                                                      service):
++    """
++    Criteria 1 and 5. No camera node: the launcher still starts the program with the same
++    command line (the program waits for a camera itself), at once, and never with --mock, with or
++    without SV_SERVICE=1. (It used to wait up to 60 s and exit 1 under the service, and to run
++    --mock otherwise.)
++    """
++    args, done, took = launch(camera_present=False, panel_present=panel_present, service=service, **display)
++
++    assert args is not None, f"the program was not started (exit {done.returncode}): {done.stdout}{done.stderr}"
++    assert "--mock" not in args
++    assert args == expected(launch.camera_path, launch.panel_path if panel_present else None, frame)
++    assert done.returncode == 0
++    assert took < LAUNCH_SECONDS, f"the launcher took {took:.1f} s: it must not wait for a camera"
++    assert "--mock" not in done.stdout + done.stderr, "the launcher's own output offers mock mode"
++
++
++def test_t03b_con08_no_camera_says_so_in_the_log(launch):
++    """The journal tells a reader why there is no vision yet."""
++    _, done, _ = launch(camera_present=False, service="1")
++
++    assert launch.camera_path in done.stdout
++    assert "no camera" in done.stdout.lower()
++
++
++def test_t03b_con08_no_launcher_path_can_start_mock_mode():
++    """Criterion 5, source check: --mock appears on no line of the launcher except comments."""
++    lines = LAUNCHER.read_text().splitlines()
++    code = [ln for ln in lines if not ln.lstrip().startswith("#")]
++    assert [ln for ln in code if "mock" in ln.lower()] == [], \
++        "a non-comment line of the launcher mentions mock mode"
++    assert [ln for ln in code if re.search(r"\bexec\b", ln) and "$RUN" not in ln] == [], \
++        "the launcher execs something other than run.sh"
++
++
++def test_t03b_con08_launcher_is_valid_bash():
++    assert subprocess.run(["bash", "-n", str(LAUNCHER)], capture_output=True, text=True).returncode == 0
++
++
++def test_t03b_con08_launcher_default_run_target_is_unchanged():
++    """Without SV_RUN_SH the launcher runs scripts/run.sh next to it, as it always did."""
++    text = LAUNCHER.read_text()
++    assert re.search(r'^RUN="(\$\{SV_RUN_SH:-)?\$REPO_ROOT/scripts/run\.sh\}?"$', text, re.M), \
++        "RUN no longer defaults to $REPO_ROOT/scripts/run.sh"
++
++
++def test_t03b_con08_service_unit_no_longer_promises_a_wait_or_a_hard_fail():
++    """The unit's comment said 'Wait for the camera and hard-fail instead of mock mode'."""
++    text = SERVICE_UNIT.read_text()
++    assert "hard-fail" not in text and "Wait for the camera" not in text
++    assert "Environment=SV_SERVICE=1" in text, "comments only: the unit's settings must not change"
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-03b/tests/test_main_startup.py tests/test_main_startup.py
+--- .claude/baselines/T-03b/tests/test_main_startup.py	1970-01-01 08:00:00.000000000 +0800
++++ tests/test_main_startup.py	2026-10-17 17:11:40.897617015 +0800
+@@ -0,0 +1,155 @@
++"""
++T-03b: main() never starts mock mode by itself (REQ-CON-08: "It must never fall back to the testing
++mock mode"; decision D-13: mock mode is reachable only by --mock).
++
++Unit level, hardware-free: the three things main() could start (a worker thread, the mock runner,
++the pipeline runner) are replaced by recorders, so nothing runs. Runs in the Poetry environment and
++in my_hailo_env alike: the flag that says whether hailo_apps imported is set by each test.
++
++    ~/.cache/pypoetry/virtualenvs/second-vision-repo-wwT_Rtha-py3.13/bin/python -m pytest tests/test_main_startup.py -v
++
++Each test file puts the `src/` of its own tree first on the import path, so a copy of this file
++placed in a scratch copy of the baseline tests the baseline's code (red before green).
++"""
++
++import importlib.util
++import os
++import sys
++import threading
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++SRC = Path(__file__).resolve().parent.parent / "src"
++sys.path.insert(0, str(SRC))
++
++# The two hailo_apps modules main.py imports to decide HAILO_AVAILABLE.
++HAILO_IMPORTS = ("hailo_apps.python.core.common.hailo_logger",
++                 "hailo_apps.python.core.gstreamer.gstreamer_app")
++
++
++def load_main(monkeypatch):
++    """
++    A fresh copy of main.py, imported as if hailo_apps were not installed. Not `import
++    second_vision.main`: other test files put stand-ins for hailo_apps (and a callbacks module
++    without user_app_callback_class) into sys.modules, and in my_hailo_env the real library is
++    there, so what a plain import gives depends on which tests ran before. Here the two imports
++    main.py tries are made to fail, whatever else is loaded; every test then sets
++    HAILO_AVAILABLE itself.
++    """
++    for name in HAILO_IMPORTS:
++        monkeypatch.setitem(sys.modules, name, None)        # `import name` now raises ImportError
++    monkeypatch.setenv("GST_PLUGIN_FEATURE_RANK", os.environ.get("GST_PLUGIN_FEATURE_RANK", ""))  # main.py sets it
++    path = SRC / "second_vision" / "main.py"
++    spec = importlib.util.spec_from_file_location("second_vision_main_under_test", path)
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++class Recorder:
++    """What main() started: worker names, and whether the mock or the pipeline runner was called."""
++
++    def __init__(self):
++        self.threads = []
++        self.mock_runs = 0
++        self.pipeline_runs = 0
++        self.panel_readers = 0
++
++
++@pytest.fixture
++def main_mod(monkeypatch):
++    """second_vision.main with everything that starts something replaced by a recorder."""
++    module = load_main(monkeypatch)
++    assert Path(module.__file__).resolve().is_relative_to(SRC.resolve()), module.__file__
++    recorder = Recorder()
++
++    class RecordingThread:
++        def __init__(self, target=None, args=(), daemon=None, name=None, **_):
++            self.name = name
++
++        def start(self):
++            recorder.threads.append(self.name)
++
++        def join(self, timeout=None):
++            pass
++
++    # main.py's own `threading` name only: other modules (and pytest) keep the real one.
++    monkeypatch.setattr(module, "threading", SimpleNamespace(Thread=RecordingThread, Event=threading.Event))
++    monkeypatch.setattr(module, "_run_mock_mode",
++                        lambda *a, **k: setattr(recorder, "mock_runs", recorder.mock_runs + 1))
++    monkeypatch.setattr(module, "_run_pipeline_mode",
++                        lambda *a, **k: setattr(recorder, "pipeline_runs", recorder.pipeline_runs + 1))
++    monkeypatch.setattr(module, "_start_config_reader",
++                        lambda *a, **k: setattr(recorder, "panel_readers", recorder.panel_readers + 1))
++    module.recorder = recorder
++    return module
++
++
++def run_main(module, monkeypatch, argv, *, hailo_available):
++    monkeypatch.setattr(module, "HAILO_AVAILABLE", hailo_available)
++    monkeypatch.setattr(sys, "argv", ["main.py", *argv])
++    module.main()
++
++
++def test_t03b_con08_no_hailo_and_no_mock_flag_is_an_error_not_mock_mode(main_mod, monkeypatch, capsys):
++    """
++    REQ-CON-08, D-13. hailo_apps cannot be imported and --mock was not given: main() exits non-zero
++    with a message, before any worker exists, and runs neither mock mode nor the pipeline.
++    """
++    monkeypatch.setattr(main_mod, "HAILO_IMPORT_ERROR", ModuleNotFoundError("No module named 'gi'"),
++                        raising=False)
++    with pytest.raises(SystemExit) as exited:
++        run_main(main_mod, monkeypatch, ["--input", "/dev/video0", "--serial-port", "/dev/serial0"],
++                 hailo_available=False)
++
++    assert exited.value.code not in (0, None), "the refusal must be a non-zero exit"
++    rec = main_mod.recorder
++    assert rec.threads == [], f"workers were started: {rec.threads}"
++    assert rec.mock_runs == 0, "mock mode was started without --mock"
++    assert rec.pipeline_runs == 0 and rec.panel_readers == 0
++    err = capsys.readouterr()
++    assert "MOCK mode (no hardware)" not in err.out + err.err
++    message = err.err
++    assert "hailo_apps" in message and "gi" in message, "the message must say what is missing"
++    assert "--mock" in message, "the message must say how to ask for mock mode on purpose"
++
++
++def test_t03b_con08_mock_flag_still_runs_mock_mode_without_hailo(main_mod, monkeypatch, capsys):
++    """--mock behaves as before when hailo_apps cannot be imported: workers, panel reader, mock runner."""
++    run_main(main_mod, monkeypatch, ["--mock"], hailo_available=False)
++
++    rec = main_mod.recorder
++    assert rec.mock_runs == 1 and rec.pipeline_runs == 0
++    assert rec.threads == ["tts-worker", "serial-writer"]
++    assert rec.panel_readers == 1
++    assert "Running in MOCK mode" in capsys.readouterr().out
++
++
++def test_t03b_con08_mock_flag_still_runs_mock_mode_with_hailo(main_mod, monkeypatch, capsys):
++    """--mock with hailo_apps present: mock mode, not the pipeline (unchanged)."""
++    run_main(main_mod, monkeypatch, ["--mock"], hailo_available=True)
++
++    rec = main_mod.recorder
++    assert rec.mock_runs == 1 and rec.pipeline_runs == 0
++    assert "Running in MOCK mode" in capsys.readouterr().out
++
++
++def test_t03b_con08_hailo_present_and_no_mock_flag_runs_the_pipeline(main_mod, monkeypatch, capsys):
++    """The normal start: no --mock, hailo_apps present. The pipeline runner, never mock mode."""
++    run_main(main_mod, monkeypatch, ["--input", "/dev/video0", "--serial-port", "/dev/serial0"],
++             hailo_available=True)
++
++    rec = main_mod.recorder
++    assert rec.pipeline_runs == 1 and rec.mock_runs == 0
++    assert rec.threads == ["tts-worker", "serial-writer"]
++    assert "MOCK" not in capsys.readouterr().out
++
++
++def test_t03b_con08_the_import_error_is_kept_for_the_message(monkeypatch):
++    """main.py records why hailo_apps did not import, so the refusal can say it."""
++    module = load_main(monkeypatch)
++
++    assert module.HAILO_AVAILABLE is False
++    assert isinstance(getattr(module, "HAILO_IMPORT_ERROR", None), ImportError)
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-03b/tests/test_startup_without_camera.py tests/test_startup_without_camera.py
+--- .claude/baselines/T-03b/tests/test_startup_without_camera.py	1970-01-01 08:00:00.000000000 +0800
++++ tests/test_startup_without_camera.py	2026-10-17 16:33:31.790844515 +0800
+@@ -0,0 +1,386 @@
++"""
++T-03b: the program is started with NO camera attached (REQ-CON-08, its "absent at start-up" half).
++
++Requirement (docs/testing/REQUIREMENTS.md): when the device runs as deployed and the camera is
++absent at start-up, the program does not crash; every other part keeps running; the device keeps
++checking the USB ports for a camera; when a camera appears, the vision pipeline starts on it; and it
++must never fall back to the testing mock mode. These tests cover the app side of that. The launcher
++and main() are in tests/test_launcher.py and tests/test_main_startup.py. The alert half of the UAT
++case (TC-024-002: beep and "Critical Error: Camera cannot be reached" every 10 s, REQ-CON-07) is
++task T-03c and is NOT built: a PASS line from this file says nothing about it.
++
++Level `gst`: real GStreamer and the real hailo_apps GStreamerApp.run(), no camera, no Hailo chip, no
++boards. They run in my_hailo_env and skip, with a reason, in the Poetry environment:
++
++    my_hailo_env/bin/python -m pytest tests/test_startup_without_camera.py -v
++
++What is real and what is a stand-in: exactly as in tests/test_camera_loss.py (which this file takes
++its helpers from): SecondVisionApp is built with __new__ and then goes through its REAL
++create_pipeline() and run(); the camera and the Hailo element are stand-ins (videotestsrc named
++`source`, an `identity` named stand_in_hailonet); the camera lookup is a scripted answer; the
++node /dev/video99 does not exist (checked). What these tests can never show is that the real hailonet
++survives: that needs the Hailo chip, which the device runs do.
++"""
++
++import logging
++import os
++import signal
++import sys
++import threading
++import time
++from pathlib import Path
++
++import pytest
++
++TESTS_DIR = Path(__file__).resolve().parent
++sys.path.insert(0, str(TESTS_DIR.parent / "src"))
++sys.path.insert(0, str(TESTS_DIR))
++
++import gst_helpers  # noqa: E402
++from test_camera_loss import (  # noqa: E402,F401  (the fixtures are used by name)
++    CAMERA_STANDIN, CAMERA_WITH_HAILO, MISSING_NODE, MOTORS_OFF, UNOPENABLE_CAMERA,
++    FakeCameraLookup, FakePanelPort, HailoStandIn, app_mod, build_app, drain, frames_flowing,
++    made_apps, mock_threads, record_shutdowns, state,
++)
++
++pytestmark = pytest.mark.gst
++
++CAMERA_NODE = "/dev/video0"      # what the lookup reports when "the camera is plugged in"
++
++
++def start_without_camera(app_mod, made_apps, *, mode="both", descs=(CAMERA_STANDIN,)):
++    """
++    A SecondVisionApp as the constructor leaves it just before create_pipeline(), the camera node
++    absent, and then the app's own create_pipeline() run for real. build_app() gives the instance
++    the constructor state (and a pipeline, as if create_pipeline() had run: that is taken away
++    again, so that what the app does by itself is what the test sees).
++    """
++    assert not os.path.exists(MISSING_NODE), f"{MISSING_NODE} exists on this machine"
++    app = build_app(app_mod, made_apps, mode=mode, source=MISSING_NODE, descs=descs, attach=False)
++    app.show_fps = False                 # GStreamerApp.__init__ state the library's create_pipeline() reads
++    app.pipeline = None
++    app.loop = None
++    app.built.clear()
++    app._built_mode = None
++    app.create_pipeline()
++    return app
++
++
++def run_until_stopped(app, drive, *, signum=signal.SIGINT):
++    """
++    The library's real run() on the app, with `drive` called every 50 ms on the main loop. `drive`
++    returns False when it has sent the stop. Returns the SystemExit run() ended with.
++    """
++    from gi.repository import GLib
++
++    saved = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
++    # What GStreamerApp.__init__ does for SIGINT and main.py does for SIGTERM.
++    signal.signal(signum, app.shutdown)
++    source = GLib.timeout_add(50, drive)
++    try:
++        with pytest.raises(SystemExit) as exited:
++            app.run()
++    finally:
++        for sig, handler in saved.items():
++            signal.signal(sig, handler)
++        if GLib.MainContext.default().find_source_by_id(source) is not None:
++            GLib.source_remove(source)
++    return exited.value
++
++
++# ============================================================
++# What the constructor does when the camera is absent
++# ============================================================
++@pytest.mark.parametrize("mode", ["both", "depth", "detection", "none"])
++def test_t03b_con08_absent_camera_builds_no_pipeline_and_waits(app_mod, made_apps, mode):
++    """
++    No camera node at launch: no pipeline string is built (so no Hailo element exists to be taken
++    down), an empty pipeline is parked, the state is WAITING, and one zero motor dict is queued.
++    """
++    from gi.repository import GLib
++
++    app = start_without_camera(app_mod, made_apps, mode=mode)
++
++    assert app.built == [], "a pipeline was built for a camera that is not there"
++    assert state(app) == "waiting"
++    assert app.pipeline is not None and app.pipeline.get_by_name("source") is None
++    assert not app.pipeline.iterate_elements().next()[1], "the parked pipeline holds an element"
++    assert isinstance(app.loop, GLib.MainLoop)
++    assert app._camera_missing_since is not None
++    assert app.__dict__.get("_camera_watch_thread") is None, "the watcher starts from run(), not here"
++    assert drain(app.user_data.serial_queue) == [MOTORS_OFF]
++
++
++def test_t03b_con08_present_camera_keeps_the_library_path(app_mod, made_apps, monkeypatch):
++    """Criterion 7: the node is there, so create_pipeline() builds the pipeline exactly as before."""
++    from gi.repository import GLib
++
++    app = start_without_camera(app_mod, made_apps)       # builds nothing, as the node is absent ...
++    app.pipeline = app.loop = None
++    app.__dict__.pop("_camera_state", None)              # ... undo that, then let the node "exist"
++    app.built.clear()
++    monkeypatch.setattr(app, "_camera_node_missing", lambda: False)
++    drain(app.user_data.serial_queue)
++    app.create_pipeline()
++
++    assert app.built == [("both", MISSING_NODE)]
++    assert state(app) == "ok"
++    assert app.pipeline.get_by_name("source") is not None
++    assert isinstance(app.loop, GLib.MainLoop)
++    assert drain(app.user_data.serial_queue) == []
++    assert app.__dict__.get("_camera_watch_thread") is None
++
++
++# ============================================================
++# Start-up, camera appears, in every mode (through the library's real run())
++# ============================================================
++@pytest.mark.parametrize("mode", ["both", "depth", "detection", "none"])
++def test_t03b_con08_camera_appearing_later_starts_vision_in_the_mode_current_then(
++        app_mod, made_apps, monkeypatch, caplog, capfd, mode):
++    """
++    Criteria 1, 2 and 3. The program starts with no camera; the library's run() keeps it up; the
++    watcher starts from the loop and looks; a panel switch to `mode` while waiting is recorded and
++    builds nothing; then a camera appears on another node and the pipeline is built, for `mode`,
++    on that node. Ctrl+C then exits 0.
++    """
++    lookup = FakeCameraLookup()
++    monkeypatch.setattr(app_mod, "get_usb_video_devices", lookup, raising=False)
++    app = start_without_camera(app_mod, made_apps)
++    monkeypatch.setattr(app, "_force_exit_if_stuck", lambda: None)   # the real one ends the test process
++    steps = {"phase": "wait-for-first-look", "recorded": None}
++
++    def drive():
++        if steps["phase"] == "wait-for-first-look":
++            if lookup.calls >= 1:
++                steps["waiting_at_first_look"] = (state(app), list(app.built))
++                app.config.update(pipeline_mode=mode)          # what config_reader_worker does ...
++                app.trigger_rebuild()                          # ... on "M:<mode>"
++                steps["recorded"] = (list(app.built), app._rebuild_in_flight)
++                lookup.answer = lambda: [CAMERA_NODE]          # the camera is plugged in
++                steps["phase"] = "wait-for-vision"
++            return True
++        if steps["phase"] == "wait-for-vision":
++            if state(app) == "ok" and frames_flowing(app, 3):
++                steps["phase"] = "stopped"
++                os.kill(os.getpid(), signal.SIGINT)
++                return False
++            return True
++        return False
++
++    with caplog.at_level(logging.INFO):
++        exited = run_until_stopped(app, drive)
++
++    assert steps["phase"] == "stopped", f"never reached a running pipeline: {steps}"
++    assert steps["waiting_at_first_look"] == ("waiting", []), "the watcher did not look while waiting"
++    assert steps["recorded"] == ([], False), "a panel switch while waiting built or scheduled a rebuild"
++    assert app.built == [(mode, CAMERA_NODE)], "vision did not start once, in the current mode, on the node"
++    assert app.video_source == CAMERA_NODE
++    assert exited.code == 0
++    assert app.user_data.shutdown_event.is_set()
++    assert "identity not found" not in caplog.text, "run() on the parked pipeline warned about callbacks"
++    assert "Camera back: vision pipeline running" in caplog.text
++    assert "Exiting successfully" in caplog.text and "Error during cleanup" not in caplog.text
++    assert drain(app.user_data.serial_queue) == [MOTORS_OFF]
++    out = capfd.readouterr()
++    assert mock_threads() == [] and "MOCK" not in out.out
++    # GStreamer reports a CRITICAL when an element is dropped while still PLAYING (the parked
++    # pipeline, which run() starts, is replaced by the camera's) and when a bus loses a watch twice.
++    assert "CRITICAL" not in out.err, "a GStreamer CRITICAL on stderr"
++    watcher = app.__dict__.get("_camera_watch_thread")
++    assert watcher is not None
++    watcher.join(timeout=3)
++    assert not watcher.is_alive(), "the camera watcher outlived the stop"
++
++
++# ============================================================
++# A stop at start-up
++# ============================================================
++@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM], ids=["sigint", "sigterm"])
++def test_t03b_con08_clean_stop_while_waiting_from_start_exits_0(app_mod, made_apps, monkeypatch,
++                                                                caplog, capsys, signum):
++    """
++    Criterion 6, REQ-DTA-08 regression. Ctrl+C (SIGINT, also what the boot service sends) or SIGTERM
++    while the program waits for the camera it started without: exit 0 through the library's cleanup,
++    workers told to stop, the watcher gone, no mock mode.
++    """
++    lookup = FakeCameraLookup()
++    monkeypatch.setattr(app_mod, "get_usb_video_devices", lookup, raising=False)
++    app = start_without_camera(app_mod, made_apps)
++    monkeypatch.setattr(app, "_force_exit_if_stuck", lambda: None)
++    sent = []
++
++    def drive():
++        if lookup.calls >= 2:
++            sent.append(time.monotonic())
++            os.kill(os.getpid(), signum)
++            return False
++        return True
++
++    with caplog.at_level(logging.INFO):
++        began = time.monotonic()
++        exited = run_until_stopped(app, drive, signum=signum)
++        took = time.monotonic() - sent[0]
++
++    assert sent, "the stop was never sent"
++    assert exited.code == 0
++    assert took < 2.0, f"the stop took {took:.1f} s"
++    assert app.user_data.shutdown_event.is_set()
++    watcher = app.__dict__.get("_camera_watch_thread")
++    assert watcher is not None
++    watcher.join(timeout=3)
++    assert not watcher.is_alive(), "the camera watcher outlived the stop"
++    assert app.built == []
++    assert "Exiting successfully" in caplog.text and "Error during cleanup" not in caplog.text
++    assert mock_threads() == [] and "MOCK" not in capsys.readouterr().out
++
++
++def test_t03b_con08_stop_during_construction_is_not_lost(app_mod, made_apps, monkeypatch, caplog):
++    """
++    Criterion 6. SIGINT lands after GStreamerApp.__init__ installed the handler and before the
++    constructor made a pipeline and a loop: shutdown() finds neither and only records itself. The
++    program must still end at once with exit 0, not run until the shutdown timer forces it out
++    (that line, "forcing exit", is a failure in the device runs).
++    """
++    from gi.repository import GLib
++
++    app = build_app(app_mod, made_apps, source=MISSING_NODE, attach=False)
++    app.show_fps = False
++    app.pipeline = None
++    app.loop = None
++    app.built.clear()
++    monkeypatch.setattr(app, "_force_exit_if_stuck", lambda: None)
++    timed_out = []
++
++    with caplog.at_level(logging.INFO):
++        app.shutdown()                                  # the signal, too early for the loop
++        assert app._shutting_down and app.pipeline is None and app.loop is None
++        app.create_pipeline()                           # the constructor goes on
++        source = GLib.timeout_add(3000, lambda: (timed_out.append(1), app.loop.quit(), False)[-1])
++        try:
++            with pytest.raises(SystemExit) as exited:
++                app.run()
++        finally:
++            if not timed_out:
++                GLib.source_remove(source)
++
++    assert timed_out == [], "run() kept running after a stop that had already been asked for"
++    assert exited.value.code == 0
++    assert app.user_data.shutdown_event.is_set()
++    assert app.built == []
++
++
++# ============================================================
++# While waiting: the panel, and a camera that does not open
++# ============================================================
++def test_t03b_con08_panel_mode_switch_while_waiting_from_start_is_announced(app_mod, made_apps, monkeypatch):
++    """
++    Criterion 2. The REAL panel worker, on a fake port, while the program waits for the camera it
++    started without: the switch is spoken ("depth mode") and recorded, the worker stays alive,
++    nothing is built, nothing is shut down.
++    """
++    from second_vision.workers import config_reader
++
++    lookup = FakeCameraLookup()
++    monkeypatch.setattr(app_mod, "get_usb_video_devices", lookup, raising=False)
++    app = start_without_camera(app_mod, made_apps)
++    shutdowns = record_shutdowns(app, monkeypatch)
++    app._begin_waiting()                                # what run()'s first idle does
++    assert gst_helpers.run_main_loop(lambda: lookup.calls >= 1, seconds=5)
++
++    monkeypatch.setattr(config_reader, "_open_config_port", lambda path: FakePanelPort([b"M:depth\n"]))
++    worker = threading.Thread(target=config_reader.config_reader_worker,
++                              args=(app.user_data, app.config, "/dev/fake-panel", app),
++                              daemon=True, name="config-reader")
++    worker.start()
++    assert gst_helpers.run_main_loop(lambda: app.config.get("pipeline_mode") == "depth", seconds=5)
++    gst_helpers.run_main_loop(seconds=0.5)
++
++    assert app.user_data.tts_queue.peek() == {"announce": "depth mode"}
++    assert worker.is_alive()
++    assert app.built == [] and shutdowns == [] and state(app) == "waiting"
++    app.user_data.shutdown_event.set()
++    worker.join(timeout=3)
++    assert not worker.is_alive()
++
++
++def test_t03b_con08_camera_that_appears_but_cannot_open_goes_back_to_waiting_then_starts(
++        app_mod, made_apps, monkeypatch, caplog):
++    """
++    Criterion 4, reached from a start without a camera. The first camera found is a node that cannot
++    be opened (v4l2src on a node that is not there): the program does not exit and does not shut
++    down, goes back to looking, and starts on the next camera found.
++    """
++    from gi.repository import Gst
++
++    if Gst.ElementFactory.find("v4l2src") is None:
++        pytest.skip("the v4l2src element is not installed, so a real failed start cannot be made")
++    app = None
++    lookup = FakeCameraLookup(lambda: [MISSING_NODE] if not app.built else ["/dev/video5"])
++    monkeypatch.setattr(app_mod, "get_usb_video_devices", lookup, raising=False)
++    app = start_without_camera(app_mod, made_apps,
++                               descs=(CAMERA_STANDIN, UNOPENABLE_CAMERA, CAMERA_STANDIN))
++    shutdowns = record_shutdowns(app, monkeypatch)
++    app._begin_waiting()
++
++    with caplog.at_level(logging.INFO):
++        assert gst_helpers.run_main_loop(lambda: len(app.built) == 2 and state(app) == "ok",
++                                         seconds=8), "never recovered"
++
++    assert app.built == [("both", MISSING_NODE), ("both", "/dev/video5")]
++    assert shutdowns == [] and app.error_occurred is False
++    assert f"did not start on {MISSING_NODE}" in caplog.text
++
++
++def test_t03b_con08_stop_right_after_the_camera_appears_never_takes_down_an_unfed_hailo_element(
++        app_mod, made_apps, monkeypatch, caplog):
++    """
++    Criterion 6, "right after the camera appears". The pipeline started by the watcher after a
++    start without a camera is the staged one: a stop the moment it is running ends the program with
++    exit 0, and the Hailo stand-in was fed its first buffer before it could be taken down.
++    """
++    lookup = FakeCameraLookup(lambda: [])
++    monkeypatch.setattr(app_mod, "get_usb_video_devices", lookup, raising=False)
++    app = start_without_camera(app_mod, made_apps, descs=(CAMERA_STANDIN, CAMERA_WITH_HAILO))
++    hailo = HailoStandIn(monkeypatch, app)
++    monkeypatch.setattr(app, "_force_exit_if_stuck", lambda: None)
++    steps = {"asked": False, "stopped": False}
++
++    def drive():
++        if not steps["asked"]:
++            if lookup.calls >= 1:
++                lookup.answer = lambda: [CAMERA_NODE]
++                steps["asked"] = True
++            return True
++        if state(app) == "ok":                     # running: stop at once, before the first frame matters
++            steps["stopped"] = True
++            os.kill(os.getpid(), signal.SIGINT)
++            return False
++        return True
++
++    with caplog.at_level(logging.INFO):
++        exited = run_until_stopped(app, drive)
++
++    assert steps["stopped"]
++    assert exited.code == 0
++    assert hailo.taken_down_before_a_buffer() == [], hailo.logs
++    assert len(hailo.logs) == 1 and ("buffer", 0) in hailo.logs[0], "the stand-in was not primed"
++
++
++# ============================================================
++# The "still looking" line counts from the start of the program
++# ============================================================
++def test_t03b_con08_still_looking_line_counts_from_the_start(app_mod, made_apps, monkeypatch, caplog):
++    """Criterion 1: about one INFO line a minute ("Still no USB camera after N s"), here shortened."""
++    monkeypatch.setattr(app_mod, "CAMERA_STILL_LOOKING_LOG_SECONDS", 0.3, raising=False)
++    lookup = FakeCameraLookup()
++    monkeypatch.setattr(app_mod, "get_usb_video_devices", lookup, raising=False)
++    app = start_without_camera(app_mod, made_apps)
++    record_shutdowns(app, monkeypatch)
++    app._begin_waiting()
++
++    with caplog.at_level(logging.INFO):
++        assert gst_helpers.run_main_loop(lambda: lookup.calls >= 12, seconds=5)
++
++    lines = [r for r in caplog.records if "Still no USB camera after" in r.getMessage()]
++    assert 2 <= len(lines) <= lookup.calls // 2, f"{len(lines)} lines for {lookup.calls} looks"
++    assert all(r.levelno == logging.INFO for r in lines)
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-03b/tests/uat/test_tc024_002_camera_absent_at_start.py tests/uat/test_tc024_002_camera_absent_at_start.py
+--- .claude/baselines/T-03b/tests/uat/test_tc024_002_camera_absent_at_start.py	1970-01-01 08:00:00.000000000 +0800
++++ tests/uat/test_tc024_002_camera_absent_at_start.py	2026-10-17 19:16:39.411689435 +0800
+@@ -0,0 +1,1019 @@
++"""
++TC-024-002, REQ-CON-08 half only: the USB camera is absent at start-up. Task T-03b. Written by the
++Tester (tests/uat/).
++
++These tests cover ONLY the "absent at start-up" half of REQ-CON-08. The case's alert half (the
++vibration pulses and the spoken "Critical Error: Camera cannot be reached" every 10 s, REQ-CON-07)
++is task T-03c and is NOT built: a PASS line for TC-024-002 from this file says nothing about it.
++
++Workbook TC-024-002, verbatim (docs/testing/uat-snapshot.yaml, Test Cases!A262:G262):
++    steps:    1. Power on Raspberry Pi 5
++    input:    USB Camera is not Connected
++    expected: There should be a quick set of vibration pulse alongside a "Critical Error: Camera cannot be
++              reached" audio error. This should be repeated every 10 seconds
++
++              In terms of the pipeline, the system should catch the no devices exception and allow the
++              device to proceed in mock mode temporarily. Device should also listen for cameras that may
++              pop up in the list of devices to check if everything is okay.
++The workbook's own wording "proceed in mock mode temporarily" is overruled by D-13 (REQ-CON-08: "It
++must never fall back to the testing mock mode"); these tests assert the opposite.
++
++Level: `unit` tests (no marker) run anywhere; `device` tests (opt-in) need the boot service stopped,
++the camera attached, passwordless sudo for the tool:
++    my_hailo_env/bin/python -m pytest tests/uat/test_tc024_002_camera_absent_at_start.py -v -rA --run-device
++
++What is real in the device tests: the launcher scripts/sv-main.sh (as the boot service runs it,
++with SV_SERVICE=1, no DISPLAY, and its INPUT default /dev/video0), scripts/run.sh, the program, the
++camera, the Hailo chip, and the simulated unplug (.claude/tools/usb_sim.py through the conftest
++`camera_unplug` fixture). Stand-ins: the glasses ESP32 and the control panel are pseudo-terminals
++(the harness of tests/uat/test_tc024_003_camera_removed.py: FakeGlasses ACKs and records, FakePanel
++sends `M:<mode>`).
++
++"Camera appears at T s" below means: the `attach camera` command is issued T s after the launch;
++the camera's nodes come back about 1.5 s later (the kernel enumerating it, as for a plugged cable).
++
++usb_sim.py defect designed around: every `detach --for N` leaves a timer that re-attaches whichever
++detach is current after N s. So: no new detach while an earlier timer is pending (checked with
++pgrep), --for just above the planned attach time, and the camera asserted gone before relying on it.
++"""
++
++from __future__ import annotations
++
++import json
++import os
++import random
++import re
++import signal
++import subprocess
++import sys
++import time
++from pathlib import Path
++
++import pytest
++
++from test_tc024_003_camera_removed import (  # the T-03a harness, used as it is
++    AppRun, FakeGlasses, FakePanel, REPO, CAMERA_NODE, MOTOR_ZERO, CAMERA_BACK, RECOVERY_TIMEOUT,
++    STOP_BOUND_SECONDS, START_TIMEOUT, ANSI, NEVER, cpu_ticks, wait_no_pending_timer, assert_clean,
++)
++
++device = pytest.mark.device
++LAUNCHER = REPO / "scripts" / "sv-main.sh"
++MODES = ["both", "depth", "detection", "none"]
++NO_CAMERA_LINE = "No camera at start-up"
++FOUND = "Camera found on"
++STILL = "Still no USB camera after"
++PANEL_UP = "Connected to control panel"
++PIPELINE_STRING = "Generated Pipeline string"
++STOP_ABOUT_ONE_SECOND = 2.0       # the brief says "within about 1 s"; measured 0.3 to 1.0 s
++
++
++# ============================================================
++# The program, started the way the boot service starts it
++# ============================================================
++class LauncherRun(AppRun):
++    """scripts/sv-main.sh with SERIAL_PORT / CONFIG_PORT pointed at the stand-ins; INPUT left at its default."""
++
++    def __init__(self, log_path: Path, serial_port: str, config_port: str, *, service: str | None = "1",
++                 run_sh: str | None = None, extra_env: dict | None = None):
++        self.log_path = log_path
++        self.cmd = [str(LAUNCHER)]
++        env = dict(os.environ)
++        for name in ("DISPLAY", "WAYLAND_DISPLAY", "SV_SERVICE", "INPUT", "SV_RUN_SH"):
++            env.pop(name, None)
++        if service is not None:
++            env["SV_SERVICE"] = service
++        if run_sh:
++            env["SV_RUN_SH"] = run_sh
++        env.update({"SERIAL_PORT": serial_port, "CONFIG_PORT": config_port, "PYTHONUNBUFFERED": "1"})
++        env.update(extra_env or {})
++        self.lines: list[tuple[float, str]] = []
++        self._log = open(log_path, "w", buffering=1)
++        self._log.write(f"# command: {' '.join(self.cmd)} (SV_SERVICE={service} SV_RUN_SH={run_sh})\n"
++                        f"# started: {time.strftime('%F %T %Z')}\n")
++        self.started_at = time.monotonic()
++        # sv-main.sh exec's run.sh which exec's python: this PID is the program; own session.
++        self.proc = subprocess.Popen(self.cmd, cwd=REPO, env=env, stdout=subprocess.PIPE,
++                                     stderr=subprocess.STDOUT, start_new_session=True)
++        self.pid = self.proc.pid
++        import threading
++        self._reader = threading.Thread(target=self._read, daemon=True, name="app-output")
++        self._reader.start()
++
++    def since_launch(self, t: float) -> float:
++        return t - self.started_at
++
++    def cmdline(self) -> list[str]:
++        try:
++            return Path(f"/proc/{self.pid}/cmdline").read_bytes().decode().split("\0")
++        except OSError:
++            return []
++
++    def open_paths(self, prefix: str) -> list[str]:
++        found = set()
++        try:
++            for fd in Path(f"/proc/{self.pid}/fd").iterdir():
++                try:
++                    target = os.readlink(fd)
++                except OSError:
++                    continue
++                if target.startswith(prefix):
++                    found.add(target)
++        except OSError:
++            pass
++        return sorted(found)
++
++    def count(self, needle: str, start: int = 0) -> int:
++        return sum(1 for _, line in list(self.lines)[start:] if needle in line)
++
++
++@pytest.fixture
++def uat_log_dir(tmp_path) -> Path:
++    where = os.environ.get("SV_UAT_APP_LOG_DIR")
++    path = Path(where) if where else tmp_path
++    path.mkdir(parents=True, exist_ok=True)
++    return path
++
++
++@pytest.fixture
++def sv(request, uat_log_dir):
++    """sv(service="1", run_sh=None) -> (app, glasses, panel); everything stopped by PID at the end."""
++    runs, stand_ins = [], []
++
++    def start(service: str | None = "1", run_sh: str | None = None, tag: str = "", real_ports: bool = False):
++        if real_ports:
++            glasses = panel = None
++            ports = ("/dev/serial0", "/dev/ttyAMA3")        # the launcher's own defaults
++        else:
++            glasses, panel = FakeGlasses(), FakePanel()
++            stand_ins.extend([glasses, panel])
++            ports = (glasses.path, panel.path)
++        name = re.sub(r"[^A-Za-z0-9_.-]+", "_", request.node.name) + (f"-{tag}" if tag else "")
++        stamp = time.strftime("%H%M%S")
++        app = LauncherRun(uat_log_dir / f"{time.strftime('%Y-%m-%d')}-{stamp}-app-{name}.log",
++                          ports[0], ports[1], service=service, run_sh=run_sh)
++        runs.append(app)
++        return app, glasses, panel
++
++    yield start
++    for app in runs:
++        app.close()
++    for stand_in in stand_ins:
++        stand_in.close()
++
++
++def start_without_camera(camera_unplug, sv, hold: int, **kw):
++    """Detach the camera (no stale timer pending; the tool's own timer is the fallback replug after
++    `hold` s), assert its nodes are gone, then start the program through the boot launcher."""
++    wait_no_pending_timer(limit=max(hold, 30) + 15)
++    assert camera_unplug.nodes_present() or os.path.exists(CAMERA_NODE), "no camera attached to begin with"
++    camera_unplug.detach(hold)
++    assert camera_unplug.wait_for_nodes(False, 5), "the camera's video nodes did not go away"
++    return sv(**kw)
++
++
++def await_waiting(app: LauncherRun, timeout: float = 20):
++    hit = app.wait_for(NO_CAMERA_LINE, timeout)
++    assert hit, f"the program did not say it started without a camera (alive={app.alive()}):\n{app.text()[-3000:]}"
++    return hit
++
++
++def await_panel(app: LauncherRun, timeout: float = 20):
++    assert app.wait_for(PANEL_UP, timeout), f"panel reader not up:\n{app.text()[-2000:]}"
++
++
++def appear_at(camera_unplug, app: LauncherRun, delay: float) -> float:
++    """Issue `attach camera` `delay` s after the launch; waits for the nodes; returns the log index before."""
++    pause = app.started_at + delay - time.monotonic()
++    if pause > 0:
++        time.sleep(pause)
++    assert not camera_unplug.nodes_present(), \
++        "the camera came back before the test attached it (a stale usb_sim timer?)"
++    index = app.index()
++    app.mark(f"usb_sim attach camera (planned {delay} s after the launch)")
++    result = camera_unplug.attach()
++    assert result.returncode == 0, f"attach failed: {result.stdout} {result.stderr}"
++    assert camera_unplug.wait_for_nodes(True, 15), "the camera's video nodes did not come back"
++    app.mark(f"camera nodes back: {camera_unplug.nodes}")
++    return index
++
++
++def await_vision(app: LauncherRun, since: int, mode: str, timeout: float = RECOVERY_TIMEOUT):
++    """The camera is found once and vision runs in `mode`; returns the 'Camera back' hit."""
++    found = app.wait_for(FOUND, 20, since)
++    assert found, f"the camera was not found:\n{app.text(since)[-3000:]}"
++    assert f"(mode={mode})" in found[2], found[2]
++    back = app.wait_for(CAMERA_BACK, timeout, since)
++    assert back, f"vision did not start:\n{app.text(since)[-3500:]}"
++    assert f"(mode={mode})" in back[2], back[2]
++    if mode in ("both", "depth"):
++        assert app.wait_frames(back[0], 3, 25), f"no depth frames in mode {mode}:\n{app.text(back[0])[-2500:]}"
++    else:
++        time.sleep(3)
++        assert app.alive()
++    assert app.open_paths("/dev/video"), "the program has no camera node open although vision runs"
++    if mode != "none":
++        assert app.open_paths("/dev/hailo"), "no Hailo device open in a Hailo mode"
++    return back
++
++
++def finish(app: LauncherRun, signum=signal.SIGINT, bound: float = STOP_BOUND_SECONDS) -> float:
++    code, took = app.stop(signum)
++    assert code == 0, f"exit code {code} after {signal.Signals(signum).name}:\n{app.text()[-3000:]}"
++    assert took < bound, f"took {took:.2f} s"
++    assert app.leftovers() == [], f"left running: {app.leftovers()}"
++    assert_clean(app)
++    return took
++
++
++def send_mode(app: LauncherRun, panel: FakePanel, mode: str):
++    start = app.index()
++    app.mark(f"panel sends M:{mode}")
++    panel.send(f"M:{mode}")
++    assert app.wait_for(f"[CONFIG] Mode: {mode}", 8, start), f"the panel line was not read:\n{app.text(start)[-1500:]}"
++
++
++# ============================================================
++# unit level (no marker): the launcher, main(), no hardware
++# ============================================================
++STUB = '#!/bin/bash\nprintf \'%s\\n\' "$@" > "$STUB_ARGS_FILE"\nexit ${STUB_EXIT:-0}\n'
++
++
++def run_launcher(tmp_path, *, camera: bool, panel: bool, display=None, wayland=None, service=None,
++                 stub_exit=0, input_name="video0"):
++    stub = tmp_path / "stub-run.sh"
++    stub.write_text(STUB)
++    stub.chmod(0o755)
++    args_file = tmp_path / "args.txt"
++    if args_file.exists():
++        args_file.unlink()
++    cam, pan = tmp_path / input_name, tmp_path / "ttyAMA3"
++    for path, present in ((cam, camera), (pan, panel)):
++        if present:
++            path.touch()
++        elif path.exists():
++            path.unlink()
++    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path), "SV_RUN_SH": str(stub),
++           "STUB_ARGS_FILE": str(args_file), "STUB_EXIT": str(stub_exit), "SERIAL_PORT": "/dev/test-serial",
++           "CONFIG_PORT": str(pan), "INPUT": str(cam)}
++    for key, value in (("DISPLAY", display), ("WAYLAND_DISPLAY", wayland), ("SV_SERVICE", service)):
++        if value is not None:
++            env[key] = value
++    began = time.monotonic()
++    done = subprocess.run([str(LAUNCHER)], env=env, capture_output=True, text=True, timeout=30, cwd=tmp_path)
++    args = args_file.read_text().splitlines() if args_file.exists() else None
++    return args, done, time.monotonic() - began, str(cam), str(pan)
++
++
++def baseline_command_line(cam, pan, frame, with_panel):
++    """Written from the brief (7) and the baseline launcher's two exec lines, not from the new script."""
++    line = ["--input", cam, "--width", "640", "--height", "480"] + (["--use-frame"] if frame else [])
++    line += ["--serial-port", "/dev/test-serial"]
++    return line + (["--config-port", pan] if with_panel else [])
++
++
++@pytest.mark.parametrize("service", [None, "0", "1"], ids=["no-service", "service0", "service1"])
++@pytest.mark.parametrize("camera", [True, False], ids=["camera", "no-camera"])
++@pytest.mark.parametrize("panel", [True, False], ids=["panel", "no-panel"])
++@pytest.mark.parametrize("env_display", [{}, {"display": ":0"}, {"wayland": "wayland-0"},
++                                         {"display": ":0", "wayland": "wayland-0"}],
++                         ids=["headless", "DISPLAY", "WAYLAND", "both-displays"])
++def test_tc024_002_con08_launcher_never_mock_and_same_command_line(tmp_path, service, camera, panel, env_display):
++    """
++    Criteria 5 (launcher) and 7. Whatever the camera, panel port, display and SV_SERVICE: the program is
++    started (the stub is reached, exit status passed through), with the baseline's command line, and
++    `--mock` is never among the arguments or in the launcher's own output.
++    """
++    args, done, took, cam, pan = run_launcher(tmp_path, camera=camera, panel=panel, service=service, **env_display)
++    frame = bool(env_display)
++    assert done.returncode == 0, done.stderr
++    assert args == baseline_command_line(cam, pan, frame, panel), args
++    assert all("mock" not in a.lower() for a in args)
++    assert "mock" not in (done.stdout + done.stderr).lower().replace("mock mode is never", "")
++    assert took < 5, f"the launcher took {took:.1f} s (the old one waited up to 60 s for a camera)"
++    if not camera:
++        assert "no camera" in done.stdout.lower()
++
++
++def test_tc024_002_con08_launcher_passes_the_programs_exit_status_through(tmp_path):
++    """exec: the launcher's exit status is the program's (systemd Restart=always sees the real one)."""
++    for code in (0, 1, 7):
++        args, done, _, _, _ = run_launcher(tmp_path, camera=False, panel=True, service="1", stub_exit=code)
++        assert done.returncode == code
++
++
++def test_tc024_002_con08_launcher_source_has_no_mock_on_any_executed_line():
++    """Criterion 5, source check: no line that is not a comment names mock; both exec lines run $RUN."""
++    text = LAUNCHER.read_text()
++    code = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
++    assert not [l for l in code if "mock" in l.lower()], [l for l in code if "mock" in l.lower()]
++    execs = [l for l in code if re.match(r"\s*exec\b", l)]
++    assert len(execs) == 2 and all(l.split()[1] == '"$RUN"' for l in execs), execs
++    assert not [l for l in code if re.search(r"\b(sleep|exit)\b", l)], "the launcher must neither wait nor exit"
++    assert subprocess.run(["bash", "-n", str(LAUNCHER)]).returncode == 0
++    assert 'RUN="${SV_RUN_SH:-$REPO_ROOT/scripts/run.sh}"' in text
++
++
++def test_tc024_002_con08_service_unit_has_no_stale_wait_or_hard_fail_comment():
++    unit = (REPO / "scripts" / "second-vision.service").read_text()
++    assert "hard-fail" not in unit and "Wait for the camera" not in unit
++    for key in ("Restart=always", "ExecStart=@REPO@/scripts/sv-main.sh", "Environment=SV_SERVICE=1"):
++        assert key in unit
++
++
++def main_py(*args, hailo_missing=True, timeout=30):
++    """main.py run for real in a child; hailo_apps made un-importable (None in sys.modules) if asked."""
++    code = ("import runpy, sys\n"
++            + ("sys.modules['hailo_apps'] = None\n" if hailo_missing else "")
++            + f"sys.path.insert(0, {str(REPO / 'src')!r})\n"
++            f"sys.argv = ['main.py'] + {list(args)!r}\n"
++            f"runpy.run_path({str(REPO / 'src' / 'second_vision' / 'main.py')!r}, run_name='__main__')\n")
++    return subprocess.Popen([sys.executable, "-c", code], cwd=REPO, stdout=subprocess.PIPE,
++                            stderr=subprocess.PIPE, text=True, start_new_session=True)
++
++
++def test_tc024_002_con08_main_refuses_without_hailo_apps_and_without_mock():
++    """
++    Criterion 5 (main.py): hailo_apps cannot be imported and --mock was not given: a clear message that
++    names what is missing and how to ask for mock mode, exit non-zero, and NO worker started: the glasses
++    board (a pty) receives no byte, no mock banner, no pipeline.
++    """
++    glasses, panel = FakeGlasses(), FakePanel()
++    try:
++        proc = main_py("--input", "/dev/video0", "--serial-port", glasses.path, "--config-port", panel.path)
++        out, err = proc.communicate(timeout=30)
++        time.sleep(1.0)
++        assert proc.returncode not in (0, None), (proc.returncode, out, err)
++        assert "hailo_apps" in err and "--mock" in err and "D-13" in err, err
++        assert "MOCK" not in out and "Running in" not in out and "Starting" not in out, out
++        assert glasses.packets == [], f"a serial worker was started: {glasses.packets[:3]}"
++    finally:
++        glasses.close()
++        panel.close()
++
++
++def test_tc024_002_con08_main_with_mock_still_runs_mock_mode_and_stops_with_ctrl_c():
++    """Criterion 5: `--mock` behaves as before (mock banner, the glasses link runs, SIGINT exits 0)."""
++    glasses, panel = FakeGlasses(), FakePanel()
++    try:
++        proc = main_py("--mock", "--serial-port", glasses.path, "--config-port", panel.path)
++        time.sleep(5)
++        assert proc.poll() is None, proc.communicate()
++        os.kill(proc.pid, signal.SIGINT)
++        out, err = proc.communicate(timeout=20)
++        assert proc.returncode == 0, (proc.returncode, out[-1500:], err[-1500:])
++        assert "Running in MOCK mode" in out, out[-1500:]
++        assert glasses.packets, "the glasses link did not run in mock mode"
++        assert "[MOCK] Detection generator started" in out
++    finally:
++        glasses.close()
++        panel.close()
++
++
++# ============================================================
++# device level: the criteria of the brief
++# ============================================================
++@device
++@pytest.mark.timeout(480)
++def test_tc024_002_con08_device_no_camera_120s_stays_up_everything_else_runs(camera_unplug, sv):
++    """
++    Criteria 1, 2 and 5. REQ-CON-08: started at boot with no camera: the program does not crash; the glasses
++    link, the panel and speech keep running; it keeps checking; never mock. 125 s with no camera: same PID,
++    alive, no forbidden line (Traceback, CRITICAL, MOCK, segfault ...), "Still no USB camera after N s" about
++    once a minute (two by 125 s), heartbeats to the glasses all the time, only zero-motor commands (no
++    vibration), a panel mode switch recorded and announced, no Hailo device and no camera node open (no
++    pipeline exists), CPU low. Then the camera appears and vision starts in the mode set meanwhile (depth).
++    """
++    app, glasses, panel = start_without_camera(camera_unplug, sv, hold=140)
++    pid = app.pid
++    wait_hit = await_waiting(app)
++    t_wait = wait_hit[1]
++    await_panel(app)
++    assert app.count(NO_CAMERA_LINE) == 1
++    assert app.open_paths("/dev/video") == [] and app.open_paths("/dev/hailo") == [], \
++        (app.open_paths("/dev/video"), app.open_paths("/dev/hailo"))
++    assert app.find(PIPELINE_STRING) is None, "a pipeline string was generated although there is no camera"
++    time.sleep(8)
++    send_mode(app, panel, "depth")
++    assert app.wait_for("depth mode", 8), "the mode switch was not announced"
++    assert app.wait_for("recorded while the camera is missing", 5), "the switch was not recorded as pending"
++    time.sleep(10)
++    ticks0, c0 = cpu_ticks(app.pid), time.monotonic()
++    time.sleep(20)
++    ticks1, c1 = cpu_ticks(app.pid), time.monotonic()
++    cpu = (ticks1 - ticks0) / os.sysconf("SC_CLK_TCK") / (c1 - c0) * 100
++    deadline = app.started_at + 124
++    while time.monotonic() < deadline:
++        assert app.alive(), f"the program ended (exit {app.proc.returncode}):\n{app.text()[-4000:]}"
++        time.sleep(1)
++    assert app.pid == pid and app.proc.poll() is None
++    stills = [(t - t_wait, line) for t, line in app.lines if STILL in line]
++    heart = len(glasses.heartbeats_between(0))
++    motors = glasses.motors_between(0)
++    print(f"CPU while waiting {cpu:.1f} % of one core; 'Still no USB camera' at {[round(t, 1) for t, _ in stills]} s; "
++          f"{heart} heartbeats in 124 s; motor packets {len(motors)} (non-zero: {sum(m != MOTOR_ZERO for m in motors)})")
++    assert len(stills) == 2 and 55 <= stills[0][0] <= 66 and 115 <= stills[1][0] <= 126, stills
++    assert heart >= 100, f"only {heart} heartbeats in 124 s"
++    assert app.count("UART Connection to ESP32 is WORKING") >= 1 or app.find("acknowledg") is None
++    assert motors and all(m == MOTOR_ZERO for m in motors), "the motors received a vibration while there is no camera"
++    assert 0 <= cpu < 50
++    assert app.open_paths("/dev/video") == [] and app.open_paths("/dev/hailo") == []
++    assert app.find(PIPELINE_STRING) is None and app.find(FOUND) is None
++    assert_clean(app)
++    since = appear_at(camera_unplug, app, 126)
++    await_vision(app, since, "depth")
++    assert app.count(FOUND) == 1 and app.count(PIPELINE_STRING) == 1
++    finish(app, signal.SIGTERM)
++
++
++@device
++@pytest.mark.timeout(420)
++@pytest.mark.parametrize("delay", [1, 10, 90], ids=["at-1s", "at-10s", "at-90s"])
++@pytest.mark.parametrize("mode", MODES)
++def test_tc024_002_con08_device_camera_appears_later_vision_starts_in_the_current_mode(camera_unplug, sv, delay, mode):
++    """
++    Criterion 3. Camera plugged in at `delay` s after the start, on the same node, with the panel set to
++    `mode` while waiting: vision starts, once, in `mode`; the other parts stay up; clean stop (alternately
++    SIGINT/SIGTERM) exit 0.
++    """
++    app, glasses, panel = start_without_camera(camera_unplug, sv, hold=delay + 10)
++    await_waiting(app)
++    await_panel(app)
++    if mode != "both":
++        send_mode(app, panel, mode)
++    since = appear_at(camera_unplug, app, delay)
++    back = await_vision(app, since, mode)
++    print(f"mode {mode}, attach at {delay} s: {back[2][-90:]}")
++    assert app.count(FOUND) == 1 and app.count(PIPELINE_STRING) == 1 and app.find("Camera lost (") is None
++    assert app.open_paths("/dev/video") != []
++    finish(app, signal.SIGINT if delay == 10 else signal.SIGTERM)
++
++
++@device
++@pytest.mark.timeout(900)
++def test_tc024_002_con08_device_count_25_fresh_starts_camera_appears_0p5_to_5s(camera_unplug, sv):
++    """
++    Criteria 3 and 6 (brief, "Fixed means repeated", counts doubled and a bit): 25 fresh-process starts,
++    no camera, the camera appearing 0.5 to 5 s later at random (seeded), modes cycled, stop alternately
++    SIGINT and SIGTERM after vision runs. Every one: vision running in the right mode, exit 0, no forbidden line.
++    """
++    rng = random.Random(20261017)
++    records, failures = [], []
++    for i in range(25):
++        mode, delay = MODES[i % 4], round(rng.uniform(0.5, 5.0), 2)
++        signum = signal.SIGINT if i % 2 == 0 else signal.SIGTERM
++        app, glasses, panel = start_without_camera(camera_unplug, sv, hold=9, tag=f"{i:02d}")
++        record = {"run": i, "mode": mode, "attach_at": delay, "signal": signal.Signals(signum).name}
++        try:
++            await_waiting(app)
++            await_panel(app)
++            if mode != "both":
++                send_mode(app, panel, mode)
++            since = appear_at(camera_unplug, app, delay)
++            back = await_vision(app, since, mode)
++            record["found_after_attach_s"] = round(app.wait_for(FOUND, 1, since)[1] - app.lines[since][0], 2)
++            record["took_s"] = round(finish(app, signum), 2)
++            record["ok"] = True
++        except AssertionError as exc:
++            record["ok"] = False
++            record["why"] = str(exc)[:300]
++            failures.append(record)
++            app.close()
++        records.append(record)
++        print(json.dumps(record))
++    print(f"SUMMARY: {sum(r['ok'] for r in records)} of {len(records)} ok")
++    assert not failures, failures
++
++
++@device
++@pytest.mark.timeout(1500)
++def test_tc024_002_con08_device_race_sweep_camera_appearing_around_the_launch(camera_unplug, sv):
++    """
++    Observation beyond the brief (R3): the camera's nodes appear just before, during or just after the
++    constructor's look at /dev/video0 (about 0.5 s after launch). Before the look: the library's boot path
++    (a camera that is present at start, T-11's question); after it: the waiting path. The attach command is
++    issued at offsets -1.0 to +0.8 s from the launch (the nodes follow 0.2 s later); each of the 2 x 19 runs
++    must end alive with vision running and exit 0 on Ctrl+C, no forbidden line. The split between the two
++    paths is reported, not judged.
++    """
++    offsets = [-1.0, -0.5, -0.2, 0.0, 0.1, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.8, 1.0, 1.5]
++    rows = []
++    for rep in range(2):
++        for off in offsets:
++            wait_no_pending_timer(limit=40)
++            camera_unplug.detach(9)
++            assert camera_unplug.wait_for_nodes(False, 5)
++            if off < 0:                                   # attach first; the program is started |off| s later
++                t_attach = time.monotonic()
++                camera_unplug.attach()
++                time.sleep(max(0.0, -off - (time.monotonic() - t_attach)))
++            app, glasses, panel = sv(tag=f"{off:+.2f}")
++            if off >= 0:
++                pause = app.started_at + off - time.monotonic()
++                if pause > 0:
++                    time.sleep(pause)
++                camera_unplug.attach()
++            row = {"offset": off, "rep": rep}
++            try:
++                deadline = time.monotonic() + 45
++                while time.monotonic() < deadline and app.alive():
++                    if app.find(CAMERA_BACK) or len(app.frames_after(0)) >= 3:
++                        break
++                    time.sleep(0.25)
++                row["path"] = "waiting" if app.find(NO_CAMERA_LINE) else "library-boot-path"
++                row["vision"] = bool(app.find(CAMERA_BACK) or len(app.frames_after(0)) >= 3)
++                row["alive"] = app.alive()
++                time.sleep(1)
++                code, took = app.stop(signal.SIGINT)
++                row["exit"] = code
++                row["forbidden"] = app.forbidden()[:3]
++                row["crash"] = (code != 0) or bool(row["forbidden"])
++            except AssertionError as exc:
++                row["crash"] = True
++                row["why"] = str(exc)[:200]
++            app.close()
++            rows.append(row)
++            print(json.dumps(row))
++    bad = [r for r in rows if r.get("crash") or not r.get("vision")]
++    paths = {p: sum(1 for r in rows if r.get("path") == p) for p in ("waiting", "library-boot-path")}
++    print(f"SUMMARY: {len(rows) - len(bad)} of {len(rows)} ended with vision and exit 0; paths {paths}")
++    assert not bad, bad
++
++
++@device
++@pytest.mark.timeout(300)
++def test_tc024_002_con08_device_camera_appears_on_another_node(camera_unplug, sv):
++    """
++    Criterion 3, "or another node": the old nodes are held open (as in T-03a's test) while the camera is
++    away, so the returning camera gets new numbers. Vision starts on the new node, in the same process.
++    Afterwards the camera is renumbered back to /dev/video0 for the launcher.
++    """
++    wait_no_pending_timer()
++    old = [n for n in camera_unplug.nodes if os.path.exists(n)] or [CAMERA_NODE]
++    held = [os.open(n, os.O_RDONLY | os.O_NONBLOCK) for n in old if os.path.exists(n)]
++    try:
++        app, glasses, panel = start_without_camera(camera_unplug, sv, hold=20)
++        await_waiting(app)
++        since = appear_at(camera_unplug, app, 4)
++        new_nodes = list(camera_unplug.nodes)
++        assert not set(new_nodes) & set(old), f"the camera came back on the same nodes {new_nodes}"
++        back = await_vision(app, since, "both")
++        assert any(f"running on {n} " in back[2] for n in new_nodes), (back[2], new_nodes)
++        print(f"old nodes {old}, new nodes {new_nodes}; {back[2][-100:]}")
++        finish(app)
++    finally:
++        for fd in held:
++            os.close(fd)
++        if not os.path.exists(CAMERA_NODE):
++            wait_no_pending_timer()
++            camera_unplug.detach(20)
++            camera_unplug.wait_for_nodes(False, 5)
++            camera_unplug.attach()
++            camera_unplug.wait_for_nodes(True, 15)
++    assert os.path.exists(CAMERA_NODE), "the camera is not back on /dev/video0 after the test"
++
++
++@device
++@pytest.mark.timeout(300)
++@pytest.mark.parametrize("after", [0.0, 1.0, 1.6, 2.0, 2.4, 3.0, 4.0],
++                         ids=["with-attach", "1.0s", "1.6s", "2.0s", "2.4s", "3.0s", "4.0s"])
++def test_tc024_002_con08_device_mode_switch_around_the_moment_the_camera_appears(camera_unplug, sv, after):
++    """
++    Criterion 2/3: a panel mode switch (detection) `after` s after the attach command, i.e. before, during
++    and after the start of the first pipeline (the nodes are back ~1.5 s after the attach; the pipeline
++    start takes several seconds). The program stays up and ends with vision in the LAST mode set;
++    then a switch to depth runs frames (the program is still functional).
++    """
++    app, glasses, panel = start_without_camera(camera_unplug, sv, hold=14)
++    await_waiting(app)
++    await_panel(app)
++    since = appear_at(camera_unplug, app, 2)
++    time.sleep(max(0.0, after - 1.6))                      # appear_at already waited for the nodes (~1.5 s)
++    send_mode(app, panel, "detection")
++    deadline = time.monotonic() + 60
++    final = None
++    while time.monotonic() < deadline:
++        assert app.alive(), f"the program ended (exit {app.proc.returncode}):\n{app.text(since)[-4000:]}"
++        hits = [line for _, line in list(app.lines)[since:] if "Camera back" in line or "Pipeline rebuilt" in line]
++        if hits and "mode=detection" in hits[-1]:
++            final = hits[-1]
++            break
++        time.sleep(0.5)
++    assert final, f"vision did not end in detection:\n{app.text(since)[-4000:]}"
++    time.sleep(3)
++    assert app.alive() and app.find("Shutdown initiated", since) is None
++    send_mode(app, panel, "depth")
++    assert app.wait_for("Pipeline rebuilt — mode=depth", 40, since), app.text(since)[-3000:]
++    assert app.wait_frames(app.index(), 3, 25)
++    finish(app)
++
++
++@device
++@pytest.mark.timeout(300)
++def test_tc024_002_con08_device_ten_rapid_mode_switches_while_waiting_last_one_wins(camera_unplug, sv):
++    """Criterion 2/3: ten panel switches inside two seconds while waiting; the camera then appears: one start, in the last mode."""
++    app, glasses, panel = start_without_camera(camera_unplug, sv, hold=20)
++    await_waiting(app)
++    await_panel(app)
++    sequence = ["depth", "detection", "none", "both", "depth", "none", "detection", "depth", "both", "detection"]
++    for mode in sequence:
++        panel.send(f"M:{mode}")
++        time.sleep(0.2)
++    time.sleep(1)
++    assert app.alive()
++    assert app.count("[CONFIG] Mode:") >= len(sequence) - 1
++    since = appear_at(camera_unplug, app, 6)
++    await_vision(app, since, "detection")
++    assert app.count(PIPELINE_STRING) == 1
++    finish(app)
++
++
++@device
++@pytest.mark.timeout(900)
++def test_tc024_002_con08_device_camera_drops_again_just_after_it_appears_8_runs(camera_unplug, sv):
++    """
++    Criterion 4: the camera appears and is gone again 0.1 to 0.7 s after "Camera found" (re-attached by the
++    tool 6 s later), in 8 fresh starts. Every run ends in 'running' (frames again) and exit 0, never a crash or an exit.
++    """
++    rng = random.Random(4)
++    records = []
++    for i in range(8):
++        app, glasses, panel = start_without_camera(camera_unplug, sv, hold=3, tag=f"{i}")   # the tool's timer is the first appearance
++        record = {"run": i}
++        try:
++            await_waiting(app)
++            found = app.wait_for(FOUND, 30)
++            assert found, f"never found:\n{app.text()[-2500:]}"
++            time.sleep(rng.uniform(0.1, 0.7))
++            wait_no_pending_timer(limit=20)
++            since = app.index()
++            app.mark("detach camera --for 6 just after Camera found")
++            camera_unplug.detach(6)
++            assert camera_unplug.wait_for_nodes(False, 5)
++            record["after_found_s"] = round(time.monotonic() - found[1], 2)
++            time.sleep(4)
++            assert app.alive(), f"the program ended after the camera dropped (exit {app.proc.returncode}):\n{app.text(since)[-3000:]}"
++            assert wait_for_nodes_back(camera_unplug)
++            assert app.wait_for(CAMERA_BACK, RECOVERY_TIMEOUT + 15, since) or app.wait_for(CAMERA_BACK, 1, found[0]), \
++                f"never running again:\n{app.text(since)[-3500:]}"
++            time.sleep(2)
++            assert app.wait_frames(app.index() - 1, 3, 25) or app.wait_frames(found[0], 3, 5), "no frames"
++            record["state"] = "running"
++            record["took_s"] = round(finish(app), 2)
++            record["ok"] = True
++        except AssertionError as exc:
++            record.update(ok=False, why=str(exc)[:300])
++            app.close()
++        records.append(record)
++        print(json.dumps(record))
++    print(f"SUMMARY: {sum(r['ok'] for r in records)} of {len(records)} ok")
++    assert all(r["ok"] for r in records), records
++
++
++def wait_for_nodes_back(camera_unplug, timeout: float = 20) -> bool:
++    return camera_unplug.wait_for_nodes(True, timeout)
++
++
++@device
++@pytest.mark.timeout(900)
++@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM], ids=["sigint", "sigterm"])
++def test_tc024_002_con08_device_stop_while_waiting_and_right_after_the_camera_appears_15_runs(camera_unplug, sv, signum):
++    """
++    Criterion 6 with Amendment A: stops from the first [MAIN] line (or 0.7 s after launch if later). Each
++    signal: 8 fresh starts with no camera stopped 0.7 to 3 s after launch (while waiting), then 7 fresh
++    starts stopped 0.0 to 1.5 s after "Camera found" (right after the camera appears). Every one: exit 0 within
++    about 1 s (<= 2 s allowed), no forbidden line, no leftovers, the Hailo chip and the camera free.
++    """
++    rng = random.Random(int(signum) * 11)
++    records = []
++    for i in range(15):
++        waiting_stop = i < 8
++        app, glasses, panel = start_without_camera(camera_unplug, sv, hold=10, tag=f"{i:02d}")
++        record = {"run": i, "phase": "waiting" if waiting_stop else "after-found"}
++        try:
++            if waiting_stop:
++                main_line = app.wait_for("[MAIN]", 10)
++                earliest = 0.7 if main_line is None else max(0.7, app.since_launch(main_line[1]) + 0.05)
++                at = max(earliest, rng.uniform(0.7, 3.0))
++                pause = app.started_at + at - time.monotonic()
++                if pause > 0:
++                    time.sleep(pause)
++                record["stop_at_s"] = round(at, 2)
++            else:
++                await_waiting(app)
++                since = appear_at(camera_unplug, app, 1)
++                found = app.wait_for(FOUND, 20, since)
++                assert found, app.text(since)[-2000:]
++                gap = rng.uniform(0.0, 1.5)
++                time.sleep(gap)
++                record["stop_after_found_s"] = round(gap, 2)
++            code, took = app.stop(signum)
++            record.update(exit=code, took_s=round(took, 2))
++            assert code == 0 and took <= STOP_ABOUT_ONE_SECOND + (2.0 if not waiting_stop else 0.0), record
++            assert app.leftovers() == [], app.leftovers()
++            assert_clean(app)
++            assert str(app.pid) not in subprocess.run(["fuser", "/dev/hailo0"], capture_output=True, text=True).stdout
++            record["ok"] = True
++        except AssertionError as exc:
++            record.update(ok=False, why=str(exc)[:300])
++            app.close()
++        records.append(record)
++        print(json.dumps(record))
++    print(f"SUMMARY: {sum(r['ok'] for r in records)} of {len(records)} ok")
++    assert all(r["ok"] for r in records), [r for r in records if not r["ok"]]
++
++
++@device
++@pytest.mark.timeout(900)
++@pytest.mark.parametrize("which", ["new", "baseline"])
++def test_tc024_002_con08_device_observation_stops_before_the_first_main_line_20_runs(camera_unplug, sv, which):
++    """
++    OBSERVATION, not pass/fail (Amendment A): SIGINT/SIGTERM alternately 0.1 to 0.7 s after launch with no
++    camera, before the program has installed its signal handlers. Reports the exit codes and how many
++    signals were lost (the program kept running). `baseline` runs the baseline tree's run.sh through the new
++    launcher (set SV_UAT_BASELINE_RUN_SH to the scratch copy's scripts/run.sh), `new` this tree. Leftover child
++    processes 1.5 s after the stop are listed, not asserted.
++    """
++    run_sh = None
++    if which == "baseline":
++        run_sh = os.environ.get("SV_UAT_BASELINE_RUN_SH")
++        if not run_sh:
++            pytest.skip("SV_UAT_BASELINE_RUN_SH (a scratch copy of the baseline run.sh) is not set")
++    rng = random.Random(99)
++    rows = []
++    for i in range(20):
++        signum = signal.SIGINT if i % 2 == 0 else signal.SIGTERM
++        app, glasses, panel = start_without_camera(camera_unplug, sv, hold=9, run_sh=run_sh, tag=f"{which}{i:02d}")
++        at = round(rng.uniform(0.1, 0.7), 2)
++        pause = app.started_at + at - time.monotonic()
++        if pause > 0:
++            time.sleep(pause)
++        main_seen = app.find("[MAIN]") is not None
++        app.mark(f"early {signal.Signals(signum).name} at {at} s, [MAIN] line seen: {main_seen}")
++        try:
++            os.kill(app.pid, signum)
++        except ProcessLookupError:
++            pass
++        try:
++            code = app.proc.wait(timeout=7)
++            lost = False
++        except subprocess.TimeoutExpired:
++            code, lost = None, True
++        rows.append({"which": which, "signal": signal.Signals(signum).name, "at_s": at, "main_line_seen": main_seen,
++                     "exit": code, "lost": lost})
++        app.close()
++        time.sleep(1.5)                              # a child that was mid-run (hailortcli ...) may still be finishing
++        rows[-1]["leftovers_after_1.5s"] = app.leftovers()
++        print(json.dumps(rows[-1]))
++    clean = sum(r["exit"] == 0 for r in rows)
++    print(f"OBSERVATION {which}: {clean} of {len(rows)} exit 0; lost {sum(r['lost'] for r in rows)}; "
++          f"killed by signal {sum(1 for r in rows if r['exit'] is not None and r['exit'] < 0)}; "
++          f"other non-zero {sum(1 for r in rows if r['exit'] not in (None, 0) and r['exit'] > 0)}")
++
++
++@device
++@pytest.mark.timeout(400)
++def test_tc024_002_con08_device_plain_start_with_camera_present_through_the_launcher_3_runs(sv, tmp_path):
++    """
++    Criterion 7: camera attached at start: the launcher's command line is the old one (recorded by a wrapper
++    that hands the arguments on to the real scripts/run.sh), vision starts through the library path as before
++    (frames flow, no 'No camera at start-up', no 'Camera found', one pipeline string), a panel switch rebuilds,
++    exit 0.
++    """
++    assert os.path.exists(CAMERA_NODE), "camera not attached"
++    for i, modes in enumerate([("detection", "depth"), ("none", "both"), ("depth", "detection")]):
++        record = tmp_path / f"args-{i}.txt"
++        wrapper = tmp_path / f"record-run-{i}.sh"
++        wrapper.write_text(f'#!/bin/bash\nprintf "%s\\n" "$@" > "{record}"\nexec "{REPO / "scripts" / "run.sh"}" "$@"\n')
++        wrapper.chmod(0o755)
++        app, glasses, panel = sv(tag=f"{i}", run_sh=str(wrapper))
++        try:
++            assert app.wait_frames(0, 3, START_TIMEOUT), f"no frames:\n{app.text()[-3000:]}"
++            args = record.read_text().splitlines()
++            assert args == ["--input", "/dev/video0", "--width", "640", "--height", "480",
++                            "--serial-port", glasses.path, "--config-port", panel.path], args
++            assert app.find(NO_CAMERA_LINE) is None and app.find(FOUND) is None
++            assert app.count(PIPELINE_STRING) == 1
++            await_panel(app)
++            for mode in modes:
++                start = app.index()
++                panel.send(f"M:{mode}")
++                assert app.wait_for(f"Pipeline rebuilt — mode={mode}", 40, start), app.text(start)[-2500:]
++                time.sleep(2)
++            finish(app, signal.SIGINT if i % 2 == 0 else signal.SIGTERM)
++        finally:
++            app.close()
++@device
++@pytest.mark.timeout(240)
++def test_tc024_002_con08_device_real_ports_no_camera_then_camera(camera_unplug, sv):
++    """
++    Criterion 2 on the REAL boards, once: /dev/serial0 (glasses ESP32) and /dev/ttyAMA3 (panel), the launcher's
++    own defaults. No camera for 25 s: the real board ACKs ("UART Connection to ESP32 is WORKING"), no
++    "stopped acknowledging", the panel link is up; then the camera appears and vision starts. Whether the real
++    motors stay still while waiting is for a person (MANUAL-TESTS.md).
++    """
++    app, _, _ = start_without_camera(camera_unplug, sv, hold=40, real_ports=True)
++    await_waiting(app)
++    assert app.wait_for("UART Connection to ESP32 is WORKING", 15), app.text()[-2500:]
++    assert app.wait_for(PANEL_UP, 10)
++    time.sleep(25)
++    assert app.alive() and app.find("stopped acknowledging") is None and app.find(PIPELINE_STRING) is None
++    modes = [line.split("Mode:")[1].strip() for _, line in app.lines if "[CONFIG] Mode:" in line]
++    mode = modes[-1] if modes else "both"        # the real panel's switches decide, as in service
++    print(f"the real panel's mode at the time: {mode} (panel lines: {modes})")
++    since = appear_at(camera_unplug, app, 28)
++    await_vision(app, since, mode)
++    finish(app)
++
++
++@device
++@pytest.mark.timeout(300)
++def test_tc024_002_con08_device_camera_appears_but_cannot_be_opened_then_can(camera_unplug, sv):
++    """
++    Criterion 4: a camera appears that cannot be opened (a process of the Tester's streams from the node,
++    UVC allows one client) from a start-up that began without a camera. For 15 s the program tries and falls
++    back to waiting, never a crash or an exit; when the holder stops, vision starts (depth frames).
++    """
++    from test_tc024_003_camera_removed import CameraHolder
++    app, glasses, panel = start_without_camera(camera_unplug, sv, hold=15)
++    await_waiting(app)
++    since = appear_at(camera_unplug, app, 1)
++    holder = CameraHolder(CAMERA_NODE)
++    try:
++        time.sleep(1.2)
++        if not holder.alive() or app.find(CAMERA_BACK, since) is not None:
++            pytest.skip("inconclusive: the program got the camera before the holder did")
++        time.sleep(15)
++        assert app.alive(), f"the program ended (exit {app.proc.returncode}):\n{app.text(since)[-4000:]}"
++        assert app.find("Shutdown initiated", since) is None
++        assert_clean(app)
++        attempts = app.count(FOUND, since)
++        print(f"while held: {attempts} starts on the camera, {app.count('Camera lost (', since)} losses")
++        assert attempts >= 1, "the program never tried the camera that appeared"
++    finally:
++        holder.stop()
++    freed = app.index()
++    back = None
++    deadline = time.monotonic() + RECOVERY_TIMEOUT
++    while time.monotonic() < deadline:
++        back = app.wait_for(CAMERA_BACK, 5, freed)
++        if back and app.wait_frames(back[0], 3, 10):
++            break
++        back = None
++    assert back, f"vision did not start after the holder stopped:\n{app.text(freed)[-4000:]}"
++    finish(app)
++
++
++@device
++@pytest.mark.timeout(1200)
++def test_tc024_002_con08_device_camera_gone_again_sweep_0_to_2p5s_after_nodes_return_20_runs(camera_unplug, sv):
++    """
++    Criterion 4, finer than the 'drops again' runs above: in 20 fresh starts the camera's first appearance is
++    the usb_sim timer (`detach --for 3`, no stale timer afterwards); the moment its nodes exist again a second
++    detach (`--for 6`) is issued 0 to 2.5 s later at random (seeded), i.e. before the program's look, during
++    'Camera found' / the pipeline's start, and just after it runs. Every run ends alive, back in 'running'
++    with depth frames once the tool re-attaches, and exits 0 on Ctrl+C; none shows a forbidden line.
++    """
++    rng = random.Random(31)
++    records = []
++    for i in range(20):
++        offset = round(rng.uniform(0.0, 2.5), 2)
++        app, glasses, panel = start_without_camera(camera_unplug, sv, hold=3, tag=f"{i:02d}")
++        record = {"run": i, "offset_after_nodes_s": offset}
++        try:
++            await_waiting(app)
++            limit = time.monotonic() + 15
++            while not os.path.exists(CAMERA_NODE) and time.monotonic() < limit:
++                time.sleep(0.02)
++            assert os.path.exists(CAMERA_NODE), "the tool did not bring the camera back"
++            t_nodes = time.monotonic()
++            time.sleep(offset)
++            wait_no_pending_timer(limit=10)
++            since = app.index()
++            app.mark(f"detach camera --for 6, {offset} s after the nodes returned")
++            camera_unplug.detach(6)
++            assert camera_unplug.wait_for_nodes(False, 5), "nodes did not go away"
++            found = app.find(FOUND, 0)
++            record["found_before_detach_command_returned"] = found is not None
++            time.sleep(4)
++            assert app.alive(), f"the program ended (exit {app.proc.returncode}):\n{app.text()[-3500:]}"
++            assert camera_unplug.wait_for_nodes(True, 20)
++            assert app.wait_for(CAMERA_BACK, RECOVERY_TIMEOUT + 15, since), f"never running again:\n{app.text()[-3500:]}"
++            back_index = app.find(CAMERA_BACK, since)[0]
++            assert app.wait_frames(back_index, 3, 25), "no frames after the camera returned"
++            record["lost_logged"] = app.count("Camera lost (") + app.count("did not start on")
++            record["took_s"] = round(finish(app), 2)
++            record["ok"] = True
++        except AssertionError as exc:
++            record.update(ok=False, why=str(exc)[:300])
++            app.close()
++        records.append(record)
++        print(json.dumps(record))
++    print(f"SUMMARY: {sum(r['ok'] for r in records)} of {len(records)} ok")
++    assert all(r["ok"] for r in records), [r for r in records if not r["ok"]]
++
++
++def mapped_hailo_libs(pid: int) -> list[str]:
++    """Hailo-related shared objects mapped into the process (read from its own /proc, no root needed)."""
++    try:
++        text = Path(f"/proc/{pid}/maps").read_text()
++    except OSError:
++        return []
++    return sorted({line.split("/")[-1] for line in text.splitlines() if "hailo" in line.lower() and ".so" in line})
++
++
++@device
++@pytest.mark.timeout(200)
++def test_tc024_002_con08_device_waiting_process_holds_no_hailo_pipeline_or_device(camera_unplug, sv):
++    """
++    Dev-report claim (design): with no camera node at launch NO Hailo pipeline is built ("a hailonet-free
++    waiting start"). Observed from outside the process: while waiting no /dev/hailo* and no /dev/video* is
++    open and no pipeline string was generated; the shared objects the process has mapped are listed before
++    and after vision starts (printed; the plugin is expected to appear only after).
++    """
++    app, glasses, panel = start_without_camera(camera_unplug, sv, hold=20)
++    await_waiting(app)
++    time.sleep(6)
++    waiting_libs = mapped_hailo_libs(app.pid)
++    assert app.open_paths("/dev/hailo") == [] and app.open_paths("/dev/video") == []
++    assert app.find(PIPELINE_STRING) is None
++    since = appear_at(camera_unplug, app, 8)
++    await_vision(app, since, "both")
++    running_libs = mapped_hailo_libs(app.pid)
++    print(f"hailo shared objects mapped while waiting: {waiting_libs}")
++    print(f"hailo shared objects mapped once vision runs: {running_libs}")
++    assert "libgsthailo.so" not in waiting_libs or "libgsthailo.so" in running_libs
++    finish(app)
++
++
++def proc_resources(pid: int) -> dict:
++    """Threads, open files and resident memory (kB) of the process, from its own /proc."""
++    status = {}
++    try:
++        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
++            key, _, value = line.partition(":")
++            status[key] = value.strip()
++        fds = len(list(Path(f"/proc/{pid}/fd").iterdir()))
++    except OSError:
++        return {}
++    return {"threads": int(status["Threads"]), "fds": fds, "rss_kb": int(status["VmRSS"].split()[0])}
++
++
++@device
++@pytest.mark.timeout(300)
++def test_tc024_002_con08_device_waiting_for_a_camera_leaks_nothing_over_105s(camera_unplug, sv):
++    """
++    REQ-CON-08 'keeps checking the USB ports': the look every 2 s must not leak. Threads, open files and resident
++    memory are read at 15 s and at 120 s of waiting (about 52 further looks): threads equal, open files within
++    2, memory growth under 10 MB; the program's children are only the short-lived ones of a look.
++    """
++    app, glasses, panel = start_without_camera(camera_unplug, sv, hold=140)
++    await_waiting(app)
++    time.sleep(14)
++    early = proc_resources(app.pid)
++    time.sleep(105)
++    late = proc_resources(app.pid)
++    print(f"at 15 s: {early}; at 120 s: {late}; children now: {app.leftovers()}")
++    assert app.alive() and early and late
++    assert late["threads"] == early["threads"], (early, late)
++    assert abs(late["fds"] - early["fds"]) <= 2, (early, late)
++    assert late["rss_kb"] - early["rss_kb"] < 10_000, (early, late)
++    assert len(app.leftovers()) <= 1, app.leftovers()
++    since = appear_at(camera_unplug, app, 122)
++    await_vision(app, since, "both")
++    finish(app)
++
++
++@device
++@pytest.mark.timeout(900)
++@pytest.mark.parametrize("which", ["new", "baseline"])
++def test_tc024_002_con08_device_25_fresh_starts_with_no_camera_8s_each_alive_and_clean(camera_unplug, sv, which):
++    """
++    "What happens today" (brief, point 3) against this tree: 25 fresh-process starts with the camera absent, each
++    left 8 s, then Ctrl+C. `new` (this tree): every run alive at 8 s, exit 0, no forbidden line (asserted).
++    `baseline` (SV_UAT_BASELINE_RUN_SH, a scratch copy of the baseline's run.sh; observation only): how many
++    runs crash (SIGSEGV is exit -11) or end by themselves before 8 s.
++    """
++    run_sh = None
++    if which == "baseline":
++        run_sh = os.environ.get("SV_UAT_BASELINE_RUN_SH")
++        if not run_sh:
++            pytest.skip("SV_UAT_BASELINE_RUN_SH (a scratch copy of the baseline run.sh) is not set")
++    rows = []
++    for i in range(25):
++        app, glasses, panel = start_without_camera(camera_unplug, sv, hold=10, run_sh=run_sh, tag=f"{which}{i:02d}")
++        time.sleep(8)
++        alive = app.alive()
++        code = app.proc.poll()
++        if alive:
++            code, _ = app.stop(signal.SIGINT)
++        row = {"which": which, "run": i, "alive_at_8s": alive, "exit": code,
++               "segfault": code == -11 or any("Segmentation fault" in l for _, l in app.lines),
++               "forbidden": app.forbidden()[:2]}
++        rows.append(row)
++        print(json.dumps(row))
++        app.close()
++    bad = [r for r in rows if not r["alive_at_8s"] or r["exit"] != 0 or r["forbidden"]]
++    print(f"OBSERVATION {which}: {len(rows) - len(bad)} of {len(rows)} alive at 8 s and exit 0 and clean; "
++          f"segfaults {sum(r['segfault'] for r in rows)}")
++    if which == "new":
++        assert not bad, bad
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-03b/scripts/second-vision.service scripts/second-vision.service
+--- .claude/baselines/T-03b/scripts/second-vision.service	2026-10-11 05:17:04.492705149 +0800
++++ scripts/second-vision.service	2026-10-17 16:19:39.974955652 +0800
+@@ -21,7 +21,8 @@
+ # audio stays up until we have stopped.
+ Wants=user@@UID@.service
+ After=user@@UID@.service
+-# Retry forever: a camera plugged in late must still come up.
++# Retry forever: whatever ends the program, start it again. (A camera plugged in
++# late needs no restart: the program itself keeps looking for one.)
+ StartLimitIntervalSec=0
+ 
+ [Service]
+@@ -30,7 +31,9 @@
+ WorkingDirectory=@REPO@
+ ExecStart=@REPO@/scripts/sv-main.sh
+ SyslogIdentifier=second-vision
+-# Wait for the camera and hard-fail instead of mock mode (see sv-main.sh).
++# Marks the service's own launch (run.sh then does not refuse to start). The
++# program starts with no camera attached, keeps looking for one and never falls
++# back to mock mode (see sv-main.sh).
+ Environment=SV_SERVICE=1
+ # PipeWire's sockets live here; without it espeak-ng has no audio server.
+ Environment=XDG_RUNTIME_DIR=/run/user/@UID@
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-03b/scripts/sv-main.sh scripts/sv-main.sh
+--- .claude/baselines/T-03b/scripts/sv-main.sh	2026-10-11 05:17:04.496705175 +0800
++++ scripts/sv-main.sh	2026-10-17 16:19:33.218823578 +0800
+@@ -7,15 +7,26 @@
+ # starts and the rockers do nothing, with no error to explain why.
+ #
+ # This is also what second-vision.service runs at boot (scripts/install-service.sh).
+-# The service sets SV_SERVICE=1, which turns the desk-friendly fallbacks below
+-# into waits and hard failures.
++# The service sets SV_SERVICE=1, which run.sh reads (it refuses to start a second
++# copy while the service is active, unless this is set); this script does not.
++#
++# Mock mode is NEVER started from here, with or without SV_SERVICE, camera or no
++# camera (decision D-13): it announces objects that are not there and drives the
++# motors from fake depth, on a device nobody is watching. Ask for it on purpose,
++# by running run.sh --mock yourself. With no camera attached the program is
++# started anyway: it runs the glasses link, the panel and the speech from the
++# first second, keeps looking for a USB camera and starts vision when one
++# appears. So there is no wait for the camera here either; a camera that is
++# still enumerating is found by the program's own look, every 2 s.
+ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ cd "$REPO_ROOT"
+ 
+ # run.sh activates my_hailo_env and puts src/ on PYTHONPATH before exec'ing
+ # main.py. Calling python3 directly skipped all of that: from a shell without
+-# the venv active there is no hailo_apps, and main.py quietly runs mock mode.
+-RUN="$REPO_ROOT/scripts/run.sh"
++# the venv active there is no hailo_apps, and main.py refuses to start.
++# SV_RUN_SH replaces it for a test that records the arguments with a stub; unset
++# (always, in service and by hand) it is the line it was.
++RUN="${SV_RUN_SH:-$REPO_ROOT/scripts/run.sh}"
+ 
+ # Two separate ESP32 boards, two separate ports — not competing values for one
+ # setting. /dev/serial0 is the haptics/BMI160 (motor) board, confirmed working
+@@ -36,41 +47,10 @@
+     echo "[sv-main] headless (no DISPLAY) — preview disabled; depth, haptics and TTS still run."
+ fi
+ 
+-if [ "${SV_SERVICE:-0}" = "1" ]; then
+-    # Nobody watches the console on the wearer, so never fall back to mock:
+-    # it announces objects that are not there and drives the motors from fake
+-    # depth. Fail instead and let systemd retry (Restart=always).
+-    #
+-    # At boot the USB camera can enumerate after we start — give it a minute.
+-    CAMERA_WAIT_SECONDS="${CAMERA_WAIT_SECONDS:-60}"
+-    waited=0
+-    while [ ! -e "$INPUT" ]; do
+-        if [ "$waited" -eq 0 ]; then
+-            echo "[sv-main] waiting up to ${CAMERA_WAIT_SECONDS}s for $INPUT ..."
+-        fi
+-        if [ "$waited" -ge "$CAMERA_WAIT_SECONDS" ]; then
+-            echo "[sv-main] ERROR: $INPUT never appeared — is the camera plugged in? systemd will retry." >&2
+-            exit 1
+-        fi
+-        sleep 1
+-        waited=$((waited + 1))
+-    done
+-
+-    # main.py treats an unimportable hailo_apps as "no hardware here" and runs
+-    # mock mode unasked. Check with the interpreter run.sh is about to use.
+-    if ! "$REPO_ROOT/my_hailo_env/bin/python3" -c \
+-            "import hailo_apps.python.core.common.hailo_logger, hailo_apps.python.core.gstreamer.gstreamer_app"; then
+-        echo "[sv-main] ERROR: hailo_apps does not import from my_hailo_env — refusing to start" \
+-             "(main.py would silently run MOCK mode)." >&2
+-        exit 1
+-    fi
+-fi
+-
+ if [ ! -e "$INPUT" ]; then
+-    echo "[sv-main] $INPUT does not exist — no camera attached."
+-    echo "[sv-main] Falling back to --mock so the panel can still be exercised."
+-    echo "[sv-main] Set INPUT=/dev/videoN to override."
+-    exec "$RUN" --mock --serial-port "$SERIAL_PORT" --config-port "$CONFIG_PORT"
++    echo "[sv-main] $INPUT does not exist - no camera attached (yet). Starting anyway:"
++    echo "[sv-main] the program keeps looking for a USB camera and starts vision when one appears."
++    echo "[sv-main] Set INPUT=/dev/videoN to use another node."
+ fi
+ 
+ if [ ! -e "$CONFIG_PORT" ]; then

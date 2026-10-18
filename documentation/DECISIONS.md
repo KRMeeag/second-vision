@@ -53,6 +53,7 @@
 | 38 | Depth development location | Prototyping repo first, then port | Depth needs rapid iteration against live captures |
 | 39 | UAT work process | Requirements layer in `docs/testing/`; failsafes first; vision algorithms untouched | The working detection and depth chain is too risky to change; a crash or a silent failure matters more than a missing feature |
 | 40 | Strength knob at minimum | Knob multiplies motor commands; minimum = motors off | Team kept the current code (UAT D-14); the floor-preserving variant on `feat/depth-callback` must not come in by merge |
+| 41 | Failsafe alerts and the control panel switches | A failsafe alert is spoken or vibrated even when its switch is off, at the knob's level but never below 30 %, one time only | A safety alert nobody can perceive is not an alert; the switches go back as the wearer left them (UAT D-15) |
 
 ---
 
@@ -295,3 +296,33 @@ halved. The UAT workbook's "minimal" vibration at minimum is corrected to "does 
 scales only the part of each command above the lightest felt tap, so the knob's minimum is
 still a felt tap. Merging that branch would silently reverse this decision. Whoever merges
 keeps this branch's scaling, or reopens the decision with the team.
+
+## D41: Failsafe alerts override the speech and vibration switches, at 30 % or more, one time only
+
+*Decided by the team, 2026-10-18 (the user, for the team). Recorded in `docs/testing/DISAGREEMENTS.md`
+as D-15. The UAT workbook said nothing about it.*
+
+**What**: a failsafe alert is a message or vibration pattern the device gives about itself because a
+part has stopped working (glasses link lost, control panel lost, camera missing, earphones missing,
+and their reconnections). It is **not** silenced by the wearer's switches:
+- **Speech.** Spoken even when the panel's speech switch is off. It uses the volume knob's current
+  level, but never below 30 %: with the knob under 30 %, that alert is spoken at 30 %.
+- **Vibration.** Played even when the panel's vibration switch is off. It uses the strength knob's
+  current level, but never below 30 %: with the knob under 30 %, that pattern plays at 30 %.
+- **One time only.** The override covers that one alert or pattern, and each repeat of it. Afterwards
+  the wearer's settings are exactly as left: a switch that was off is off, a knob that was low is low.
+- **Nothing else changes.** Object announcements, mode announcements and the normal depth vibration
+  still obey the switches and the knobs (D40 and the UAT record's D-04 for the volume knob, unchanged).
+
+**Why**: the alerts are the only way a wearer who cannot see learns that part of the device has
+stopped working. If the speech switch is off, "Critical Error: Camera cannot be reached" would never be
+heard; with the strength knob at the bottom, the vibration pattern would never be felt. The 30 % floor
+keeps the wearer's choice of a quieter setting while still making sure the alert is perceived.
+
+**See also** (`docs/testing/DISAGREEMENTS.md`): D-16, an alert in progress finishes (2 to 3 s) before an
+urgent object warning can cut it; D-17, "everything is connected" is said only when no other failsafe
+alert is still raised.
+
+**For whoever builds it**: today `workers/tts_worker.py` drops every item when `tts_enabled` is off, and
+`workers/serial_worker.py` sends nothing when `vibration_enabled` is off and multiplies every command by
+`motor_strength` (D40). The override has to be a property of the message, not a change to the switches.

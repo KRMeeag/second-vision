@@ -1,0 +1,3792 @@
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-00a/src/second_vision/core/alerts.py src/second_vision/core/alerts.py
+--- .claude/baselines/T-00a/src/second_vision/core/alerts.py	1970-01-01 08:00:00.000000000 +0800
++++ src/second_vision/core/alerts.py	2026-10-17 19:56:27.955285524 +0800
+@@ -0,0 +1,323 @@
++"""Alert scheduler: speak a system alert on a schedule, and never lose it.
++
++A system alert is a sentence the device must say about itself ("controller board not
++connected", "battery low") and keep saying while the condition lasts. Several tasks raise
++alerts (camera, controller board, battery, ...). This module is the one place that knows
++about timing, so none of them writes timing code: they say WHAT to say and HOW OFTEN, and
++clear the alert when the condition ends.
++
++Usage (from any thread; none of these calls waits for the speech worker)::
++
++    alerts = user_data.alerts            # created in SecondVisionUserData.__init__
++
++    # "wording X every 30 s while depth is on, once otherwise":
++    alerts.raise_alert("controller-missing", "Controller board not connected",
++                       interval=30.0, repeat=lambda: config.get("depth_enabled"))
++    # ...the scheduler asks config each tick, so a depth switch-off mid-run needs no code.
++    # Without a callable, switch it by hand:  alerts.set_repeat("controller-missing", False)
++
++    alerts.raise_alert("battery-low", "Battery low", interval=300.0)   # every 5 minutes
++    alerts.raise_alert("camera-lost", "Camera disconnected")           # once (interval=None)
++
++    alerts.clear("controller-missing")   # the condition is over: nothing more is spoken for it
++
++What it does, and what the callers can rely on:
++
++  * Raised alert: spoken at once (the next scheduler tick, 0.05 s, when the speech channel
++    is free), then again `interval` seconds after the START of each previous utterance, for
++    as long as it stays raised and its repeat is on. `interval=None` means once.
++  * Repeat off: no more repeats. An utterance not yet delivered (the first one, or one that
++    was cut) is still delivered, once. Repeat back on: the cadence resumes from the start
++    of the last delivered utterance, so if that is more than `interval` ago the alert is
++    spoken as soon as the channel is free (the workbook is silent on this case).
++  * clear(): stops at once. An utterance already under way is not cut; a queued one is
++    removed from the mailbox (only the scheduler's own item, never someone else's).
++  * Several alerts: spoken one after another, each to the end, in the order they fall
++    due; a second alert is never offered while one is queued or being spoken, so alerts
++    cannot cut or replace each other.
++  * Not lost: another announcement (a mode change, an urgent detection) may still cut an
++    alert or replace it in the mailbox slot. The scheduler is told what became of every
++    item it offers (see "Speech worker side") and speaks the alert again as soon as the
++    channel is free, a once-only alert included. A head-turn mute does not discard it: the
++    alert waits in the slot and is spoken when the mute ends.
++  * Speech switched off (config.tts_enabled False): the worker drops the item. That counts
++    as delivered (no storm of re-offers); the next repeat tries again as normal. Whether a
++    failsafe alert should override the switch is the user's open question D-15.
++  * An alert is offered only when the worker is idle and the slot is empty or holds a
++    detection item (which it replaces, as any announcement does). It never overwrites an
++    announcement.
++  * raise_alert() with the same text and interval as the alert already raised changes
++    nothing, so it can be called every loop. With a different text or interval it replaces
++    the alert (no second copy).
++
++Speech worker side (workers/tts_worker.py; producers never call these): `take()` instead of
++mailbox.take(), `drain()` instead of mailbox.take() in the head-turn drain, and
++`finish(item, SPOKEN | CUT | DROPPED)` when an item ends. They run under the scheduler's
++lock, which is what makes "was my item taken, replaced or still waiting?" exact: the
++scheduler never has to guess from timing.
++
++Known limits: two races of a few microseconds remain because PriorityMailbox has no
++"offer only if empty" and no "remove only this item": a mode announcement offered in the
++instant between the scheduler's look at the slot and its offer is replaced by the alert
++(the tie rule: the incoming item wins); in clear(), an item that slipped in at that moment
++is taken out and put straight back. Neither can lose or double an alert.
++"""
++
++import math
++import threading
++import time
++from typing import Callable, Optional, Union
++
++SPOKEN = "spoken"      # the utterance ran to its end
++CUT = "cut"            # the utterance was terminated for a preempting item
++DROPPED = "dropped"    # the worker took the item and did not speak it (speech switched off, error)
++
++RepeatFlag = Union[bool, Callable[[], bool]]
++
++
++class _Alert:
++    """One raised alert: what to say, how often, and where it stands."""
++
++    def __init__(self, name: str, text: str, interval: Optional[float],
++                 repeat: RepeatFlag, seq: int, now: float):
++        self.name = name
++        self.text = text
++        self.interval = interval
++        self.seq = seq                      # raise order, breaks ties between alerts due together
++        self.pending = True                 # an utterance is owed that was not delivered yet
++        self.pending_since = now            # ...since this time (raise time, or the time it was lost)
++        self.last_start = None              # start of the last delivered utterance
++        self.repeat = repeat
++        self.repeat_value = False if callable(repeat) else bool(repeat)
++
++    def due_at(self) -> Optional[float]:
++        """When the next utterance falls due, or None if none is owed (a spent once-alert)."""
++        if self.pending:
++            return self.pending_since
++        if self.interval is not None and self.repeat_value and self.last_start is not None:
++            return self.last_start + self.interval
++        return None
++
++
++class _Flight:
++    """The one item the scheduler has in the speech channel: offered, then speaking."""
++
++    def __init__(self, alert: _Alert, item: dict):
++        self.alert = alert
++        self.item = item                    # the exact {"announce": text} dict put in the mailbox
++        self.speaking = False               # True once the worker has taken it
++        self.started_at = None              # clock time the worker took it: the utterance start
++
++
++class AlertScheduler:
++    """
++    Raised alerts, and the single-item offer protocol to the speech worker.
++
++    `mailbox` is user_data.tts_queue (the PriorityMailbox the speech worker reads).
++    `clock` returns seconds and must not go backwards; tests pass a virtual one.
++    Thread-safe: every public method takes one short lock and never waits for anything else.
++    """
++
++    def __init__(self, mailbox, clock: Callable[[], float] = time.monotonic):
++        self._mailbox = mailbox
++        self._clock = clock
++        self._lock = threading.Lock()
++        self._alerts: dict = {}
++        self._seq = 0
++        self._flight: Optional[_Flight] = None   # at most ONE item of ours in the channel
++        self._busy = None                        # the item the speech worker is handling now
++
++    # ------------------------------------------------------------------
++    # Producer API (any thread)
++    # ------------------------------------------------------------------
++    def raise_alert(self, name: str, text: str, interval: Optional[float] = None,
++                    repeat: RepeatFlag = True) -> None:
++        """
++        Raise the alert `name` saying `text`; `interval` seconds between repeats, None = once.
++
++        `repeat` is True/False, or a zero-argument callable returning a bool that the
++        scheduler evaluates on every tick (an exception in it keeps the last value).
++        Raising a name that is already raised with the same text and interval only updates
++        `repeat`; with a different text or interval it replaces the alert, which is then
++        spoken at once. Raises ValueError for an empty name or text, or an interval that
++        is not a positive number (a bug in the caller, not a runtime condition).
++        """
++        if not isinstance(name, str) or not name:
++            raise ValueError("alert name must be a non-empty string")
++        if not isinstance(text, str) or not text.strip():
++            raise ValueError("alert text must be a non-empty string")
++        if interval is not None and not (isinstance(interval, (int, float))
++                                         and math.isfinite(interval) and interval > 0):
++            raise ValueError(f"alert interval must be a positive number or None, got {interval!r}")
++        with self._lock:
++            current = self._alerts.get(name)
++            if current is not None and current.text == text and current.interval == interval:
++                self._set_repeat_locked(current, repeat)
++                return
++            if current is not None:
++                self._withdraw_locked(current)
++            self._seq += 1
++            self._alerts[name] = _Alert(name, text, interval, repeat, self._seq, self._clock())
++        print(f"[ALERT] raised '{name}': '{text}' "
++              f"({'once' if interval is None else f'every {interval:g} s'})")
++
++    def set_repeat(self, name: str, repeat: RepeatFlag) -> bool:
++        """Switch the repeat of a raised alert on or off (or give it a callable). False if not raised."""
++        with self._lock:
++            alert = self._alerts.get(name)
++            if alert is None:
++                return False
++            self._set_repeat_locked(alert, repeat)
++            return True
++
++    def clear(self, name: str) -> bool:
++        """
++        Stop the alert `name` at once. An utterance under way is not cut; a queued item is
++        removed from the mailbox. True if it was raised, False (and nothing happens) if not.
++        """
++        with self._lock:
++            alert = self._alerts.pop(name, None)
++            if alert is None:
++                return False
++            self._withdraw_locked(alert)
++        print(f"[ALERT] cleared '{name}'")
++        return True
++
++    def is_raised(self, name: str) -> bool:
++        """True from raise_alert() until clear(); a once-alert stays raised after it was spoken."""
++        with self._lock:
++            return name in self._alerts
++
++    def raised(self) -> list:
++        """Names of the raised alerts, oldest first."""
++        with self._lock:
++            return [a.name for a in sorted(self._alerts.values(), key=lambda a: a.seq)]
++
++    # ------------------------------------------------------------------
++    # The scheduler's own step (alert_worker calls it every 0.05 s; tests call it by hand)
++    # ------------------------------------------------------------------
++    def poll(self) -> None:
++        """One scheduling step: decide whether an alert is due and the channel allows offering it."""
++        with self._lock:
++            watched = [(a, a.repeat) for a in self._alerts.values() if callable(a.repeat)]
++        # The callables are the caller's code: run them outside the lock.
++        results = []
++        for alert, fn in watched:
++            try:
++                results.append((alert, fn, bool(fn())))
++            except Exception as e:  # keep the last value; never let the scheduler thread die
++                print(f"[ALERT] repeat check of '{alert.name}' failed: {e}")
++        with self._lock:
++            for alert, fn, value in results:
++                if alert.repeat is fn:
++                    alert.repeat_value = value
++            self._step_locked()
++
++    # ------------------------------------------------------------------
++    # Speech worker side (workers/tts_worker.py)
++    # ------------------------------------------------------------------
++    def take(self):
++        """Take the pending item from the mailbox, noting it as being handled. For mailbox.take()."""
++        with self._lock:
++            item = self._mailbox.take()
++            if item is not None:
++                self._busy = item
++                flight = self._flight
++                if flight is not None and flight.item is item:
++                    flight.speaking = True
++                    flight.started_at = self._clock()
++            return item
++
++    def drain(self):
++        """
++        The head-turn drain: like mailbox.take() (the caller discards what it returns), but an
++        alert of ours that is waiting in the slot stays there; a turn is no reason to lose it.
++        """
++        with self._lock:
++            flight = self._flight
++            if flight is not None and not flight.speaking and self._mailbox.peek() is flight.item:
++                return None
++            return self._mailbox.take()
++
++    def finish(self, item, outcome: str) -> None:
++        """The worker is done with `item`: SPOKEN (ran to its end), CUT, or DROPPED."""
++        with self._lock:
++            self._finish_locked(item, outcome)
++
++    def release(self, outcome: str = DROPPED) -> None:
++        """The worker failed while handling an item: close whatever it was handling."""
++        with self._lock:
++            if self._busy is not None:
++                self._finish_locked(self._busy, outcome)
++
++    # ------------------------------------------------------------------
++    # Internals (the lock is held)
++    # ------------------------------------------------------------------
++    @staticmethod
++    def _set_repeat_locked(alert: _Alert, repeat: RepeatFlag) -> None:
++        alert.repeat = repeat
++        if not callable(repeat):
++            alert.repeat_value = bool(repeat)
++
++    def _remove_item_locked(self, item) -> None:
++        """Take `item` out of the mailbox if it is still the stored one; never anyone else's."""
++        if self._mailbox.peek() is item:
++            taken = self._mailbox.take()
++            if taken is not None and taken is not item:   # something newer slipped in: put it back
++                self._mailbox.offer(taken)
++
++    def _withdraw_locked(self, alert: _Alert) -> None:
++        """The alert is cleared or replaced: pull its queued item; leave an utterance under way."""
++        flight = self._flight
++        if flight is None or flight.alert is not alert or flight.speaking:
++            return
++        self._remove_item_locked(flight.item)
++        self._flight = None
++
++    def _finish_locked(self, item, outcome: str) -> None:
++        if self._busy is item:
++            self._busy = None
++        flight = self._flight
++        if flight is None or flight.item is not item:
++            return                                      # not ours: an ordinary announcement
++        self._flight = None
++        alert = flight.alert
++        if self._alerts.get(alert.name) is not alert:
++            return                                      # cleared or replaced meanwhile: let it go
++        if outcome == CUT:
++            alert.pending = True
++            alert.pending_since = self._clock()
++            print(f"[ALERT] '{alert.name}' was cut; will be spoken again")
++        else:                                           # SPOKEN, or DROPPED (counts as delivered)
++            alert.pending = False
++            alert.last_start = flight.started_at if flight.started_at is not None else self._clock()
++
++    def _step_locked(self) -> None:
++        now = self._clock()
++        flight = self._flight
++        if flight is not None:
++            if flight.speaking:
++                return                                  # being spoken: wait for finish()
++            if self._mailbox.peek() is flight.item:
++                return                                  # in the slot: the worker has not got to it
++            # Not in the slot and never taken (the worker takes through take(), under this
++            # lock): another announcement replaced it. The alert is still owed (it was not
++            # delivered, so it is still pending or past its due time): it is offered again below.
++            self._flight = None
++            print(f"[ALERT] '{flight.alert.name}' was replaced in the queue; will be offered again")
++        if self._busy is not None:
++            return                                      # the worker is speaking something else
++        occupant = self._mailbox.peek()
++        if occupant is not None and "announce" in occupant:
++            return                                      # never overwrite an announcement
++        due = None
++        for alert in self._alerts.values():
++            at = alert.due_at()
++            if at is not None and at <= now and (due is None or (at, alert.seq) < due[0]):
++                due = ((at, alert.seq), alert)
++        if due is None:
++            return
++        alert = due[1]
++        item = {"announce": alert.text}
++        self._mailbox.offer(item)
++        self._flight = _Flight(alert, item)
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-00a/src/second_vision/main.py src/second_vision/main.py
+--- .claude/baselines/T-00a/src/second_vision/main.py	2026-10-17 16:19:22.942620913 +0800
++++ src/second_vision/main.py	2026-10-17 19:49:05.951181207 +0800
+@@ -27,6 +27,7 @@
+ # absolute imports below can't resolve without src/ on the path too.
+ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ 
++from second_vision.core.alerts import AlertScheduler
+ from second_vision.core.config import SystemConfig
+ from second_vision.core.priority import PriorityMailbox
+ from second_vision.core.imu_telemetry import ImuTelemetry
+@@ -54,6 +55,7 @@
+         def get_count(self): return self.frame_count
+ 
+ from second_vision.workers.tts_worker import tts_worker
++from second_vision.workers.alert_worker import alert_worker
+ from second_vision.workers.serial_worker import serial_worker
+ from second_vision.workers.config_reader import config_reader_worker
+ from second_vision.mock.data_generator import mock_detection_generator, mock_depth_generator
+@@ -89,6 +91,11 @@
+         # 0x03 packets arrive. Consume-once, not persistent state — see
+         # core/turn_event.py.
+         self.turn_event = TurnEvent()
++        # System alerts that repeat on a schedule ("controller board not connected"
++        # every 30 s). Producers call user_data.alerts.raise_alert()/clear(); the
++        # alert worker polls it and the TTS worker reports back to it — see
++        # core/alerts.py.
++        self.alerts = AlertScheduler(self.tts_queue)
+ 
+ 
+ def main():
+@@ -159,6 +166,16 @@
+     workers.append(tts_thread)
+     print("[MAIN] TTS worker started")
+     
++    # Alert worker — runs the alert scheduler (core/alerts.py); idle until a task
++    # raises an alert. Always starts, like the TTS worker it feeds.
++    alert_thread = threading.Thread(
++        target=alert_worker, args=(user_data, config),
++        daemon=True, name="alert-scheduler"
++    )
++    alert_thread.start()
++    workers.append(alert_thread)
++    print("[MAIN] Alert worker started")
++
+     # Serial worker — always starts (stub prints, real sends to ESP32)
+     serial_thread = threading.Thread(
+         target=serial_worker, args=(user_data, config),
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-00a/src/second_vision/workers/alert_worker.py src/second_vision/workers/alert_worker.py
+--- .claude/baselines/T-00a/src/second_vision/workers/alert_worker.py	1970-01-01 08:00:00.000000000 +0800
++++ src/second_vision/workers/alert_worker.py	2026-10-17 19:48:30.580249881 +0800
+@@ -0,0 +1,19 @@
++"""Alert worker: runs the alert scheduler (core/alerts.py) on a short tick.
++
++All the logic is in AlertScheduler; this thread only calls its poll(). Each pass does a
++few dictionary look-ups under one short lock, so a 0.05 s tick costs next to nothing and an
++alert raised now is offered to the speech worker within 0.05 s (when the channel is free).
++"""
++
++_TICK_SECONDS = 0.05    # how often the scheduler looks; also how long a shutdown can take
++
++
++def alert_worker(user_data, config) -> None:
++    """Main alert-scheduler loop. Signature follows the other workers: (user_data, config)."""
++    alerts = user_data.alerts
++    while not user_data.shutdown_event.is_set():
++        try:
++            alerts.poll()
++        except Exception as e:  # never let the worker thread die
++            print(f"[ALERT] Error in scheduler: {e}")
++        user_data.shutdown_event.wait(_TICK_SECONDS)
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-00a/src/second_vision/workers/tts_worker.py src/second_vision/workers/tts_worker.py
+--- .claude/baselines/T-00a/src/second_vision/workers/tts_worker.py	2026-10-11 05:45:21.523750945 +0800
++++ src/second_vision/workers/tts_worker.py	2026-10-17 19:48:48.599694778 +0800
+@@ -26,6 +26,7 @@
+ import subprocess
+ import time
+ 
++from second_vision.core.alerts import CUT, DROPPED, SPOKEN
+ from second_vision.core.priority import (
+     MIN_UTTERANCE_GAP,
+     TIER_URGENT,
+@@ -41,6 +42,10 @@
+ #           user_data.turn_event — optional core/turn_event.py TurnEvent;
+ #           absent (getattr default None) is tolerated the same way
+ #           serial_worker.py tolerates a user_data without one.
++#           user_data.alerts — optional core/alerts.py AlertScheduler (system alerts
++#           that repeat). The worker tells it what became of the items it takes
++#           (take / drain / finish); the queue items themselves are unchanged.
++#           Absent (getattr default None) -> exactly the behaviour without it.
+ #   Output: Audio announcement via speaker (espeak-ng, pyttsx3 fallback).
+ #   Config: config.tts_enabled, config.tts_volume (the panel's volume knob)
+ # ============================================================
+@@ -105,7 +110,7 @@
+ TURN_MUTE_SECONDS = 1.0
+ 
+ 
+-def _check_turn_mute(turn_event, mailbox, now: float, mute_until: float) -> float:
++def _check_turn_mute(turn_event, mailbox, now: float, mute_until: float, alerts=None) -> float:
+     """
+     Look for a fresh, not-yet-consumed turn event and return the (possibly
+     updated) mute deadline.
+@@ -128,13 +133,22 @@
+     window — the detection pipeline keeps calling offer() on its own,
+     unmodified, so whatever is parked there when the window closes reflects
+     the current scene.
++
++    `alerts` (the AlertScheduler, or None): the one item the drain leaves alone is a
++    system alert of the scheduler's own that is waiting in the slot. A head turn makes
++    a detection stale; it does not make a system alert stale, and the alert is spoken
++    when the window ends. Every other item is drained as before, mode announcements
++    included.
+     """
+     if turn_event is None:
+         return mute_until
+     turn = turn_event.take()
+     if turn is None:
+         return mute_until
+-    mailbox.take()
++    if alerts is not None:
++        alerts.drain()
++    else:
++        mailbox.take()
+     return now + TURN_MUTE_SECONDS
+ 
+ 
+@@ -142,10 +156,11 @@
+     """Main TTS worker loop."""
+     mailbox = user_data.tts_queue
+     turn_event = getattr(user_data, "turn_event", None)
++    alerts = getattr(user_data, "alerts", None)
+     mute_until = 0.0
+ 
+     while not user_data.shutdown_event.is_set():
+-        mute_until = _check_turn_mute(turn_event, mailbox, time.monotonic(), mute_until)
++        mute_until = _check_turn_mute(turn_event, mailbox, time.monotonic(), mute_until, alerts)
+         if time.monotonic() < mute_until:
+             # Muted: don't consume from the mailbox at all. Checked once per
+             # outer-loop iteration — the same cadence _IDLE_SECONDS/_POLL_SECONDS
+@@ -155,13 +170,15 @@
+             time.sleep(_IDLE_SECONDS)
+             continue
+ 
+-        item = mailbox.take()
++        item = alerts.take() if alerts is not None else mailbox.take()
+         if item is None:
+             time.sleep(_IDLE_SECONDS)
+             continue
+ 
+         try:
+             if not config.get("tts_enabled"):
++                if alerts is not None:
++                    alerts.finish(item, DROPPED)    # dropped on purpose: counts as delivered
+                 continue
+ 
+             # Read per item, so a turn of the knob is heard from the next
+@@ -171,6 +188,8 @@
+             _pace(mailbox, user_data)
+         except Exception as e:  # never let the worker thread die
+             print(f"[TTS] Error processing announcement: {e}")
++            if alerts is not None:
++                alerts.release(DROPPED)             # never leave the scheduler waiting on it
+ 
+ 
+ def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX):
+@@ -178,7 +197,11 @@
+     Speak `item` at espeak-ng `amplitude`. If a preempting item arrives
+     mid-utterance, terminate the current espeak process and switch to it —
+     looping until an utterance finishes naturally (or shutdown).
++
++    With user_data.alerts present, every item ends with a finish() call (SPOKEN or CUT)
++    so the alert scheduler knows what became of the alert it offered.
+     """
++    alerts = getattr(user_data, "alerts", None)
+     while item is not None and not user_data.shutdown_event.is_set():
+         text = _text_for(item)
+         print(f"[TTS] '{text}'")
+@@ -188,9 +211,12 @@
+             # No espeak-ng available — fall back to a blocking, NON-interruptible
+             # engine (dev machines only; the device has espeak-ng).
+             _speak_blocking(text, amplitude)
++            if alerts is not None:
++                alerts.finish(item, SPOKEN)
+             return
+ 
+         next_item = None
++        cut = False
+         while proc.poll() is None:
+             if user_data.shutdown_event.is_set():
+                 proc.terminate()
+@@ -198,10 +224,14 @@
+             pending = mailbox.peek()
+             if pending is not None and preempts(pending, item):
+                 proc.terminate()
+-                next_item = mailbox.take()  # claim the preempting item
++                cut = True
++                # claim the preempting item
++                next_item = alerts.take() if alerts is not None else mailbox.take()
+                 break
+             time.sleep(_POLL_SECONDS)
+ 
++        if alerts is not None:
++            alerts.finish(item, CUT if cut else SPOKEN)
+         item = next_item  # None -> utterance finished naturally, loop exits
+ 
+ 
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-00a/tests/test_alerts.py tests/test_alerts.py
+--- .claude/baselines/T-00a/tests/test_alerts.py	1970-01-01 08:00:00.000000000 +0800
++++ tests/test_alerts.py	2026-10-17 19:56:27.955285524 +0800
+@@ -0,0 +1,867 @@
++"""
++T-00a: the alert scheduler (core/alerts.py) at unit level, on a VIRTUAL clock: no real waits,
++no threads, no espeak. Runs in the Poetry environment and in my_hailo_env alike.
++
++    ~/.cache/pypoetry/virtualenvs/second-vision-repo-wwT_Rtha-py3.13/bin/python -m pytest tests/test_alerts.py -v
++
++What is real here: AlertScheduler and PriorityMailbox. What is a model: the speech worker.
++`SpeechSim` follows tts_worker's rules in virtual time (one utterance at a time, an urgent or
++announcement item preempts, a 0.5 s gap after an utterance unless an urgent item waits, the
++head-turn mute and drain, the speech switch) and talks to the scheduler through exactly the
++calls tts_worker makes: take(), drain(), finish(item, SPOKEN|CUT|DROPPED). The REAL tts_worker
++with a stub espeak is in tests/test_alerts_speech.py; this file proves the scheduling logic,
++that file proves the wiring.
++
++What the randomised runs check (black box, from the log of what was spoken), for every alert:
++  * never cut by another alert, never two alerts at once;
++  * not doubled: delivered utterances of one alert are at least `interval` apart;
++  * not late: an alert that is due is spoken as soon as the channel is free, i.e. its delay
++    beyond the due time is at most the time the channel was busy (any utterance plus 0.15 s of
++    hand-over, or a mute window) plus 0.2 s;
++  * not lost: after a cut, a head-turn drain or a replacement in the slot, it is spoken again
++    under the same rule, a once-only alert included.
++"""
++
++import heapq
++import itertools
++import random
++import sys
++import threading
++import time
++from pathlib import Path
++
++import pytest
++
++sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
++
++from second_vision.core.alerts import CUT, DROPPED, SPOKEN, AlertScheduler
++from second_vision.core.priority import TIER_NORMAL, TIER_URGENT, PriorityMailbox, item_tier, preempts
++from second_vision.workers import tts_worker as tw
++from second_vision.workers.alert_worker import alert_worker
++
++TICK = 0.05
++LATE_EPS = 0.2     # scheduler tick + worker tick + float noise, beyond the time the channel was busy
++HANDOFF = 0.15     # each utterance occupies the channel this long after its end: the next item is
++                   # offered on the scheduler's next tick and taken on the worker's (at most 3 ticks)
++
++
++class VClock:
++    """A clock that only moves when the test moves it."""
++
++    def __init__(self):
++        self.t = 0.0
++
++    def __call__(self):
++        return self.t
++
++
++def detection(label="person", zone="left", priority=1.0, tier=TIER_NORMAL):
++    return {"label": label, "zone": zone, "confidence": 0.9, "priority": priority, "tier": tier}
++
++
++class SpeechSim:
++    """tts_worker in virtual time. See the module docstring for what it follows."""
++
++    def __init__(self, clock, mailbox, sched, duration=2.0):
++        self.clock, self.mailbox, self.sched = clock, mailbox, sched
++        self.duration = duration                  # seconds per utterance (float or callable(text))
++        self.tts_enabled = True
++        self.mute_until = -1.0
++        self.gap_until = -1.0
++        self.turn_pending = False
++        self.current = None                       # dict: item, text, start, dur
++        self.log = []                             # one dict per utterance
++        self.mutes = []                           # (start, end) head-turn mute windows
++
++    def _dur(self, text):
++        return self.duration(text) if callable(self.duration) else self.duration
++
++    def _begin(self, item, now):
++        text = tw._text_for(item)
++        if not self.tts_enabled:
++            self.log.append(dict(text=text, item=item, start=now, end=now, outcome=DROPPED, cut_by=None))
++            self.sched.finish(item, DROPPED)
++            return
++        self.current = dict(item=item, text=text, start=now, dur=self._dur(text))
++
++    def _end(self, now, outcome, cut_by=None):
++        c = self.current
++        self.log.append(dict(text=c["text"], item=c["item"], start=c["start"], end=now,
++                             outcome=outcome, cut_by=cut_by))
++        self.current = None
++
++    def head_turn(self):
++        """A 0x03 turn event. tts_worker looks at it between utterances, never in the middle of one."""
++        self.turn_pending = True
++        if self.current is None:
++            self._apply_turn()
++
++    def _apply_turn(self):
++        now = self.clock()
++        self.turn_pending = False
++        self.mute_until = now + tw.TURN_MUTE_SECONDS
++        self.mutes.append((now, self.mute_until))
++        self.sched.drain()
++
++    def step(self):
++        now = self.clock()
++        if self.current is not None:
++            c = self.current
++            pending = self.mailbox.peek()
++            if pending is not None and preempts(pending, c["item"]):
++                nxt = self.sched.take()
++                self._end(now, CUT, cut_by=tw._text_for(nxt) if nxt else None)
++                self.sched.finish(c["item"], CUT)
++                if nxt is not None:
++                    self._begin(nxt, now)
++            elif now >= c["start"] + c["dur"] - 1e-9:
++                self._end(now, SPOKEN)
++                self.sched.finish(c["item"], SPOKEN)
++                self.gap_until = now + tw.MIN_UTTERANCE_GAP
++            return
++        if self.turn_pending:
++            self._apply_turn()
++        if now < self.mute_until - 1e-9:
++            return
++        if now < self.gap_until - 1e-9:
++            pending = self.mailbox.peek()
++            if pending is None or item_tier(pending) != TIER_URGENT:
++                return
++        item = self.sched.take()
++        if item is not None:
++            self._begin(item, now)
++
++
++class World:
++    """A scheduler, a real mailbox, a speech model and a virtual clock, wired as in main()."""
++
++    def __init__(self, duration=2.0):
++        self.clock = VClock()
++        self.mailbox = PriorityMailbox()
++        self.sched = AlertScheduler(self.mailbox, clock=self.clock)
++        self.sim = SpeechSim(self.clock, self.mailbox, self.sched, duration)
++        self.events = []                          # heap of (time, seq, callable)
++        self._seq = itertools.count()
++        self.hooks = []                           # called each tick after poll(), before the worker steps
++
++    def at(self, t, fn):
++        heapq.heappush(self.events, (t, next(self._seq), fn))
++
++    def run(self, until, tick=TICK, shuffle=None):
++        """Advance virtual time to `until`. `shuffle` (a Random) varies whether the scheduler or the worker goes first."""
++        while self.clock.t < until - 1e-9:
++            while self.events and self.events[0][0] <= self.clock.t + 1e-9:
++                heapq.heappop(self.events)[2]()
++            if shuffle is not None and shuffle.random() < 0.5:
++                self.sim.step()
++                self.sched.poll()
++            else:
++                self.sched.poll()
++                for hook in self.hooks:
++                    hook()
++                self.sim.step()
++            self.clock.t = round(self.clock.t + tick, 6)
++
++    def starts(self, text, outcomes=(SPOKEN, DROPPED)):
++        return [e["start"] for e in self.sim.log if e["text"] == text and e["outcome"] in outcomes]
++
++    def texts(self):
++        return [e["text"] for e in self.sim.log]
++
++
++def approx_list(actual, expected, tol=1.0):
++    return len(actual) == len(expected) and all(abs(a - b) <= tol for a, b in zip(actual, expected))
++
++
++# ============================================================
++# Criterion 1: spoken at once, then on the cadence (10, 30, 300 s)
++# ============================================================
++@pytest.mark.parametrize("interval", [10.0, 30.0, 300.0])
++def test_spoken_at_once_then_every_interval(interval):
++    w = World()
++    w.at(0.0, lambda: w.sched.raise_alert("a", "controller missing", interval=interval))
++    w.run(4 * interval + 5)
++
++    assert approx_list(w.starts("controller missing"), [k * interval for k in range(5)]), \
++        w.starts("controller missing")
++    assert w.starts("controller missing")[0] <= 1.0
++    # exactly {"announce": text}, nothing else, and every utterance ran to its end
++    for e in w.sim.log:
++        assert e["item"] == {"announce": "controller missing"}
++        assert e["outcome"] == SPOKEN
++
++
++def test_the_cadence_is_start_to_start_not_end_to_start():
++    w = World(duration=4.0)
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=10.0))
++    w.run(35)
++    assert approx_list(w.starts("x"), [0, 10, 20, 30], tol=0.2), w.starts("x")
++
++
++def test_an_alert_raised_later_is_spoken_at_once_whatever_the_clock_says():
++    w = World()
++    w.at(123.0, lambda: w.sched.raise_alert("a", "late one", interval=30.0))
++    w.run(200)
++    assert approx_list(w.starts("late one"), [123, 153, 183], tol=0.5), w.starts("late one")
++
++
++# ============================================================
++# Criterion 2: once
++# ============================================================
++def test_once_is_spoken_exactly_once():
++    w = World()
++    w.at(0.0, lambda: w.sched.raise_alert("a", "camera lost"))      # interval None
++    w.run(1000)
++    assert w.starts("camera lost") == pytest.approx([0.0], abs=0.2)
++    assert w.sched.is_raised("a"), "a spent once-alert stays raised until cleared"
++
++
++def test_repeat_switched_off_after_the_first_utterance_is_not_spoken_again():
++    w = World()
++    w.at(0.0, lambda: w.sched.raise_alert("a", "depth board", interval=30.0))
++    w.at(5.0, lambda: w.sched.set_repeat("a", False))                # depth switched off mid-run
++    w.run(300)
++    assert len(w.starts("depth board")) == 1
++
++
++def test_repeat_switched_off_before_the_first_utterance_finished_still_delivers_it_once():
++    w = World(duration=4.0)
++    w.at(0.0, lambda: w.sched.raise_alert("a", "depth board", interval=30.0))
++    w.at(1.0, lambda: w.sched.set_repeat("a", False))                # mid-utterance
++    w.run(200)
++    assert [e["outcome"] for e in w.sim.log] == [SPOKEN]
++
++
++def test_repeat_off_before_the_first_utterance_even_started_still_delivers_it_once():
++    """The worker is busy with a mode announcement when the alert is raised and its repeat switched off."""
++    w = World(duration=3.0)
++    w.at(0.0, lambda: w.mailbox.offer({"announce": "depth mode"}))
++    w.at(0.5, lambda: w.sched.raise_alert("a", "depth board", interval=30.0))
++    w.at(1.0, lambda: w.sched.set_repeat("a", False))
++    w.run(200)
++    assert w.texts() == ["depth mode", "depth board"]
++    assert w.sim.log[1]["outcome"] == SPOKEN
++
++
++def test_repeat_given_as_a_callable_is_followed_without_any_call_from_the_producer():
++    on = {"depth": True}
++    w = World()
++    w.at(0.0, lambda: w.sched.raise_alert("a", "depth board", interval=30.0, repeat=lambda: on["depth"]))
++    w.at(40.0, lambda: on.update(depth=False))
++    w.at(100.0, lambda: on.update(depth=True))
++    w.run(200)
++    # spoken at 0 and 30 while depth is on, none while off (40..100), then at once at 100 and every 30 s
++    assert approx_list(w.starts("depth board"), [0, 30, 100, 130, 160, 190], tol=0.3), w.starts("depth board")
++
++
++def test_a_failing_repeat_callable_keeps_the_last_value_and_does_not_stop_the_scheduler():
++    state = {"boom": False}
++
++    def flaky():
++        if state["boom"]:
++            raise RuntimeError("config gone")
++        return True
++
++    w = World()
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=10.0, repeat=flaky))
++    w.at(15.0, lambda: state.update(boom=True))
++    w.run(45)
++    assert approx_list(w.starts("x"), [0, 10, 20, 30, 40], tol=0.3), w.starts("x")
++
++
++# ============================================================
++# Criterion 3: repeat back on
++# ============================================================
++def test_repeat_back_on_resumes_the_cadence_from_the_last_utterance():
++    w = World()
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=30.0))
++    w.at(10.0, lambda: w.sched.set_repeat("a", False))
++    w.at(20.0, lambda: w.sched.set_repeat("a", True))                # before it falls due again
++    w.run(100)
++    assert approx_list(w.starts("x"), [0, 30, 60, 90], tol=0.3), w.starts("x")
++
++
++def test_repeat_back_on_after_the_due_time_has_passed_speaks_at_once():
++    """The literal reading of REQ-CON-03 (reported to the Lead): on again and overdue -> now."""
++    w = World()
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=30.0))
++    w.at(10.0, lambda: w.sched.set_repeat("a", False))
++    w.at(100.0, lambda: w.sched.set_repeat("a", True))
++    w.run(200)
++    assert approx_list(w.starts("x"), [0, 100, 130, 160, 190], tol=0.3), w.starts("x")
++
++
++def test_flipping_the_repeat_quickly_does_not_make_a_storm():
++    w = World()
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=30.0))
++    for k in range(1, 40):
++        w.at(2.0 + k * 0.5, lambda k=k: w.sched.set_repeat("a", k % 2 == 0))
++    w.at(24.0, lambda: w.sched.set_repeat("a", True))
++    w.run(25)
++    assert len(w.starts("x")) == 1
++
++
++def test_set_repeat_on_an_alert_that_is_not_raised_does_nothing():
++    w = World()
++    assert w.sched.set_repeat("ghost", True) is False
++
++
++# ============================================================
++# Criterion 4: cleared means stopped
++# ============================================================
++def test_clear_stops_the_repeats_at_once():
++    w = World()
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=10.0))
++    w.at(15.0, lambda: w.sched.clear("a"))
++    w.run(100)
++    assert approx_list(w.starts("x"), [0, 10], tol=0.3)
++    assert not w.sched.is_raised("a")
++
++
++def test_clear_does_not_cut_an_utterance_under_way():
++    w = World(duration=4.0)
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=10.0))
++    w.at(1.0, lambda: w.sched.clear("a"))
++    w.run(60)
++    assert [(e["text"], e["outcome"]) for e in w.sim.log] == [("x", SPOKEN)]
++
++
++def test_clear_removes_its_own_queued_item_from_the_mailbox():
++    w = World()
++    w.sim.mute_until = 50.0                                          # the worker is not taking
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=10.0))
++    w.at(5.0, lambda: w.sched.clear("a"))
++    w.run(4.0)
++    assert w.mailbox.peek() == {"announce": "x"}                    # queued, untaken
++    w.run(6.0)
++    assert w.mailbox.peek() is None
++    w.run(100)
++    assert w.sim.log == []
++
++
++def test_clear_of_a_name_that_is_not_raised_does_nothing_and_touches_no_one_elses_item():
++    w = World()
++    mode = {"announce": "depth mode"}
++    w.mailbox.offer(mode)
++    assert w.sched.clear("ghost") is False
++    assert w.mailbox.peek() is mode
++
++
++def test_clear_leaves_a_mode_announcement_that_replaced_its_queued_item():
++    w = World()
++    w.sim.mute_until = 50.0
++    w.sched.raise_alert("a", "x", interval=10.0)
++    w.sched.poll()
++    assert w.mailbox.peek() == {"announce": "x"}
++    mode = {"announce": "depth mode"}
++    w.mailbox.offer(mode)                                            # the tie: incoming wins
++    assert w.mailbox.peek() is mode
++    assert w.sched.clear("a") is True
++    assert w.mailbox.peek() is mode, "clear() removed an item that was not the scheduler's own"
++
++
++def test_clear_leaves_a_detection_item_alone():
++    w = World()
++    det = detection()
++    w.sched.raise_alert("a", "x", interval=10.0)
++    w.mailbox.offer(det)                                             # detection in the slot, not ours
++    assert w.sched.clear("a") is True
++    assert w.mailbox.peek() is det
++
++
++def test_clear_then_raise_again_speaks_at_once():
++    w = World()
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x"))
++    w.at(20.0, lambda: w.sched.clear("a"))
++    w.at(30.0, lambda: w.sched.raise_alert("a", "x"))
++    w.run(60)
++    assert approx_list(w.starts("x"), [0, 30], tol=0.3)
++
++
++# ============================================================
++# Criterion 5: several alerts never cut or lose each other
++# ============================================================
++def test_alerts_due_together_are_spoken_one_after_the_other_each_to_the_end():
++    w = World(duration=3.0)
++    for name, text in [("a", "alpha"), ("b", "bravo"), ("c", "charlie")]:
++        w.at(0.0, lambda name=name, text=text: w.sched.raise_alert(name, text))
++    w.run(30)
++    assert w.texts() == ["alpha", "bravo", "charlie"]               # in the order raised
++    for first, second in zip(w.sim.log, w.sim.log[1:]):
++        assert second["start"] >= first["end"] - 1e-9
++    assert all(e["outcome"] == SPOKEN for e in w.sim.log)
++
++
++def test_alerts_of_10_30_and_300_seconds_keep_their_own_cadence():
++    w = World(duration=2.0)
++    w.at(0.0, lambda: w.sched.raise_alert("a", "ten", interval=10.0))
++    w.at(0.0, lambda: w.sched.raise_alert("b", "thirty", interval=30.0))
++    w.at(0.0, lambda: w.sched.raise_alert("c", "threehundred", interval=300.0))
++    w.run(620)
++    # Alerts due together queue behind each other (2 s each), so a start may slip by a few seconds.
++    assert approx_list(w.starts("ten"), [10 * k for k in range(62)], tol=7.0)
++    assert approx_list(w.starts("thirty"), [30 * k for k in range(21)], tol=7.0)
++    assert approx_list(w.starts("threehundred"), [0, 300, 600], tol=7.0)
++    assert all(e["outcome"] == SPOKEN for e in w.sim.log)
++    assert all(e["cut_by"] is None for e in w.sim.log)
++
++
++def test_an_alert_is_not_offered_while_another_is_queued_or_speaking():
++    w = World(duration=3.0)
++    w.sched.raise_alert("a", "alpha")
++    w.sched.raise_alert("b", "bravo")
++    w.sched.poll()
++    assert w.mailbox.peek() == {"announce": "alpha"}
++    w.sched.poll()
++    w.sched.poll()
++    assert w.mailbox.peek() == {"announce": "alpha"}                 # bravo waits; it did not replace alpha
++    assert w.sched.take() == {"announce": "alpha"}
++    w.sched.poll()
++    assert w.mailbox.peek() is None                                  # alpha is being spoken: bravo still waits
++
++
++def test_an_alert_waits_for_a_mode_announcement_in_the_slot_and_does_not_replace_it():
++    w = World()
++    mode = {"announce": "depth mode"}
++    w.mailbox.offer(mode)
++    w.sched.raise_alert("a", "x")
++    w.sched.poll()
++    assert w.mailbox.peek() is mode
++
++
++def test_an_alert_waits_for_the_worker_to_finish_a_detection_phrase_instead_of_cutting_it():
++    w = World(duration=3.0)
++    w.at(0.0, lambda: w.mailbox.offer(detection()))
++    w.at(0.5, lambda: w.sched.raise_alert("a", "x"))
++    w.run(20)
++    assert w.texts() == ["person left", "x"]
++    assert [e["outcome"] for e in w.sim.log] == [SPOKEN, SPOKEN]
++
++
++def test_an_alert_replaces_a_waiting_detection_item_in_the_slot():
++    """A detection item in the slot never blocks an alert (the scene is re-offered every frame)."""
++    w = World()
++    w.sim.mute_until = 5.0
++    w.mailbox.offer(detection())
++    w.sched.raise_alert("a", "x")
++    w.sched.poll()
++    assert w.mailbox.peek() == {"announce": "x"}
++
++
++# ============================================================
++# Criterion 6: not lost
++# ============================================================
++def test_an_alert_cut_by_a_mode_announcement_is_spoken_again_as_soon_as_the_channel_is_free():
++    w = World(duration=4.0)
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=30.0))
++    w.at(1.0, lambda: w.mailbox.offer({"announce": "depth mode"}))   # mid-utterance
++    w.run(20)
++    log = [(e["text"], e["outcome"]) for e in w.sim.log]
++    assert log == [("x", CUT), ("depth mode", SPOKEN), ("x", SPOKEN)]
++    mode_end = w.sim.log[1]["end"]
++    assert w.sim.log[2]["start"] - mode_end <= LATE_EPS
++
++
++def test_a_once_only_alert_that_was_cut_is_spoken_again_and_then_not_again():
++    w = World(duration=4.0)
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x"))
++    w.at(1.0, lambda: w.mailbox.offer({"announce": "depth mode"}))
++    w.run(300)
++    assert [(e["text"], e["outcome"]) for e in w.sim.log] == [("x", CUT), ("depth mode", SPOKEN), ("x", SPOKEN)]
++
++
++def test_an_alert_cut_by_an_urgent_detection_is_spoken_again():
++    w = World(duration=4.0)
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x"))
++    w.at(1.0, lambda: w.mailbox.offer(detection("car", "center", priority=9.0, tier=TIER_URGENT)))
++    w.run(30)
++    assert [(e["text"], e["outcome"]) for e in w.sim.log] == [("x", CUT), ("car center", SPOKEN), ("x", SPOKEN)]
++
++
++def test_a_head_turn_does_not_discard_an_alert_waiting_in_the_slot():
++    w = World()
++    w.sim.mute_until = 0.4                                           # worker busy elsewhere for a moment
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=30.0))
++    w.at(0.2, w.sim.head_turn)                                       # item is in the slot, untaken
++    w.run(6)
++    assert w.texts() == ["x"]
++    assert w.sim.log[0]["start"] >= 0.2 + tw.TURN_MUTE_SECONDS - 0.1, "spoken after the mute window"
++    assert w.sim.log[0]["outcome"] == SPOKEN
++
++
++def test_a_head_turn_still_drains_a_mode_announcement_and_a_detection_item():
++    """R2: today's drain behaviour is unchanged for everything that is not the scheduler's item."""
++    w = World()
++    mode = {"announce": "depth mode"}
++    w.mailbox.offer(mode)
++    w.sim.head_turn()
++    assert w.mailbox.peek() is None
++    w.mailbox.offer(detection())
++    w.sim.head_turn()
++    assert w.mailbox.peek() is None
++
++
++def test_drain_leaves_the_schedulers_waiting_item_in_the_slot_and_drains_everything_else():
++    mb = PriorityMailbox()
++    sched = AlertScheduler(mb, clock=VClock())
++    sched.raise_alert("a", "x", interval=10.0)
++    sched.poll()
++    ours = mb.peek()
++    assert sched.drain() is None and mb.peek() is ours               # the alert waits through the turn
++    mode = {"announce": "depth mode"}
++    mb.offer(mode)                                                   # replaces ours (tie)
++    assert sched.drain() is mode and mb.peek() is None               # a mode announcement is drained, as before
++    det = detection()
++    mb.offer(det)
++    assert sched.drain() is det and mb.peek() is None                # and a detection item
++
++
++def test_an_alert_that_is_being_spoken_is_not_in_the_slot_so_a_drain_takes_whatever_else_is_there():
++    mb = PriorityMailbox()
++    sched = AlertScheduler(mb, clock=VClock())
++    sched.raise_alert("a", "x", interval=10.0)
++    sched.poll()
++    assert sched.take() == {"announce": "x"}                         # now speaking
++    det = detection()
++    mb.offer(det)
++    assert sched.drain() is det
++
++
++def test_a_cleared_alert_that_is_cut_is_not_spoken_again_and_not_reported_as_coming_back(capsys):
++    w = World(duration=4.0)
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=10.0))
++    w.at(1.0, lambda: w.sched.clear("a"))
++    w.at(2.0, lambda: w.mailbox.offer({"announce": "depth mode"}))   # cuts the cleared alert's utterance
++    w.run(60)
++    assert w.texts() == ["x", "depth mode"]
++    assert [e["outcome"] for e in w.sim.log] == [CUT, SPOKEN]
++    assert "will be spoken again" not in capsys.readouterr().out
++
++
++def test_an_alert_replaced_in_the_slot_by_a_mode_announcement_is_offered_again():
++    w = World(duration=3.0)
++    w.sim.mute_until = 1.0                                           # keep the alert waiting in the slot
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=30.0))
++    w.at(0.5, lambda: w.mailbox.offer({"announce": "depth mode"}))   # the tie: replaces it
++    w.run(30)
++    assert w.texts() == ["depth mode", "x"]
++    assert w.sim.log[1]["outcome"] == SPOKEN
++
++
++def test_speech_switch_off_counts_as_delivered_and_the_next_repeat_tries_again():
++    w = World()
++    w.sim.tts_enabled = False
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=30.0))
++    w.at(100.0, lambda: setattr(w.sim, "tts_enabled", True))
++    w.run(140)
++    outcomes = [(round(e["start"]), e["outcome"]) for e in w.sim.log]
++    assert outcomes == [(0, DROPPED), (30, DROPPED), (60, DROPPED), (90, DROPPED), (120, SPOKEN)]
++
++
++def test_a_once_alert_dropped_by_the_speech_switch_is_not_offered_again():
++    w = World()
++    w.sim.tts_enabled = False
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x"))
++    w.at(10.0, lambda: setattr(w.sim, "tts_enabled", True))
++    w.run(100)
++    assert [e["outcome"] for e in w.sim.log] == [DROPPED]
++
++
++def test_a_failed_utterance_counts_as_delivered_through_release():
++    mb = PriorityMailbox()
++    clock = VClock()
++    sched = AlertScheduler(mb, clock=clock)
++    sched.raise_alert("a", "x", interval=30.0)
++    sched.poll()
++    item = sched.take()
++    sched.release(DROPPED)                                           # the worker raised
++    clock.t = 1.0
++    sched.poll()
++    assert mb.peek() is None, "a failure must not be re-offered in a storm"
++    clock.t = 30.0
++    sched.poll()
++    assert mb.peek() == {"announce": "x"} and mb.peek() is not item
++
++
++# ============================================================
++# Criterion 7: raise again
++# ============================================================
++def test_raising_the_same_alert_again_changes_nothing():
++    w = World()
++    for t in (0.0, 0.5, 3.0, 12.0, 25.0):
++        w.at(t, lambda: w.sched.raise_alert("a", "x", interval=30.0))
++    w.run(50)
++    assert approx_list(w.starts("x"), [0, 30], tol=0.3), w.starts("x")
++    assert w.sched.raised() == ["a"]
++
++
++def test_raising_with_a_different_text_replaces_the_alert():
++    w = World()
++    w.at(0.0, lambda: w.sched.raise_alert("a", "old wording", interval=30.0))
++    w.at(40.0, lambda: w.sched.raise_alert("a", "new wording", interval=30.0))
++    w.run(120)
++    assert approx_list(w.starts("old wording"), [0, 30], tol=0.3)
++    assert approx_list(w.starts("new wording"), [40, 70, 100], tol=0.3)
++    assert w.sched.raised() == ["a"]
++
++
++def test_raising_with_a_different_interval_replaces_the_alert():
++    w = World()
++    w.at(0.0, lambda: w.sched.raise_alert("a", "x", interval=30.0))
++    w.at(5.0, lambda: w.sched.raise_alert("a", "x", interval=10.0))
++    w.run(40)
++    assert approx_list(w.starts("x"), [0, 5, 15, 25, 35], tol=0.3), w.starts("x")
++
++
++def test_replacing_an_alert_pulls_its_queued_old_item():
++    w = World()
++    w.sim.mute_until = 50.0
++    w.sched.raise_alert("a", "old", interval=30.0)
++    w.sched.poll()
++    assert w.mailbox.peek() == {"announce": "old"}
++    w.sched.raise_alert("a", "new", interval=30.0)
++    assert w.mailbox.peek() is None
++    w.sched.poll()
++    assert w.mailbox.peek() == {"announce": "new"}
++
++
++def test_replacing_an_alert_while_it_is_being_spoken_lets_it_finish_then_speaks_the_new_one():
++    w = World(duration=4.0)
++    w.at(0.0, lambda: w.sched.raise_alert("a", "old", interval=30.0))
++    w.at(1.0, lambda: w.sched.raise_alert("a", "new", interval=30.0))
++    w.run(20)
++    assert [(e["text"], e["outcome"]) for e in w.sim.log] == [("old", SPOKEN), ("new", SPOKEN)]
++
++
++@pytest.mark.parametrize("args", [
++    dict(name="", text="x"), dict(name="a", text=""), dict(name="a", text="   "),
++    dict(name="a", text="x", interval=0), dict(name="a", text="x", interval=-5),
++    dict(name="a", text="x", interval=float("nan")), dict(name="a", text="x", interval="30"),
++])
++def test_a_bad_raise_is_refused_loudly_and_changes_nothing(args):
++    mb = PriorityMailbox()
++    sched = AlertScheduler(mb)
++    with pytest.raises(ValueError):
++        sched.raise_alert(**args)
++    assert sched.raised() == []
++
++
++# ============================================================
++# Criterion 8: threads and shutdown
++# ============================================================
++def test_the_api_is_safe_from_many_threads_and_never_blocks():
++    mb = PriorityMailbox()
++    sched = AlertScheduler(mb)
++    errors = []
++
++    def hammer(k):
++        try:
++            for i in range(1500):
++                name = f"n{(k + i) % 4}"
++                sched.raise_alert(name, f"text {name}", interval=float(10 + (i % 3)), repeat=(i % 2 == 0))
++                sched.set_repeat(name, i % 3 == 0)
++                if i % 5 == 0:
++                    sched.clear(name)
++                sched.poll()
++                sched.is_raised(name)
++                sched.raised()
++        except Exception as e:  # pragma: no cover - the assertion below reports it
++            errors.append(repr(e))
++
++    threads = [threading.Thread(target=hammer, args=(k,)) for k in range(6)]
++    started = time.monotonic()
++    for t in threads:
++        t.start()
++    for t in threads:
++        t.join(timeout=30)
++    assert not any(t.is_alive() for t in threads), "a call blocked"
++    assert errors == []
++    assert time.monotonic() - started < 20
++
++
++def test_the_alert_worker_is_a_daemon_that_stops_within_a_quarter_second_of_shutdown():
++    class UserData:
++        pass
++
++    ud = UserData()
++    ud.tts_queue = PriorityMailbox()
++    ud.alerts = AlertScheduler(ud.tts_queue)
++    ud.shutdown_event = threading.Event()
++    t = threading.Thread(target=alert_worker, args=(ud, None), daemon=True)
++    t.start()
++    ud.alerts.raise_alert("a", "x", interval=10.0)
++    time.sleep(0.3)
++    assert ud.tts_queue.peek() == {"announce": "x"}, "the worker thread did not offer a raised alert"
++    stop = time.monotonic()
++    ud.shutdown_event.set()
++    t.join(timeout=1.0)
++    assert not t.is_alive()
++    assert time.monotonic() - stop <= 0.25
++    assert t.daemon
++
++
++def test_the_alert_worker_survives_a_failing_poll():
++    class Exploding:
++        calls = 0
++
++        def poll(self):
++            Exploding.calls += 1
++            raise RuntimeError("boom")
++
++    class UserData:
++        alerts = Exploding()
++        shutdown_event = threading.Event()
++
++    t = threading.Thread(target=alert_worker, args=(UserData, None), daemon=True)
++    t.start()
++    time.sleep(0.3)
++    UserData.shutdown_event.set()
++    t.join(timeout=1.0)
++    assert Exploding.calls >= 3 and not t.is_alive()
++
++
++# ============================================================
++# Randomised runs: the four loss paths (virtual clock). "Fixed means repeated."
++# ============================================================
++ALERTS = [("a10", "ten second alert", 10.0), ("a30", "thirty second alert", 30.0),
++          ("a300", "five minute alert", 300.0)]
++ONCE = ("once", "once only alert", None)
++MODE = {"announce": "depth mode"}
++
++
++def busy_measure(intervals, a, b):
++    """Length of [a, b] covered by the union of `intervals` (the time the speech channel was occupied)."""
++    covered = 0.0
++    cursor = a
++    for s, e in sorted(intervals):
++        s, e = max(s, cursor), min(e, b)
++        if e > s:
++            covered += e - s
++            cursor = e
++    return covered
++
++
++def check_invariants(world, specs, t_end, raised_at, loss_events):
++    """
++    Raise AssertionError if an alert was lost, doubled, late or cut by another alert.
++    `specs`: (name, text, interval); `raised_at`: name -> time; `loss_events`: (name, time)
++    for losses the speech log does not show (a head-turn drain, a replacement in the slot).
++    """
++    log = world.sim.log
++    busy = [(e["start"], e["end"] + HANDOFF) for e in log if e["end"] > e["start"]] + list(world.sim.mutes)
++    in_progress = world.sim.current                                    # not in the log yet
++    if in_progress is not None:
++        busy.append((in_progress["start"], t_end))
++    waiting = world.mailbox.peek()                                     # offered, not yet taken
++    alert_texts = {text for _, text, _ in specs}
++
++    for e in log:
++        if e["outcome"] == CUT and e["text"] in alert_texts:
++            assert e["cut_by"] not in alert_texts, f"alert cut by another alert: {e}"
++
++    for name, text, interval in specs:
++        delivered = world.starts(text)
++        if interval is None:
++            assert len(delivered) == 1, f"{name}: once-alert spoken {len(delivered)} times: {delivered}"
++        for s1, s2 in zip(delivered, delivered[1:]):                    # not doubled
++            assert s2 - s1 >= interval - 1e-6, f"{name} doubled: {s1:.2f} then {s2:.2f}"
++        # Not late, not skipped: each utterance follows its due time as soon as the channel is free.
++        dues = [raised_at[name]] + [s + interval for s in delivered if interval is not None]
++        for due, spoken in zip(dues, delivered):
++            idle_wait = (spoken - due) - busy_measure(busy, due, spoken)
++            assert idle_wait <= LATE_EPS, f"{name} late: due {due:.2f}, spoken {spoken:.2f}, idle wait {idle_wait:.2f}"
++        speaking_now = (in_progress is not None and in_progress["text"] == text) or \
++                       (waiting is not None and waiting.get("announce") == text)
++        if len(dues) > len(delivered) and not speaking_now:             # one more is owed at the end
++            due = dues[len(delivered)]
++            assert (t_end - due) - busy_measure(busy, due, t_end) <= LATE_EPS, \
++                f"{name} overdue at the end: due {due:.2f}"
++        # Not lost: after a cut, a drain or a replacement it is spoken again as soon as the channel is free.
++        losses = [e["end"] for e in log if e["text"] == text and e["outcome"] == CUT]
++        losses += [t for n, t in loss_events if n == name]
++        for lost_at in losses:
++            later = [s for s in delivered if s >= lost_at - 1e-6]
++            until = later[0] if later else t_end
++            idle_wait = (until - lost_at) - busy_measure(busy, lost_at, until)
++            assert idle_wait <= LATE_EPS, f"{name} not repaired after the loss at {lost_at:.2f}: idle wait {idle_wait:.2f}"
++
++
++def random_world(seed, path):
++    """One randomised run. `path` forces one loss path on purpose: cut, drain, tie or off."""
++    rng = random.Random(seed)
++    w = World(duration=lambda text: rng.choice([1.5, 2.0, 3.0]))
++    specs = list(ALERTS) + ([ONCE] if seed % 2 == 0 else [])
++    raised_at = {}
++    for name, text, interval in specs:
++        raised_at[name] = 0.0 if name == "a300" else round(rng.uniform(0.0, 3.0), 2)
++        w.at(raised_at[name], lambda name=name, text=text, interval=interval:
++             w.sched.raise_alert(name, text, interval=interval))
++    t_end = 330.0
++    loss_events = []
++    by_text = {text: name for name, text, _ in specs}
++
++    # Noise common to all paths: mode announcements and detection phrases at random moments.
++    t = rng.uniform(2, 20)
++    while t < t_end:
++        w.at(t, lambda: w.mailbox.offer(dict(MODE)))
++        t += rng.expovariate(1 / 40.0)
++    t = rng.uniform(0, 5)
++    while t < t_end:
++        urgent = rng.random() < 0.1
++        w.at(t, lambda urgent=urgent: w.mailbox.offer(detection(
++            "car" if urgent else "person", "center", priority=9.0 if urgent else 1.0,
++            tier=TIER_URGENT if urgent else TIER_NORMAL)))
++        t += rng.uniform(0.5, 6.0)
++
++    if path == "cut":                       # a mode announcement in the middle of an alert utterance
++        def cut_hook():
++            c = w.sim.current
++            if c is not None and c["text"] in by_text and rng.random() < 0.03:
++                w.mailbox.offer(dict(MODE))
++        w.hooks.append(cut_hook)
++    elif path == "drain":                   # head turns, many while an alert waits in the slot
++        def drain_hook():
++            peek = w.mailbox.peek()
++            if peek is not None and peek.get("announce") in by_text and rng.random() < 0.3:
++                loss_events.append((by_text[peek["announce"]], w.clock.t))
++                w.sim.head_turn()
++            elif rng.random() < 0.004:
++                w.sim.head_turn()
++        w.hooks.append(drain_hook)
++    elif path == "tie":                     # a mode announcement overwrites the alert in the slot
++        def tie_hook():
++            peek = w.mailbox.peek()
++            if peek is not None and peek.get("announce") in by_text and rng.random() < 0.4:
++                loss_events.append((by_text[peek["announce"]], w.clock.t))
++                w.mailbox.offer(dict(MODE))
++        w.hooks.append(tie_hook)
++    elif path == "off":                     # the speech switch off for stretches
++        t = rng.uniform(5, 30)
++        while t < t_end:
++            span = rng.uniform(5, 60)
++            w.at(t, lambda: setattr(w.sim, "tts_enabled", False))
++            w.at(t + span, lambda: setattr(w.sim, "tts_enabled", True))
++            t += span + rng.uniform(10, 60)
++    else:  # pragma: no cover
++        raise AssertionError(path)
++
++    w.run(t_end, shuffle=rng)
++    return w, specs, t_end, raised_at, loss_events
++
++
++@pytest.mark.parametrize("path", ["cut", "drain", "tie", "off"])
++def test_randomised_runs_never_lose_double_or_cut_an_alert(path, capsys):
++    runs = 50
++    loss_count = 0
++    for seed in range(runs):
++        w, specs, t_end, raised_at, loss_events = random_world(seed, path)
++        try:
++            check_invariants(w, specs, t_end, raised_at, loss_events)
++        except AssertionError as e:
++            raise AssertionError(f"{path} seed {seed}: {e}") from None
++        texts = {text for _, text, _ in specs}
++        loss_count += len(loss_events) + sum(
++            1 for e in w.sim.log if e["text"] in texts and e["outcome"] in (CUT, DROPPED))
++    capsys.readouterr()
++    assert loss_count >= 3 * runs, f"{path}: the forced loss path barely happened ({loss_count} events in {runs} runs)"
++    print(f"\n[T-00a] {path}: {runs} randomised runs, {loss_count} forced loss events, no alert lost, doubled or cut by another alert")
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-00a/tests/test_alerts_speech.py tests/test_alerts_speech.py
+--- .claude/baselines/T-00a/tests/test_alerts_speech.py	1970-01-01 08:00:00.000000000 +0800
++++ tests/test_alerts_speech.py	2026-10-17 20:29:44.283839950 +0800
+@@ -0,0 +1,690 @@
++"""
++T-00a: the alert scheduler together with the REAL speech worker, in real time.
++
++    ~/.cache/pypoetry/virtualenvs/second-vision-repo-wwT_Rtha-py3.13/bin/python -m pytest tests/test_alerts_speech.py -v
++    my_hailo_env/bin/python -m pytest tests/test_alerts_speech.py -v
++
++What is real: workers/tts_worker.py (its own loop, preemption, pacing, head-turn mute, volume,
++speech switch), core/priority.py's PriorityMailbox, core/turn_event.py, core/alerts.py, the
++alert worker thread, and the espeak-ng subprocess protocol (Popen, terminate). What is a stub:
++`espeak-ng` itself. A script first on PATH records when each phrase starts and ends (CLOCK_MONOTONIC,
++comparable with the scheduler's clock) and runs for a set time; it logs "cut" when it is terminated.
++No sound, no device. tests/test_alerts.py proves the scheduling logic on a virtual clock; this file
++proves the wiring and the loss paths against the real worker.
++
++Run lengths. The default run is short (about a minute). Two environment variables lengthen it:
++  SV_ALERT_RUNS=20       randomised runs per loss path (default 1); the report quotes 20
++  SV_REAL_CADENCE=1      the brief's real-time cadences: alerts of 10 s and 30 s for 96 s with
++                         announcements and detections arriving at random (about 100 s). In
++                         my_hailo_env also set PYTEST_TIMEOUT=300 (its default is 60 s per test).
++"""
++
++import json
++import os
++import random
++import signal
++import subprocess
++import sys
++import threading
++import time
++import importlib.util
++from pathlib import Path
++
++import pytest
++
++SRC = Path(__file__).resolve().parent.parent / "src"
++sys.path.insert(0, str(SRC))
++
++from second_vision.core.config import SystemConfig
++from second_vision.core.priority import TIER_NORMAL, TIER_URGENT, PriorityMailbox
++from second_vision.core.turn_event import TurnEvent
++from second_vision.workers import tts_worker as tw
++
++try:                                    # absent on the T-00a baseline: the guard tests then run without it
++    from second_vision.core.alerts import AlertScheduler
++    from second_vision.workers.alert_worker import alert_worker
++except ImportError:                     # pragma: no cover
++    AlertScheduler = None
++    alert_worker = None
++
++STUB = """#!{python} -S
++import json, os, signal, sys, time
++text = sys.argv[-1]
++cfg = json.loads(os.environ.get("ESPEAK_STUB_CONFIG", "{{}}"))
++duration = cfg.get("texts", {{}}).get(text, cfg.get("default", 0.3))
++log = os.open(os.environ["ESPEAK_STUB_LOG"], os.O_WRONLY | os.O_APPEND | os.O_CREAT)
++def rec(ev, **kw):
++    os.write(log, (json.dumps(dict(ev=ev, text=text, t=time.monotonic(), pid=os.getpid(), **kw)) + "\\n").encode())
++def on_term(signum, frame):
++    rec("end", cut=True)
++    os._exit(143)
++signal.signal(signal.SIGTERM, on_term)
++rec("start", argv=sys.argv[1:])
++time.sleep(duration)
++rec("end", cut=False)
++"""
++
++MODE = {"announce": "depth mode"}
++_REAL_CHECK_TURN_MUTE = tw._check_turn_mute      # the worker's own, captured once (Rigs wrap it per test)
++_RIG_COUNT = [0]
++
++
++def detection(label="person", zone="left", priority=1.0, tier=TIER_NORMAL):
++    return {"label": label, "zone": zone, "confidence": 0.9, "priority": priority, "tier": tier}
++
++
++class UserData:
++    """What the workers see of SecondVisionUserData (main.py builds the real one the same way)."""
++
++    def __init__(self, with_alerts):
++        self.tts_queue = PriorityMailbox()
++        self.shutdown_event = threading.Event()
++        self.turn_event = TurnEvent()
++        if with_alerts:
++            self.alerts = AlertScheduler(self.tts_queue)
++
++
++class Rig:
++    """The real tts_worker (and alert_worker) on a stub espeak-ng."""
++
++    def __init__(self, tmp_path, monkeypatch, default=0.3, texts=None, with_alerts=True):
++        if with_alerts and AlertScheduler is None:
++            pytest.fail("this tree has no alert scheduler (core/alerts.py)")
++        _RIG_COUNT[0] += 1
++        self.dir = tmp_path / f"rig{_RIG_COUNT[0]}"
++        self.dir.mkdir()
++        self.monkeypatch = monkeypatch
++        bin_dir = self.dir / "bin"
++        bin_dir.mkdir()
++        stub = bin_dir / "espeak-ng"
++        stub.write_text(STUB.format(python=sys.executable))
++        stub.chmod(0o755)
++        self.log_path = self.dir / "espeak.log"
++        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
++        monkeypatch.setenv("ESPEAK_STUB_LOG", str(self.log_path))
++        self.durations(default, texts)
++        self.config = SystemConfig()
++        self.ud = UserData(with_alerts)
++        self.offers = []                              # (time, item) of everything offered to the mailbox
++        real_offer = self.ud.tts_queue.offer
++
++        def spy(item):
++            self.offers.append((time.monotonic(), item))
++            real_offer(item)
++        self.ud.tts_queue.offer = spy
++        self.turns = []                               # (time, mute deadline) when the worker consumed a turn
++
++        def check(turn_event, mailbox, now, mute_until, *a, **k):
++            out = _REAL_CHECK_TURN_MUTE(turn_event, mailbox, now, mute_until, *a, **k)
++            if out != mute_until:
++                self.turns.append((now, out))
++            return out
++        monkeypatch.setattr(tw, "_check_turn_mute", check)
++        self.threads = []
++
++    def durations(self, default, texts=None):
++        self.monkeypatch.setenv("ESPEAK_STUB_CONFIG", json.dumps({"default": default, "texts": texts or {}}))
++
++    def start(self):
++        for target in (tw.tts_worker, alert_worker if hasattr(self.ud, "alerts") else None):
++            if target is not None:
++                t = threading.Thread(target=target, args=(self.ud, self.config), daemon=True)
++                t.start()
++                self.threads.append(t)
++
++    def stop(self):
++        self.ud.shutdown_event.set()
++        for t in self.threads:
++            t.join(timeout=3)
++        assert not any(t.is_alive() for t in self.threads), "a worker did not stop"
++        time.sleep(0.3)                               # let a terminated stub write its last line
++
++    def utterances(self):
++        """[{text, start, end, cut}] in start order, from the stub's log."""
++        started, out = {}, []
++        for line in self.log_path.read_text().splitlines() if self.log_path.exists() else []:
++            try:
++                rec = json.loads(line)
++            except ValueError:
++                continue
++            if rec["ev"] == "start":
++                started[rec["pid"]] = rec
++            elif rec["pid"] in started:
++                s = started.pop(rec["pid"])
++                out.append(dict(text=s["text"], start=s["t"], end=rec["t"], cut=rec["cut"], argv=s["argv"]))
++        return sorted(out, key=lambda u: u["start"])
++
++    def texts(self):
++        return [u["text"] for u in self.utterances()]
++
++    def started(self):
++        """Texts of every phrase the stub has started (finished or still running)."""
++        out = []
++        try:
++            for line in self.log_path.read_text().splitlines():
++                rec = json.loads(line)
++                if rec["ev"] == "start":
++                    out.append(rec["text"])
++        except (OSError, ValueError):
++            pass
++        return out
++
++    def wait_for(self, predicate, timeout=10.0):
++        deadline = time.monotonic() + timeout
++        while time.monotonic() < deadline:
++            if predicate():
++                return True
++            time.sleep(0.02)
++        return False
++
++
++@pytest.fixture
++def rig(tmp_path, monkeypatch):
++    made = []
++
++    def make(**kw):
++        r = Rig(tmp_path, monkeypatch, **kw)
++        made.append(r)
++        return r
++    yield make
++    for r in made:
++        r.ud.shutdown_event.set()
++
++
++# ============================================================
++# Criterion 9: nothing else changes (guards: they also run on the baseline, without a scheduler)
++# ============================================================
++@pytest.mark.parametrize("with_alerts", [False, True])
++def test_a_detection_phrase_and_a_mode_announcement_behave_as_before(rig, with_alerts):
++    """Scheduler running and idle (or absent): speech order, preemption, pacing, volume are today's."""
++    r = rig(default=0.4, with_alerts=with_alerts)
++    r.config.update(tts_volume=0.0)
++    r.start()
++    r.ud.tts_queue.offer(detection("person", "left"))
++    assert r.wait_for(lambda: len(r.started()) >= 1)
++    time.sleep(0.1)
++    r.ud.tts_queue.offer(detection("car", "center", priority=9.0, tier=TIER_URGENT))     # preempts a normal phrase
++    assert r.wait_for(lambda: "car center" in r.started())
++    time.sleep(0.1)
++    r.ud.tts_queue.offer(MODE)                                                           # and an announcement
++    assert r.wait_for(lambda: "depth mode" in r.texts(), 5)
++    time.sleep(0.8)
++    r.stop()
++    u = r.utterances()
++    assert [x["text"] for x in u] == ["person left", "car center", "depth mode"]
++    assert [x["cut"] for x in u] == [True, True, False], "person cut by the urgent car, car cut by the announcement"
++    assert all(x["argv"][x["argv"].index("-a") + 1] == str(tw._AMPLITUDE_FLOOR) for x in u), "volume applied"
++    assert u[2]["start"] - u[1]["end"] < 0.45, "an urgent item still skips the 0.5 s gap"
++
++
++@pytest.mark.parametrize("with_alerts", [False, True])
++def test_the_head_turn_mute_and_drain_and_the_speech_switch_behave_as_before(rig, with_alerts):
++    r = rig(default=0.3, with_alerts=with_alerts)
++    r.start()
++    r.ud.turn_event.push(delta_deg=50, received_at=time.monotonic())
++    assert r.wait_for(lambda: r.turns)
++    r.ud.tts_queue.offer(MODE)                                       # offered inside the mute window
++    r.ud.turn_event.push(delta_deg=50, received_at=time.monotonic())  # a second turn drains it
++    time.sleep(1.6)
++    assert r.texts() == [], "the drained announcement was spoken"
++    r.config.update(tts_enabled=False)
++    r.ud.tts_queue.offer(MODE)
++    time.sleep(0.5)
++    assert r.texts() == [], "spoken with the speech switch off"
++    r.config.update(tts_enabled=True)
++    r.ud.tts_queue.offer(detection("chair", "right"))
++    assert r.wait_for(lambda: r.texts() == ["chair right"])
++    r.stop()
++
++
++# ============================================================
++# Criteria 1, 5: cadence and several alerts, real worker
++# ============================================================
++def test_an_alert_is_spoken_at_once_and_then_on_its_cadence(rig):
++    r = rig(default=0.3)
++    r.start()
++    t0 = time.monotonic()
++    r.ud.alerts.raise_alert("a", "controller missing", interval=1.5)
++    time.sleep(6.8)
++    r.stop()
++    starts = [u["start"] - t0 for u in r.utterances() if u["text"] == "controller missing"]
++    assert len(starts) == 5, starts
++    assert starts[0] <= 1.0
++    for k, s in enumerate(starts):
++        assert abs(s - starts[0] - 1.5 * k) <= 0.3, starts
++    assert all(not u["cut"] for u in r.utterances())
++    offered = [item for _, item in r.offers]
++    assert offered and all(item == {"announce": "controller missing"} for item in offered)
++
++
++def test_alerts_raised_together_are_spoken_one_after_the_other_each_to_the_end(rig):
++    r = rig(default=0.4)
++    r.start()
++    for name, text in [("a", "alpha"), ("b", "bravo"), ("c", "charlie")]:
++        r.ud.alerts.raise_alert(name, text)
++    assert r.wait_for(lambda: len(r.utterances()) >= 3, 8)
++    time.sleep(0.5)
++    r.stop()
++    u = r.utterances()
++    assert [x["text"] for x in u] == ["alpha", "bravo", "charlie"]
++    assert all(not x["cut"] for x in u)
++    assert all(b["start"] >= a["end"] - 0.02 for a, b in zip(u, u[1:])), "two alerts at once"
++
++
++def test_clear_stops_the_alert_and_does_not_cut_the_one_under_way(rig):
++    r = rig(default=0.8)
++    r.start()
++    r.ud.alerts.raise_alert("a", "x", interval=1.2)
++    assert r.wait_for(lambda: len(r.started()) >= 1)
++    time.sleep(0.2)
++    r.ud.alerts.clear("a")                                           # mid-utterance
++    time.sleep(3.0)
++    r.stop()
++    u = r.utterances()
++    assert [(x["text"], x["cut"]) for x in u] == [("x", False)]
++
++
++# ============================================================
++# Criterion 6: the loss paths, forced on purpose, real worker
++# ============================================================
++def test_an_alert_cut_by_a_mode_announcement_is_spoken_again(rig):
++    r = rig(default=0.3, texts={"x": 1.0, "depth mode": 0.5})
++    r.start()
++    r.ud.alerts.raise_alert("a", "x", interval=20.0)
++    assert r.wait_for(lambda: len(r.started()) >= 1)
++    time.sleep(0.3)
++    r.ud.tts_queue.offer(MODE)                                       # mid-utterance
++    assert r.wait_for(lambda: [u["text"] for u in r.utterances()] == ["x", "depth mode", "x"], 8)
++    r.stop()
++    u = r.utterances()
++    assert [(x["text"], x["cut"]) for x in u] == [("x", True), ("depth mode", False), ("x", False)]
++
++
++def test_a_once_alert_cut_by_an_urgent_detection_is_spoken_again_and_only_once_more(rig):
++    r = rig(default=0.3, texts={"x": 1.0})
++    r.start()
++    r.ud.alerts.raise_alert("a", "x")
++    assert r.wait_for(lambda: len(r.started()) >= 1)
++    time.sleep(0.3)
++    r.ud.tts_queue.offer(detection("car", "center", priority=9.0, tier=TIER_URGENT))
++    time.sleep(4.0)
++    r.stop()
++    assert [(x["text"], x["cut"]) for x in r.utterances()] == [("x", True), ("car center", False), ("x", False)]
++
++
++def test_a_head_turn_with_an_alert_waiting_in_the_slot_does_not_discard_it(rig):
++    r = rig(default=0.3)
++    r.start()
++    r.ud.turn_event.push(delta_deg=50, received_at=time.monotonic())     # the worker mutes for 1 s
++    assert r.wait_for(lambda: r.turns)
++    r.ud.alerts.raise_alert("a", "x", interval=30.0)
++    assert r.wait_for(lambda: r.ud.tts_queue.peek() == {"announce": "x"}, 2), "alert never reached the slot"
++    waiting = r.ud.tts_queue.peek()
++    r.ud.turn_event.push(delta_deg=-50, received_at=time.monotonic())    # the drain, with the alert in the slot
++    assert r.wait_for(lambda: len(r.turns) == 2)
++    assert r.ud.tts_queue.peek() is waiting, "the drain discarded the alert"
++    assert r.wait_for(lambda: r.texts() == ["x"], 5)
++    time.sleep(0.8)
++    r.stop()
++    u = r.utterances()
++    assert [x["text"] for x in u] == ["x"] and not u[0]["cut"]
++    assert u[0]["start"] >= r.turns[1][1] - 0.1, "spoken inside the mute window"
++
++
++def test_a_head_turn_still_discards_a_mode_announcement_and_a_detection_with_an_alert_around(rig):
++    """R2: only the scheduler's own item is spared."""
++    r = rig(default=0.3)
++    r.start()
++    r.ud.alerts.raise_alert("a", "x", interval=30.0)
++    assert r.wait_for(lambda: r.texts() == ["x"], 3)
++    time.sleep(0.8)
++    r.ud.turn_event.push(delta_deg=50, received_at=time.monotonic())
++    assert r.wait_for(lambda: r.turns)
++    r.ud.tts_queue.offer(MODE)
++    r.ud.tts_queue.offer(detection())
++    r.ud.turn_event.push(delta_deg=50, received_at=time.monotonic())
++    time.sleep(1.8)
++    r.stop()
++    assert r.texts() == ["x"]
++
++
++def test_an_alert_replaced_in_the_slot_by_a_mode_announcement_is_spoken_after_it(rig):
++    r = rig(default=0.3)
++    r.start()
++    r.ud.turn_event.push(delta_deg=50, received_at=time.monotonic())     # keep the slot occupied for a while
++    assert r.wait_for(lambda: r.turns)
++    r.ud.alerts.raise_alert("a", "x", interval=30.0)
++    assert r.wait_for(lambda: r.ud.tts_queue.peek() == {"announce": "x"}, 2)
++    r.ud.tts_queue.offer(MODE)                                           # the tie: replaces the alert
++    assert r.wait_for(lambda: r.texts() == ["depth mode", "x"], 6)
++    time.sleep(0.8)
++    r.stop()
++    assert r.texts() == ["depth mode", "x"] and not any(u["cut"] for u in r.utterances())
++
++
++def test_speech_switch_off_drops_alerts_without_a_storm_and_the_next_repeat_tries_again(rig):
++    r = rig(default=0.3)
++    r.config.update(tts_enabled=False)
++    r.start()
++    t0 = time.monotonic()
++    r.ud.alerts.raise_alert("a", "x", interval=1.0)
++    time.sleep(3.5)
++    offers_while_off = [t for t, item in r.offers if item == {"announce": "x"}]
++    assert r.texts() == []
++    assert 3 <= len(offers_while_off) <= 5, f"offers while the switch was off: {len(offers_while_off)}"
++    assert all(abs((t - t0) - round(t - t0)) <= 0.35 for t in offers_while_off), "offers are not on the 1 s cadence"
++    r.config.update(tts_enabled=True)
++    assert r.wait_for(lambda: len(r.texts()) >= 1, 3)
++    r.stop()
++    assert set(r.texts()) == {"x"}
++
++
++def test_a_failure_while_speaking_an_alert_does_not_leave_the_scheduler_waiting(rig, monkeypatch):
++    """The worker's except branch: the alert counts as delivered (no storm) and the next repeat tries again."""
++    r = rig(default=0.3)
++    real_start = tw._start_espeak
++    calls = []
++
++    def flaky(text, amplitude=tw._AMPLITUDE_MAX):
++        calls.append(time.monotonic())
++        if len(calls) == 1:
++            raise OSError("espeak-ng vanished")
++        return real_start(text, amplitude)
++    monkeypatch.setattr(tw, "_start_espeak", flaky)
++    r.start()
++    t0 = time.monotonic()
++    r.ud.alerts.raise_alert("a", "x", interval=1.0)
++    assert r.wait_for(lambda: len(r.started()) >= 2, 5), "the scheduler never offered the alert again"
++    r.stop()
++    assert len(calls) in (2, 3), f"offers after one failure: {len(calls)}"     # not a storm
++    assert 0.8 <= calls[1] - calls[0] <= 1.4, f"the retry came {calls[1] - calls[0]:.2f} s after the failure"
++    assert r.started()[0] == "x"
++
++
++def test_the_fallback_engine_path_also_reports_the_alert_as_spoken(rig, monkeypatch):
++    r = rig(default=0.3)
++    spoken = []
++    monkeypatch.setattr(tw, "_start_espeak", lambda text, amplitude=100: None)      # no espeak-ng
++    monkeypatch.setattr(tw, "_speak_blocking", lambda text, amplitude=100: spoken.append(time.monotonic()))
++    r.start()
++    r.ud.alerts.raise_alert("a", "x", interval=1.0)
++    assert r.wait_for(lambda: len(spoken) >= 3, 5)
++    r.stop()
++    assert 0.8 <= spoken[1] - spoken[0] <= 1.4 and 0.8 <= spoken[2] - spoken[1] <= 1.4, spoken
++
++
++# ============================================================
++# Real-time randomised runs: "fixed means repeated" (default 1 per path; SV_ALERT_RUNS=20 for the report)
++# ============================================================
++RUNS = int(os.environ.get("SV_ALERT_RUNS", "1"))
++BATCH = 5                # runs per test, so each test stays under the 60 s default timeout of my_hailo_env
++SCALED = [("a10", "ten second alert", 1.0), ("a30", "thirty second alert", 1.7), ("a300", "long period alert", 3.0)]
++ONCE = ("once", "once only alert", None)
++STUB_LAG = 0.15          # python start-up of the stub, between Popen and the first log line
++
++
++def busy_measure(intervals, a, b):
++    covered, cursor = 0.0, a
++    for s, e in sorted(intervals):
++        s, e = max(s, cursor), min(e, b)
++        if e > s:
++            covered += e - s
++            cursor = e
++    return covered
++
++
++def check_real_log(rig, specs, raised_at, t_end, loss_times, late_tol=0.6, cadence=True):
++    """The same invariants as tests/test_alerts.py, on the stub's log. Raises AssertionError."""
++    utts = rig.utterances()
++    alert_texts = {t for _, t, _ in specs}
++    busy = [(u["start"] - STUB_LAG, u["end"] + 0.15) for u in utts]
++    busy += [(now, deadline + 1.0) for now, deadline in rig.turns]        # mute window + the pace gap before it
++    for k, u in enumerate(utts):
++        if u["cut"] and u["text"] in alert_texts and u["end"] < t_end - 0.01:     # not the cut by shutdown
++            later = [v for v in utts[k + 1:] if v["start"] >= u["end"] - 0.05]
++            assert later and later[0]["text"] not in alert_texts, f"alert cut by another alert: {u} -> {later[:1]}"
++    for a, b in zip(utts, utts[1:]):
++        assert b["start"] >= a["end"] - 0.12, f"two utterances at once: {a['text']} / {b['text']}"
++    for name, text, interval in specs:
++        delivered = [u["start"] for u in utts if u["text"] == text and not u["cut"]]
++        if interval is None:
++            assert len(delivered) <= 1, f"{name}: once-alert delivered {len(delivered)} times"
++        for s1, s2 in zip(delivered, delivered[1:]):
++            assert s2 - s1 >= interval - 0.25, f"{name} doubled: {s1:.2f} then {s2:.2f}"
++        if not cadence:                              # dropped items are delivered but leave no trace in the log
++            continue
++        dues = [raised_at[name]] + [s + interval for s in delivered if interval is not None]
++        for due, spoken in zip(dues, delivered):
++            wait = (spoken - due) - busy_measure(busy, due, spoken)
++            assert wait <= late_tol, f"{name} late: due {due:.2f}, spoken {spoken:.2f}, idle wait {wait:.2f}"
++        if len(dues) > len(delivered) and dues[len(delivered)] < t_end - 1.2:
++            due = dues[len(delivered)]
++            assert (t_end - due) - busy_measure(busy, due, t_end) <= late_tol, f"{name} overdue at the end: {due:.2f}"
++        losses = [u["end"] for u in utts if u["text"] == text and u["cut"] and u["end"] < t_end - 0.01]
++        losses += [t for n, t in loss_times if n == name]
++        for lost_at in losses:
++            later = [s for s in delivered if s >= lost_at - 0.05]
++            until = later[0] if later else t_end
++            if not later and lost_at > t_end - 1.2:
++                continue
++            wait = (until - lost_at) - busy_measure(busy, lost_at, until)
++            assert wait <= late_tol, f"{name} not repaired after the loss at {lost_at:.2f}: idle wait {wait:.2f}"
++
++
++class Chaos(threading.Thread):
++    """Forces one loss path from outside the workers, at random moments, reading the stub's log."""
++
++    def __init__(self, rig, path, by_text, rng, loss_times):
++        super().__init__(daemon=True)
++        self.rig, self.path, self.by_text, self.rng, self.loss = rig, path, by_text, rng, loss_times
++        self.stop_flag = threading.Event()
++        self.seen = 0
++        self.events = 0
++        self.last_turn = 0.0
++
++    def run(self):
++        mailbox, turn_event = self.rig.ud.tts_queue, self.rig.ud.turn_event
++        while not self.stop_flag.wait(0.01):
++            if self.path == "cut":
++                started = [u for u in self._starts() if u["text"] in self.by_text]
++                if len(started) > self.seen:
++                    self.seen = len(started)
++                    if self.rng.random() < 0.5:
++                        self.stop_flag.wait(self.rng.uniform(0.03, 0.2))
++                        mailbox.offer(dict(MODE))
++                        self.events += 1
++            elif self.path in ("drain", "tie"):
++                peek = mailbox.peek()
++                cooled = time.monotonic() - self.last_turn > 0.7        # let a mute window end now and then
++                if peek is not None and peek.get("announce") in self.by_text and self.rng.random() < 0.5:
++                    if self.path == "tie":
++                        self.loss.append((self.by_text[peek["announce"]], time.monotonic()))
++                        mailbox.offer(dict(MODE))
++                        self.events += 1
++                    elif cooled:
++                        self.loss.append((self.by_text[peek["announce"]], time.monotonic()))
++                        self.last_turn = time.monotonic()
++                        turn_event.push(delta_deg=50, received_at=self.last_turn)
++                        self.events += 1
++                elif cooled and self.rng.random() < (0.02 if self.path == "drain" else 0.03):
++                    self.last_turn = time.monotonic()
++                    turn_event.push(delta_deg=50, received_at=self.last_turn)   # a mute: keeps the slot occupied
++
++    def _starts(self):
++        out = []
++        try:
++            for line in self.rig.log_path.read_text().splitlines():
++                rec = json.loads(line)
++                if rec["ev"] == "start":
++                    out.append(rec)
++        except (OSError, ValueError):
++            pass
++        return out
++
++
++@pytest.mark.parametrize("path", ["cut", "drain", "tie", "off"])
++@pytest.mark.parametrize("batch", range((RUNS + BATCH - 1) // BATCH))
++def test_real_worker_randomised_runs_never_lose_double_or_cut_an_alert(rig, path, batch, capsys):
++    seeds = range(batch * BATCH, min(RUNS, (batch + 1) * BATCH))
++    total_events = 0
++    for seed in seeds:
++        rng = random.Random(1000 + seed)
++        r = rig(default=0.3, texts={"depth mode": 0.4, **{t: rng.choice([0.25, 0.35, 0.5]) for _, t, _ in SCALED}})
++        specs = list(SCALED) + ([ONCE] if seed % 2 == 0 else [])
++        by_text = {t: n for n, t, _ in specs}
++        loss_times, offers_off = [], []
++        r.start()
++        t0 = time.monotonic()
++        raised_at = {}
++        for name, text, interval in specs:
++            raised_at[name] = time.monotonic()
++            r.ud.alerts.raise_alert(name, text, interval=interval)
++        chaos = Chaos(r, path, by_text, rng, loss_times)
++        chaos.start()
++        t_end = t0 + 5.5
++        off_windows = []
++        while time.monotonic() < t_end:
++            time.sleep(rng.uniform(0.2, 0.7))
++            roll = rng.random()
++            if roll < 0.35:
++                r.ud.tts_queue.offer(dict(MODE))
++            elif roll < 0.7:
++                r.ud.tts_queue.offer(detection("person", "left"))
++            elif path == "off":
++                start = time.monotonic()
++                r.config.update(tts_enabled=False)
++                time.sleep(rng.uniform(0.4, 1.2))
++                r.config.update(tts_enabled=True)
++                off_windows.append((start, time.monotonic()))
++        chaos.stop_flag.set()
++        chaos.join(timeout=2)
++        end = time.monotonic()
++        r.stop()
++        total_events += chaos.events + len(off_windows)
++        try:
++            if path == "off":
++                # Alerts spoken while the switch was off would be a bug; the rest is checked as for any path.
++                for w0, w1 in off_windows:
++                    # An utterance in hand when the switch went off may finish, and may be followed
++                    # by the item that cut it (today's behaviour); nothing starts later than that.
++                    inside = [u for u in r.utterances() if u["text"] in by_text and w0 + 0.9 < u["start"] < w1 - 0.1]
++                    assert not inside, f"spoken with the switch off: {inside}"
++                # Dropped items count as delivered and leave no trace in the log, so the cadence
++                # cannot be checked from it; everything else can (no doubling, no cut by an alert,
++                # nothing overlapping), and every alert must be spoken again after the last switch-on.
++                check_real_log(r, specs, raised_at, end, loss_times, cadence=False)
++                for name, text, interval in specs:
++                    starts = [u["start"] for u in r.utterances() if u["text"] == text and not u["cut"]]
++                    if interval is not None and off_windows and off_windows[-1][1] < end - interval - 1.5:
++                        assert any(s > off_windows[-1][1] for s in starts), f"{name} never spoken after the switch came back"
++            else:
++                check_real_log(r, specs, raised_at, end, loss_times)
++        except AssertionError as e:
++            raise AssertionError(f"{path} seed {seed}: {e}") from None
++    capsys.readouterr()
++    assert total_events >= len(seeds), f"{path}: the forced loss path barely happened"
++    print(f"\n[T-00a] real worker, {path}, seeds {seeds.start}-{seeds.stop - 1}: {len(seeds)} runs, "
++          f"{total_events} forced loss events, no alert lost, doubled or cut by another alert")
++
++
++@pytest.mark.skipif(not os.environ.get("SV_REAL_CADENCE"), reason="opt-in (about 100 s): SV_REAL_CADENCE=1 PYTEST_TIMEOUT=300")
++def test_real_time_cadence_of_10_and_30_seconds_with_announcements_arriving_at_random(rig, capsys):
++    """The brief's real-time check: at least 3 repeats each, none skipped, none cut by the other alert."""
++    rng = random.Random(7)
++    r = rig(default=0.4, texts={"ten second alert": 1.2, "thirty second alert": 1.6, "depth mode": 0.8})
++    specs = [("a10", "ten second alert", 10.0), ("a30", "thirty second alert", 30.0)]
++    by_text = {t: n for n, t, _ in specs}
++    r.start()
++    t0 = time.monotonic()
++    raised_at = {}
++    for name, text, interval in specs:
++        raised_at[name] = time.monotonic()
++        r.ud.alerts.raise_alert(name, text, interval=interval)
++    loss_times = []
++    chaos = Chaos(r, "cut", by_text, rng, loss_times)
++    chaos.start()
++    t_end = t0 + 96.0
++    while time.monotonic() < t_end:
++        time.sleep(rng.uniform(1.0, 6.0))
++        roll = rng.random()
++        if roll < 0.3:
++            r.ud.tts_queue.offer(dict(MODE))
++        elif roll < 0.8:
++            r.ud.tts_queue.offer(detection("person", "left"))
++        elif roll < 0.9:
++            r.ud.turn_event.push(delta_deg=50, received_at=time.monotonic())
++    chaos.stop_flag.set()
++    chaos.join(timeout=2)
++    end = time.monotonic()
++    r.stop()
++    check_real_log(r, specs, raised_at, end, loss_times, late_tol=1.0)
++    for name, text, interval in specs:
++        delivered = [u["start"] for u in r.utterances() if u["text"] == text and not u["cut"]]
++        assert len(delivered) >= 4, f"{name}: {len(delivered)} utterances in 96 s (needs the first plus 3 repeats)"
++    capsys.readouterr()
++    print("\n[T-00a] real time: " + ", ".join(
++        f"{n} spoken {len([u for u in r.utterances() if u['text'] == t and not u['cut']])}x, "
++        f"{len([u for u in r.utterances() if u['text'] == t and u['cut']])} cut and repeated" for n, t, _ in specs))
++
++
++# ============================================================
++# Criterion 8, 10: the program path
++# ============================================================
++def _load_main(monkeypatch):
++    """main.py as if hailo_apps were not installed (same method as tests/test_main_startup.py)."""
++    for name in ("hailo_apps.python.core.common.hailo_logger", "hailo_apps.python.core.gstreamer.gstreamer_app"):
++        monkeypatch.setitem(sys.modules, name, None)
++    monkeypatch.setenv("GST_PLUGIN_FEATURE_RANK", os.environ.get("GST_PLUGIN_FEATURE_RANK", ""))
++    spec = importlib.util.spec_from_file_location("second_vision_main_t00a", SRC / "second_vision" / "main.py")
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++def test_the_user_data_main_builds_has_a_scheduler_on_the_speech_mailbox(monkeypatch):
++    if AlertScheduler is None:
++        pytest.fail("this tree has no alert scheduler (core/alerts.py)")
++    module = _load_main(monkeypatch)
++    ud = module.SecondVisionUserData(SystemConfig())
++    assert isinstance(ud.alerts, AlertScheduler)
++    ud.alerts.raise_alert("a", "x")
++    ud.alerts.poll()
++    assert ud.tts_queue.peek() == {"announce": "x"}, "the scheduler offers into a different mailbox than the TTS worker reads"
++
++
++def test_main_stops_with_exit_0_after_ctrl_c_and_starts_the_alert_worker(tmp_path):
++    """The real program path (--mock, a stub espeak, no device): start it, Ctrl+C it, time the exit."""
++    if AlertScheduler is None:
++        pytest.fail("this tree has no alert scheduler (core/alerts.py)")
++    bin_dir = tmp_path / "bin"
++    bin_dir.mkdir()
++    stub = bin_dir / "espeak-ng"
++    stub.write_text(STUB.format(python=sys.executable))
++    stub.chmod(0o755)
++    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}", PYTHONPATH=str(SRC), PYTHONUNBUFFERED="1",
++               ESPEAK_STUB_LOG=str(tmp_path / "e.log"), ESPEAK_STUB_CONFIG='{"default": 1.0}')
++    proc = subprocess.Popen([sys.executable, str(SRC / "second_vision" / "main.py"), "--mock"], env=env,
++                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=tmp_path)
++    ready = time.monotonic() + 60
++    out = ""
++    while time.monotonic() < ready and "Generators running" not in out:
++        line = proc.stdout.readline()
++        if not line and proc.poll() is not None:
++            break
++        out += line
++    assert "Alert worker started" in out, out[-800:]
++    time.sleep(2.5)                                  # let the mock detections reach the stub speaker
++    sent = time.monotonic()
++    proc.send_signal(signal.SIGINT)
++    try:
++        rest, _ = proc.communicate(timeout=10)
++    except subprocess.TimeoutExpired:
++        proc.kill()
++        pytest.fail("main() did not stop within 10 s of Ctrl+C")
++    took = time.monotonic() - sent
++    assert proc.returncode == 0, (proc.returncode, rest[-800:])
++    assert "[MAIN] Done." in rest
++    # Not 1 s: mock mode alone (the baseline, without the alert worker) takes 0.95 to 1.8 s here, depending
++    # on where the mock detection generator is in its 2 s sleep. The alert worker itself stops within
++    # 0.05 s (test_the_alert_worker_is_a_daemon_that_stops_within_a_quarter_second_of_shutdown).
++    assert took <= 2.6, f"stopped {took:.2f} s after Ctrl+C"
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-00a/tests/test_main_startup.py tests/test_main_startup.py
+--- .claude/baselines/T-00a/tests/test_main_startup.py	2026-10-17 17:11:40.897617015 +0800
++++ tests/test_main_startup.py	2026-10-17 19:49:48.118014681 +0800
+@@ -122,7 +122,7 @@
+ 
+     rec = main_mod.recorder
+     assert rec.mock_runs == 1 and rec.pipeline_runs == 0
+-    assert rec.threads == ["tts-worker", "serial-writer"]
++    assert rec.threads == ["tts-worker", "alert-scheduler", "serial-writer"]
+     assert rec.panel_readers == 1
+     assert "Running in MOCK mode" in capsys.readouterr().out
+ 
+@@ -143,7 +143,7 @@
+ 
+     rec = main_mod.recorder
+     assert rec.pipeline_runs == 1 and rec.mock_runs == 0
+-    assert rec.threads == ["tts-worker", "serial-writer"]
++    assert rec.threads == ["tts-worker", "alert-scheduler", "serial-writer"]
+     assert "MOCK" not in capsys.readouterr().out
+ 
+ 
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-00a/tests/uat/test_t00a_alert_loss_paths_virtual.py tests/uat/test_t00a_alert_loss_paths_virtual.py
+--- .claude/baselines/T-00a/tests/uat/test_t00a_alert_loss_paths_virtual.py	1970-01-01 08:00:00.000000000 +0800
++++ tests/uat/test_t00a_alert_loss_paths_virtual.py	2026-10-18 05:57:01.687099858 +0800
+@@ -0,0 +1,325 @@
++"""
++T-00a (repeating spoken system alerts), requirements REQ-CON-03 / REQ-CON-05 / REQ-CON-07 (cadence), the loss
++paths of the brief's criteria 5 and 6. Written by the Tester (tests/uat/); independent of the Developer's
++tests/test_alerts.py.
++
++There is no UAT case of its own. The task is the enabler for TC-022-002..006, TC-023-002/004, TC-024-002/003 and
++TC-025-002..006. Requirement text (REQUIREMENTS.md): REQ-CON-03 "the REQ-CON-02 alert repeats every 30 s while depth
++estimation is enabled ... said once while depth estimation is disabled, including when depth is switched off
++mid-run"; REQ-CON-05 "It repeats every 5 minutes"; REQ-CON-07 "It repeats every 10 seconds".
++
++What this file is: the "at least 50 randomised runs at unit level (virtual clock)" of the brief, per loss path
++(cut by a mode announcement, drained by a head turn, replaced by a tie, speech switch off). Level: unit.
++REAL: core/alerts.py AlertScheduler, core/priority.py PriorityMailbox (+ preempts()), core/turn_event.py is not
++needed. A MODEL (written by the Tester from reading workers/tts_worker.py, single-threaded, virtual time): the
++speech worker, built from the same calls the real worker makes: alerts.take() / alerts.drain() / alerts.finish(),
++the 0.5 s pace that an urgent pending item cuts short, the 1 s head-turn mute, the preempts() cut, the speech
++switch. The REAL tts_worker is exercised with >= 20 runs per path in test_t00a_alert_scheduler.py.
++The invariants are black-box over the utterance log, not over the scheduler's internals.
++"""
++from __future__ import annotations
++
++import contextlib
++import io
++import os
++import random
++import sys
++from pathlib import Path
++
++import pytest
++
++REPO = Path(__file__).resolve().parents[2]
++sys.path.insert(0, str(REPO / "src"))
++
++from second_vision.core.alerts import CUT, DROPPED, SPOKEN, AlertScheduler  # noqa: E402
++from second_vision.core.priority import PriorityMailbox, TIER_URGENT, item_tier, preempts  # noqa: E402
++
++DT = 0.05            # one scheduling step: the alert worker's tick; the real speech worker polls at 0.05 too
++SIM_SECONDS = 330.0  # 10 s, 30 s and 300 s alerts all repeat at least once
++MUTE = 1.0           # TURN_MUTE_SECONDS
++PACE = 0.5           # MIN_UTTERANCE_GAP
++PACE_TOL = 0.0       # extra allowance per hand-over; 0: a hand-over takes at most 2 steps (0.1 s)
++SPECS = {"ALERT a10": 10.0, "ALERT b30": 30.0, "ALERT c300": 300.0}
++
++
++def det(phrase, tier, priority):
++    return {"label": "person", "zone": "left", "confidence": 0.9, "priority": priority, "tier": tier,
++            "phrase": phrase}
++
++
++class Sim:
++    """Virtual-time model of tts_worker + alert_worker around the real PriorityMailbox and AlertScheduler."""
++
++    def __init__(self, seed: int, path: str):
++        self.rng = random.Random(seed)
++        self.path = path
++        self.t = 0.0
++        self.mb = PriorityMailbox()
++        self.alerts = AlertScheduler(self.mb, clock=lambda: self.t)
++        self.enabled = True
++        self.mute_until = 0.0
++        self.pace_until = 0.0
++        self.turn_pending = False
++        self.cur = None                  # dict: item, text, start, end
++        self.log = []                    # finished/cut utterances
++        self.dropped = {}                # text -> [take times] (speech switch off)
++        self.mutes = []                  # (start, end)
++        self.forced = 0
++        self.off_until = None
++        self.next_mode = self.rng.uniform(1.0, 5.0)
++        self.next_det = self.rng.uniform(0.2, 1.0)
++        self.cut_at = None               # path cut: when to inject the mode announcement
++        self.last_started_alert = None
++        self.rolled_start = None
++        self.n = 0
++
++    # --- the model of the speech worker -------------------------------------------------------------------
++    def _text(self, item):
++        return item["announce"] if "announce" in item else item["phrase"]
++
++    def _dur(self, item):
++        if "announce" in item:
++            return self.rng.uniform(0.8, 1.5) if item["announce"].startswith("ALERT") else self.rng.uniform(0.5, 1.0)
++        return self.rng.uniform(0.5, 1.5)
++
++    def _start(self, item):
++        self.cur = {"item": item, "text": self._text(item), "start": self.t, "end": self.t + self._dur(item)}
++        if self.cur["text"].startswith("ALERT"):
++            self.last_started_alert = self.t
++
++    def _close(self, outcome):
++        c = self.cur
++        self.log.append({"text": c["text"], "start": c["start"],
++                         "end": self.t if outcome == "cut" else c["end"], "outcome": "cut" if outcome == "cut" else "end"})
++
++    def _worker_step(self):
++        if self.cur is not None:                                 # _speak_interruptible
++            if self.t >= self.cur["end"]:
++                self._close("end")
++                item = self.cur["item"]
++                self.cur = None
++                self.alerts.finish(item, SPOKEN)
++                self.pace_until = self.t + PACE
++                return
++            pending = self.mb.peek()
++            if pending is not None and preempts(pending, self.cur["item"]):
++                old = self.cur["item"]
++                self._close("cut")
++                claimed = self.alerts.take()
++                self.cur = None
++                self.alerts.finish(old, CUT)
++                if claimed is not None:
++                    self._start(claimed)
++                else:
++                    self.pace_until = self.t + PACE
++            return
++        if self.t < self.pace_until:                             # _pace: an urgent pending item cuts the wait
++            pending = self.mb.peek()
++            if pending is not None and item_tier(pending) == TIER_URGENT:
++                self.pace_until = 0.0
++            else:
++                return
++        if self.turn_pending:                                    # _check_turn_mute: top of the outer loop
++            self.turn_pending = False
++            self.alerts.drain()
++            self.mute_until = self.t + MUTE
++            self.mutes.append((self.t, self.mute_until))
++        if self.t < self.mute_until:
++            return
++        item = self.alerts.take()
++        if item is None:
++            return
++        if not self.enabled:
++            self.alerts.finish(item, DROPPED)
++            if "announce" in item:
++                self.dropped.setdefault(item["announce"], []).append(self.t)
++            return
++        self._start(item)
++
++    # --- producers and the forced loss path ---------------------------------------------------------------
++    def _producers(self):
++        if self.t >= self.next_mode:
++            self.n += 1
++            self.mb.offer({"announce": f"MODE {self.n}"})
++            self.next_mode = self.t + self.rng.uniform(1.5, 6.0)
++        if self.t >= self.next_det:
++            self.n += 1
++            urgent = self.rng.random() < 0.15
++            self.mb.offer(det(f"DET {self.n}", "urgent" if urgent else "normal", self.rng.uniform(0.5, 3.0)))
++            self.next_det = self.t + self.rng.uniform(0.3, 2.0)
++
++    def _alert_in_slot(self):
++        it = self.mb.peek()
++        return it is not None and "announce" in it and it["announce"].startswith("ALERT")
++
++    def _inject(self):
++        p = self.path
++        if p == "cut":
++            if self.cur is not None and self.cur["text"].startswith("ALERT") and self.cut_at is None \
++                    and self.cur["start"] != self.rolled_start:
++                self.rolled_start = self.cur["start"]            # one roll per alert utterance
++                if self.rng.random() < 0.5:
++                    self.cut_at = self.t + self.rng.uniform(0.1, 0.5)
++            if self.cut_at is not None and self.t >= self.cut_at:
++                self.cut_at = None
++                if self.cur is not None and self.cur["text"].startswith("ALERT"):
++                    self.n += 1
++                    self.mb.offer({"announce": f"MODEX {self.n}"})
++                    self.forced += 1
++        elif p in ("drain", "tie"):
++            if self.rng.random() < 0.01:                         # background head turns, as a user turns the head
++                self.turn_pending = True
++            if self._alert_in_slot() and self.rng.random() < 0.5:
++                if p == "drain":
++                    self.turn_pending = True
++                else:
++                    self.n += 1
++                    self.mb.offer({"announce": f"MODEX {self.n}"})
++                self.forced += 1
++        elif p == "off":
++            if self.off_until is None and self.rng.random() < 0.01:
++                self.off_until = self.t + self.rng.uniform(0.3, 3.0)
++                self.enabled = False
++                self.forced += 1
++            elif self.off_until is not None and self.t >= self.off_until:
++                self.enabled = True
++                self.off_until = None
++
++    def run(self):
++        self.alerts.raise_alert("a", "ALERT a10", interval=10.0)
++        self.alerts.raise_alert("b", "ALERT b30", interval=30.0)
++        self.alerts.raise_alert("c", "ALERT c300", interval=300.0)
++        while self.t < SIM_SECONDS:
++            self.t += DT
++            self._producers()
++            self._inject()
++            self.alerts.poll()                                   # alert_worker
++            self._worker_step()                                  # tts_worker
++        self.enabled = True
++        if self.cur is not None:                                 # an utterance still under way at the end counts
++            self._close("end")
++            self.cur = None
++        return self
++
++
++def busy_time(utts, a, b):
++    segs = sorted((max(u["start"], a), min(u["end"], b)) for u in utts if u["end"] > a and u["start"] < b)
++    total, cur_end = 0.0, a
++    for s, e in segs:
++        s = max(s, cur_end)
++        if e > s:
++            total += e - s
++            cur_end = e
++    return total
++
++
++def invariants(sim: Sim, slack=0.3):
++    """Black box over the utterance log. 1: none overlap. 2: an alert utterance is never cut by an alert.
++    3: not doubled: consecutive deliveries of one alert >= interval - 0.1. 4: not lost: consecutive deliveries
++    <= interval + (time other speech and head-turn mutes took in between) + slack, and the last one not older
++    than that at the end. A take dropped by the speech switch counts as a delivery (brief criterion 6)."""
++    allu = sim.log
++    probs = []
++    for a, b in zip(allu, allu[1:]):
++        if a["end"] > b["start"] + 1e-6:
++            probs.append(f"overlap {a['text']} / {b['text']}")
++    for i, u in enumerate(allu):
++        if u["text"] in SPECS and u["outcome"] == "cut":
++            nxt = allu[i + 1] if i + 1 < len(allu) else None
++            if nxt is not None and nxt["text"] in SPECS:
++                probs.append(f"{u['text']} cut by alert {nxt['text']}")
++    t_end = sim.t
++    for text, iv in SPECS.items():
++        dels = sorted([u["start"] for u in allu if u["text"] == text and u["outcome"] == "end"]
++                      + sim.dropped.get(text, []))
++        if not dels:
++            probs.append(f"{text}: never delivered")
++            continue
++        for a, b in zip(dels, dels[1:]):
++            gap = b - a
++            if gap < iv - 0.1:
++                probs.append(f"{text}: doubled (gap {gap:.2f} < {iv})")
++            busy = busy_time(allu, a + iv, b)
++            mute = sum(max(0.0, min(e, b) - max(s, a + iv)) for s, e in sim.mutes)
++            hand = sum(1 for u in allu if a + iv - 1.5 <= u["start"] <= b)     # each hand-over costs <= 2 steps
++            if gap > iv + busy + mute + slack + 2 * DT * hand + PACE_TOL * hand:
++                probs.append(f"{text}: late (gap {gap:.2f}, interval {iv}, busy {busy:.2f}, mute {mute:.2f}, "
++                             f"{hand} utterances in between)")
++        last = dels[-1]
++        busy = busy_time(allu, last + iv, t_end)
++        mute = sum(max(0.0, min(e, t_end) - max(s, last + iv)) for s, e in sim.mutes)
++        hand = sum(1 for u in allu if last + iv - 1.5 <= u["start"] <= t_end)
++        if t_end - last > iv + busy + mute + slack + 2 * DT * hand + PACE_TOL * hand:
++            probs.append(f"{text}: silent at the end ({t_end - last:.2f} s since the last, interval {iv})")
++    return probs
++
++
++@pytest.mark.parametrize("path", ["cut", "drain", "tie", "off"])
++def test_req_con_03_loss_path_randomised_runs_virtual_clock(path, capsys):
++    """>= 50 randomised runs per loss path, 330 virtual seconds each, 10 s + 30 s + 300 s alerts raised together,
++    random mode announcements and detection phrases (normal and urgent) arriving, the path forced on purpose.
++    In none: an alert lost, doubled, or cut by another alert."""
++    runs = int(os.environ.get("T00A_VRUNS", "60"))
++    base = {"cut": 1, "drain": 2, "tie": 3, "off": 4}[path] * 10000
++    forced = cuts = drops = alert_utts = mutes = 0
++    failures = []
++    for seed in range(runs):
++        with contextlib.redirect_stdout(io.StringIO()):
++            sim = Sim(base + seed, path).run()
++        probs = invariants(sim)
++        forced += sim.forced
++        mutes += len(sim.mutes)
++        cuts += sum(1 for u in sim.log if u["text"] in SPECS and u["outcome"] == "cut")
++        drops += sum(len(v) for v in sim.dropped.values())
++        alert_utts += sum(1 for u in sim.log if u["text"] in SPECS)
++        if probs:
++            failures.append((seed, probs[:3]))
++    with capsys.disabled():
++        print(f"\n[tester-virtual] {path}: {runs} runs x {SIM_SECONDS:.0f} virtual s, forced loss events {forced}, "
++              f"alert utterances cut {cuts}, dropped by switch {drops}, head-turn mute windows {mutes}, alert utterances {alert_utts}, "
++              f"runs with a lost/doubled/cut alert: {len(failures)}")
++    assert not failures, failures[:3]
++    assert forced >= runs, "the loss path was not forced"
++    if path == "cut":
++        assert cuts >= runs, "alert utterances were not really cut"
++    if path == "off":
++        assert drops >= runs // 2, "the speech-switch-off path was not really exercised"
++
++
++class _CutForgotten(AlertScheduler):
++    """Mutant: an alert that was cut counts as delivered."""
++    def finish(self, item, outcome):
++        super().finish(item, SPOKEN if outcome == CUT else outcome)
++
++
++class _TieForgotten(AlertScheduler):
++    """Mutant: an alert item that was replaced in the slot is forgotten and counts as delivered."""
++    def poll(self):
++        with self._lock:
++            fl = self._flight
++            if fl is not None and not fl.speaking and self._mailbox.peek() is not fl.item:
++                fl.alert.pending = False
++                fl.alert.last_start = self._clock()
++                self._flight = None
++        super().poll()
++
++
++class _DropStorm(AlertScheduler):
++    """Mutant: an alert dropped because the speech switch is off is offered again at once (a storm)."""
++    def finish(self, item, outcome):
++        super().finish(item, CUT if outcome == DROPPED else outcome)
++
++
++@pytest.mark.parametrize("mutant,path", [(_CutForgotten, "cut"), (_TieForgotten, "tie"), (_DropStorm, "off")])
++def test_req_con_03_virtual_model_notices_a_broken_scheduler(mutant, path):
++    """Guard for the harness itself: the same runs must FAIL against a scheduler with one deliberate bug (the
++    invariants are not vacuous): a cut alert forgotten, a replaced alert forgotten, a dropped alert re-offered in
++    a storm. At least half of 20 runs must show it."""
++    bad = 0
++    for seed in range(20):
++        sim = Sim(90000 + seed, path)
++        sim.alerts = mutant(sim.mb, clock=lambda s=sim: s.t)
++        with contextlib.redirect_stdout(io.StringIO()):
++            sim.run()
++        bad += bool(invariants(sim))
++    assert bad >= 10, f"the model failed to notice {mutant.__name__} ({bad} of 20 runs)"
+diff -ruN -x __pycache__ -x '*.pyc' .claude/baselines/T-00a/tests/uat/test_t00a_alert_scheduler.py tests/uat/test_t00a_alert_scheduler.py
+--- .claude/baselines/T-00a/tests/uat/test_t00a_alert_scheduler.py	1970-01-01 08:00:00.000000000 +0800
++++ tests/uat/test_t00a_alert_scheduler.py	2026-10-18 07:33:51.501009883 +0800
+@@ -0,0 +1,1340 @@
++"""
++T-00a (repeating spoken system alerts), requirements REQ-CON-03, REQ-CON-05, REQ-CON-07, REQ-CON-11
++(cadence rule) and REQ-DTA-08 (stop in about 1 s). Written by the Tester (tests/uat/); independent of the
++Developer's tests/test_alerts*.py.
++
++There is no UAT case of its own. The task is the enabler for TC-022-002..006, TC-023-002/004,
++TC-024-002/003 and TC-025-002..006 (each alert's own task builds its wording and trigger). Requirement text
++quoted from docs/testing/REQUIREMENTS.md (via the brief):
++    REQ-CON-03: "the REQ-CON-02 alert repeats every 30 s while depth estimation is enabled on the controller
++                 board. It is said once while depth estimation is disabled, including when depth is switched
++                 off mid-run."
++    REQ-CON-05: "It repeats every 5 minutes."          REQ-CON-07: "It repeats every 10 seconds."
++    REQ-CON-11: "...the REQ-CON-10 pattern repeats every 30 s while object detection is enabled. It plays once
++                 while detection is disabled, including when detection is switched off mid-run."
++
++What is REAL in these tests: workers/tts_worker.py, core/priority.py PriorityMailbox, core/alerts.py
++AlertScheduler, workers/alert_worker.py, core/config.py SystemConfig, core/turn_event.py TurnEvent.
++What is a STAND-IN: the `espeak-ng` binary (a Python script first on PATH that records phrase, start and end
++time, and logs a "cut" when it gets SIGTERM). Level: mock-integration. Nothing here proves that the alert is
++heard through earphones.
++Clocks: cadence of 10 s and 30 s runs in REAL time. 300 s and the "several alerts for 5 minutes" runs use a
++clock injected into the scheduler (AlertScheduler(mailbox, clock)): a WarpClock (jumps forward on command) or a
++ScaledClock (runs K times faster than real time). Only the scheduler's clock is virtual; the speech worker, the
++mailbox and the stub run in real time.
++"""
++from __future__ import annotations
++
++import json
++import math
++import os
++import random
++import re
++import signal
++import subprocess
++import sys
++import threading
++import time
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++REPO = Path(__file__).resolve().parents[2]
++SRC = REPO / "src"
++BASELINE_SRC = REPO / ".claude" / "baselines" / "T-00a" / "src"
++sys.path.insert(0, str(SRC))
++
++from second_vision.core.alerts import AlertScheduler  # noqa: E402
++from second_vision.core.config import SystemConfig  # noqa: E402
++from second_vision.core.priority import PriorityMailbox  # noqa: E402
++from second_vision.core.turn_event import TurnEvent  # noqa: E402
++from second_vision.workers import tts_worker as tw  # noqa: E402
++from second_vision.workers.alert_worker import alert_worker  # noqa: E402
++
++BASE_PATH = os.environ.get("PATH", "")
++
++# The long real-time runs (about 17 minutes together) are OPT-IN so that `pytest tests/` stays fast:
++#     T00A_LONG=1 python -m pytest tests/uat/test_t00a_alert_scheduler.py -v -rA -s
++# The Tester's evidence runs set it. A skipped test is never a pass (docs/testing/reports/README.md).
++long_run = pytest.mark.skipif(os.environ.get("T00A_LONG") != "1",
++                              reason="long real-time run (opt-in): set T00A_LONG=1")
++
++STUB = '''#!{py} -S
++import json, os, signal, sys, time
++text = sys.argv[-1]
++def w(ev):
++    with open(os.environ["STUB_LOG"], "a") as f:
++        f.write(json.dumps({{"ev": ev, "text": text, "t": time.monotonic(), "pid": os.getpid(), "amp": (sys.argv[sys.argv.index("-a") + 1] if "-a" in sys.argv else None)}}) + "\\n")
++def term(*_):
++    w("cut")
++    os._exit(143)
++signal.signal(signal.SIGTERM, term)
++dur = 0.3
++try:
++    d = json.load(open(os.environ["STUB_DUR_FILE"]))
++    dur = d.get("default", dur)
++    for pre, v in d.get("prefix", {{}}).items():
++        if text.startswith(pre):
++            dur = v
++except Exception:
++    pass
++w("start")
++end = time.monotonic() + dur
++while time.monotonic() < end:
++    time.sleep(0.01)
++w("end")
++'''
++
++
++def det(phrase, tier="normal", priority=1.0):
++    """A detection item exactly as callbacks.py builds it (Rule 2 contract)."""
++    return {"label": "person", "zone": "left", "confidence": 0.9, "priority": priority, "tier": tier,
++            "phrase": phrase}
++
++
++def wait_until(pred, timeout, step=0.01):
++    end = time.monotonic() + timeout
++    while time.monotonic() < end:
++        v = pred()
++        if v:
++            return v
++        time.sleep(step)
++    return pred()
++
++
++class RecMailbox(PriorityMailbox):
++    """The real mailbox that also records every offer() and every successful take()."""
++
++    def __init__(self):
++        super().__init__()
++        self.offers = []
++        self.takes = []
++        self.config = None
++
++    def offer(self, item):
++        self.offers.append((time.monotonic(), item))
++        super().offer(item)
++
++    def take(self):
++        item = super().take()
++        if item is not None:
++            enabled = self.config.get("tts_enabled") if self.config is not None else True
++            self.takes.append((time.monotonic(), item, enabled))
++        return item
++
++
++class WarpClock:
++    """The scheduler's clock: real monotonic plus a skew that the test can push forward."""
++
++    def __init__(self):
++        self.skew = 0.0
++        self.hist = [(0.0, 0.0)]
++
++    def __call__(self):
++        return time.monotonic() + self.skew
++
++    def warp(self, dt):
++        self.skew += dt
++        self.hist.append((time.monotonic(), self.skew))
++
++    def virt(self, t_real):
++        s = 0.0
++        for tc, sk in self.hist:
++            if tc <= t_real:
++                s = sk
++        return t_real + s
++
++
++class ScaledClock:
++    """The scheduler's clock running K times faster than real time."""
++
++    def __init__(self, k):
++        self.k = k
++        self.t0 = time.monotonic()
++
++    def __call__(self):
++        return self.t0 + self.k * (time.monotonic() - self.t0)
++
++
++def _pid_alive(pid):
++    try:
++        with open(f"/proc/{pid}/stat") as f:
++            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
++    except OSError:
++        return False
++
++
++class Rig:
++    """Real tts_worker + PriorityMailbox + AlertScheduler + alert_worker on a stub espeak-ng."""
++
++    def __init__(self, tmp, monkeypatch, clock=None, default_dur=0.3, prefix_dur=None):
++        bindir = tmp / "bin"
++        bindir.mkdir(exist_ok=True)
++        self.log = tmp / "stub.log"
++        self.log.write_text("")
++        self.durf = tmp / "dur.json"
++        self.set_dur(default_dur, prefix_dur or {})
++        stub = bindir / "espeak-ng"
++        stub.write_text(STUB.format(py=sys.executable))
++        stub.chmod(0o755)
++        monkeypatch.setenv("PATH", str(bindir) + os.pathsep + BASE_PATH)
++        monkeypatch.setenv("STUB_LOG", str(self.log))
++        monkeypatch.setenv("STUB_DUR_FILE", str(self.durf))
++        self.mailbox = RecMailbox()
++        self.config = SystemConfig()
++        self.mailbox.config = self.config
++        self.clock = clock or time.monotonic
++        self.alerts = AlertScheduler(self.mailbox, self.clock)
++        self.ud = SimpleNamespace(tts_queue=self.mailbox, shutdown_event=threading.Event(),
++                                  turn_event=TurnEvent(), alerts=self.alerts)
++        self.threads = {}
++
++    def set_dur(self, default=0.3, prefix=None):
++        self.durf.write_text(json.dumps({"default": default, "prefix": prefix or {}}))
++
++    def start(self, tts=True, alert=True):
++        if tts:
++            self.threads["tts"] = threading.Thread(target=tw.tts_worker, args=(self.ud, self.config),
++                                                   daemon=True, name="tts")
++        if alert:
++            self.threads["alert"] = threading.Thread(target=alert_worker, args=(self.ud, self.config),
++                                                     daemon=True, name="alert")
++        for t in self.threads.values():
++            if not t.is_alive() and t.ident is None:
++                t.start()
++        return self
++
++    def stop(self, timeout=3.0):
++        t0 = time.monotonic()
++        self.ud.shutdown_event.set()
++        for t in self.threads.values():
++            t.join(timeout)
++        return time.monotonic() - t0
++
++    def alive(self):
++        return [n for n, t in self.threads.items() if t.is_alive()]
++
++    def events(self):
++        out = []
++        for line in self.log.read_text().splitlines():
++            try:
++                out.append(json.loads(line))
++            except ValueError:
++                pass
++        return out
++
++    def utts(self, text=None, startswith=None):
++        """Utterances recorded by the stub: dicts text/start/end/outcome ('end', 'cut' or 'running')."""
++        running, done = {}, []
++        for e in self.events():
++            if e["ev"] == "start":
++                running[e["pid"]] = {"text": e["text"], "start": e["t"], "end": None, "outcome": "running",
++                                     "pid": e["pid"], "amp": e.get("amp")}
++            else:
++                u = running.pop(e["pid"], None)
++                if u:
++                    u["end"], u["outcome"] = e["t"], e["ev"]
++                    done.append(u)
++        done.extend(running.values())
++        done.sort(key=lambda u: u["start"])
++        if text is not None:
++            done = [u for u in done if u["text"] == text]
++        if startswith is not None:
++            done = [u for u in done if u["text"].startswith(startswith)]
++        return done
++
++    def count(self, text):
++        return len(self.utts(text))
++
++    def orphans(self):
++        return [u["pid"] for u in self.utts() if u["outcome"] == "running" and _pid_alive(u["pid"])]
++
++    def kill_orphans(self):
++        for pid in self.orphans():
++            try:
++                os.kill(pid, signal.SIGKILL)
++            except OSError:
++                pass
++
++
++@pytest.fixture
++def mk(tmp_path, monkeypatch):
++    rigs = []
++
++    def make(**kw):
++        sub = tmp_path / f"r{len(rigs)}"
++        sub.mkdir()
++        r = Rig(sub, monkeypatch, **kw)
++        rigs.append(r)
++        return r
++
++    yield make
++    for r in rigs:
++        r.stop()
++        r.kill_orphans()
++
++
++def offered_alert_items(rig, prefix="ALERT"):
++    return [it for _, it in rig.mailbox.offers if "announce" in it and it["announce"].startswith(prefix)]
++
++
++def alert_take_times(rig, prefix="ALERT"):
++    return [(t, it, en) for t, it, en in rig.mailbox.takes if "announce" in it and it["announce"].startswith(prefix)]
++
++
++# =====================================================================================================
++# Criterion 1: spoken at once, then on the cadence (real time for 10 s and 30 s)
++# =====================================================================================================
++@pytest.mark.timeout(200)
++@long_run
++def test_req_con_07_and_req_con_03_cadence_10s_and_30s_together_in_real_time(mk):
++    """10 s and 30 s alerts raised together: at once (1 s), then start-to-start every N s +-1 s, each to its
++    end, never cut; ~95 s of real time (10 starts of the 10 s alert, 4 of the 30 s alert)."""
++    rig = mk(default_dur=0.4).start()
++    t0 = time.monotonic()
++    rig.alerts.raise_alert("ten", "ALERT ten", interval=10.0)
++    rig.alerts.raise_alert("thirty", "ALERT thirty", interval=30.0)
++    time.sleep(t0 + 94.5 - time.monotonic())
++    rig.stop()
++    ten, thirty = rig.utts("ALERT ten"), rig.utts("ALERT thirty")
++    print(f"[tester] 10 s alert: {len(ten)} utterances, 30 s alert: {len(thirty)} utterances")
++    assert len(ten) >= 10 and len(thirty) >= 4
++    assert ten[0]["start"] - t0 <= 1.0, "first utterance of the first alert not within 1 s of the raise"
++    assert thirty[0]["start"] - t0 <= 1.5, "second alert due at the same instant should follow the first within ~1.5 s"
++    worst = 0.0
++    for seq, interval in ((ten, 10.0), (thirty, 30.0)):
++        for a, b in zip(seq, seq[1:]):
++            gap = b["start"] - a["start"]
++            worst = max(worst, abs(gap - interval))
++            assert abs(gap - interval) <= 1.0, f"start-to-start {gap:.2f} s for an interval of {interval} s"
++        assert all(u["outcome"] == "end" for u in seq), "an alert utterance was cut with nothing to cut it"
++    print(f"[tester] worst deviation from the interval: {worst:.3f} s")
++    allu = rig.utts()
++    for a, b in zip(allu, allu[1:]):
++        assert a["end"] <= b["start"] + 0.02, "two utterances overlap"
++    for it in offered_alert_items(rig):
++        assert set(it.keys()) == {"announce"}, "queue item must be exactly {'announce': text}"
++    assert rig.alive() == [], "a worker thread did not stop"
++
++
++@pytest.mark.timeout(120)
++def test_req_con_05_cadence_300s_on_a_warped_clock(mk):
++    """The 5-minute alert (REQ-CON-05) on a WarpClock: spoken at once; not before 300 s; at 300 s +-1 s; 4 starts.
++    Only the scheduler's clock is virtual (stated in the module docstring)."""
++    clk = WarpClock()
++    rig = mk(clock=clk, default_dur=0.3).start()
++    t0 = time.monotonic()
++    rig.alerts.raise_alert("battery", "ALERT five minutes", interval=300.0)
++    assert wait_until(lambda: rig.count("ALERT five minutes") >= 1, 2.0), "not spoken within 2 s"
++    starts = [rig.utts("ALERT five minutes")[0]["start"]]
++    assert starts[0] - t0 <= 1.0
++    for n in (2, 3, 4):
++        # jump to 2 s (virtual) before due, then check it stays quiet, then let it fall due
++        elapsed_v = clk.virt(time.monotonic()) - clk.virt(starts[-1])
++        clk.warp(300.0 - 2.0 - elapsed_v)
++        time.sleep(0.6)
++        assert rig.count("ALERT five minutes") == n - 1, "spoken before its 300 s were up"
++        assert wait_until(lambda: rig.count("ALERT five minutes") >= n, 4.0), "not repeated when due"
++        starts.append(rig.utts("ALERT five minutes")[n - 1]["start"])
++    gaps = [clk.virt(b) - clk.virt(a) for a, b in zip(starts, starts[1:])]
++    print(f"[tester] 300 s alert, virtual start-to-start gaps: {[round(g, 2) for g in gaps]}")
++    assert all(abs(g - 300.0) <= 1.0 for g in gaps), gaps
++    assert wait_until(lambda: all(u["outcome"] != "running" for u in rig.utts("ALERT five minutes")), 3.0)
++    assert all(u["outcome"] == "end" for u in rig.utts("ALERT five minutes"))
++
++
++# =====================================================================================================
++# Criteria 2, 3: once, repeat off, repeat back on  (REQ-CON-03 / REQ-CON-11 cadence rule)
++# =====================================================================================================
++def test_req_con_03_once_alert_is_spoken_exactly_once(mk):
++    clk = WarpClock()
++    rig = mk(clock=clk).start()
++    rig.alerts.raise_alert("c", "ALERT once")
++    assert wait_until(lambda: rig.count("ALERT once") == 1, 2.0)
++    clk.warp(100000.0)
++    time.sleep(1.5)
++    assert rig.count("ALERT once") == 1
++    assert rig.alerts.is_raised("c")
++
++
++def test_req_con_03_repeat_off_after_it_was_spoken_is_not_spoken_again(mk):
++    clk = WarpClock()
++    rig = mk(clock=clk).start()
++    rig.alerts.raise_alert("c", "ALERT depth", interval=30.0)
++    assert wait_until(lambda: rig.count("ALERT depth") == 1, 2.0)
++    time.sleep(0.5)
++    rig.alerts.set_repeat("c", False)
++    clk.warp(200.0)
++    time.sleep(1.5)
++    assert rig.count("ALERT depth") == 1
++
++
++def test_req_con_03_repeat_off_before_the_first_utterance_finished_still_delivers_it_once(mk):
++    clk = WarpClock()
++    rig = mk(clock=clk, default_dur=1.5).start()
++    rig.alerts.raise_alert("c", "ALERT depth", interval=30.0)
++    assert wait_until(lambda: rig.utts("ALERT depth"), 2.0)
++    rig.alerts.set_repeat("c", False)                       # utterance is under way
++    assert wait_until(lambda: rig.utts("ALERT depth")[0]["outcome"] != "running", 4.0)
++    assert rig.utts("ALERT depth")[0]["outcome"] == "end", "the utterance under way was cut"
++    clk.warp(200.0)
++    time.sleep(1.5)
++    assert rig.count("ALERT depth") == 1
++
++
++def test_req_con_03_repeat_off_before_the_first_utterance_started_still_delivers_it_once(mk):
++    clk = WarpClock()
++    rig = mk(clock=clk, prefix_dur={"DET": 2.0}).start()
++    rig.mailbox.offer(det("DET busy phrase"))
++    assert wait_until(lambda: rig.utts("DET busy phrase"), 2.0)
++    rig.alerts.raise_alert("c", "ALERT depth", interval=30.0)
++    rig.alerts.set_repeat("c", False)                       # the alert has not even been offered yet
++    assert wait_until(lambda: rig.count("ALERT depth") == 1, 6.0), "the owed first utterance was lost"
++    clk.warp(200.0)
++    time.sleep(1.5)
++    assert rig.count("ALERT depth") == 1
++
++
++def test_req_con_03_repeat_back_on_resumes_the_cadence(mk):
++    """Literal reading (to report to the Lead): repeat back on while the alert is still raised resumes; when the
++    last utterance is more than N s ago it is spoken at once, then every N s."""
++    clk = WarpClock()
++    rig = mk(clock=clk).start()
++    rig.alerts.raise_alert("c", "ALERT depth", interval=30.0)
++    assert wait_until(lambda: rig.count("ALERT depth") == 1, 2.0)
++    rig.alerts.set_repeat("c", False)
++    clk.warp(100.0)
++    time.sleep(1.0)
++    assert rig.count("ALERT depth") == 1
++    rig.alerts.set_repeat("c", True)
++    assert wait_until(lambda: rig.count("ALERT depth") == 2, 2.0), "repeat back on did not resume"
++    s2 = rig.utts("ALERT depth")[1]["start"]
++    clk.warp(30.0 - 2.0 - (clk.virt(time.monotonic()) - clk.virt(s2)))
++    time.sleep(0.6)
++    assert rig.count("ALERT depth") == 2
++    assert wait_until(lambda: rig.count("ALERT depth") == 3, 4.0)
++
++
++def test_req_con_03_depth_switched_off_mid_run_speaks_once_via_callable(mk):
++    """The documented usage: repeat=lambda: config.get('depth_enabled'). Depth on: repeats; switched off mid-run:
++    no more; raised while depth already off: said once."""
++    clk = WarpClock()
++    rig = mk(clock=clk).start()
++    rig.alerts.raise_alert("c", "ALERT controller", interval=30.0,
++                           repeat=lambda: rig.config.get("depth_enabled"))
++    assert wait_until(lambda: rig.count("ALERT controller") == 1, 2.0)
++    clk.warp(31.0)
++    assert wait_until(lambda: rig.count("ALERT controller") == 2, 3.0)
++    rig.config.update(depth_enabled=False)                  # switched off mid-run
++    time.sleep(0.3)
++    clk.warp(500.0)
++    time.sleep(1.5)
++    assert rig.count("ALERT controller") == 2, "spoken after depth was switched off"
++    rig.alerts.raise_alert("d", "ALERT other", interval=30.0, repeat=lambda: rig.config.get("depth_enabled"))
++    assert wait_until(lambda: rig.count("ALERT other") == 1, 2.0)
++    clk.warp(500.0)
++    time.sleep(1.5)
++    assert rig.count("ALERT other") == 1, "raised while depth off must be said once"
++
++
++# =====================================================================================================
++# Criterion 4: cleared means stopped
++# =====================================================================================================
++def test_req_con_03_clear_stops_at_once_and_clear_of_unknown_does_nothing(mk):
++    clk = WarpClock()
++    rig = mk(clock=clk).start()
++    rig.alerts.raise_alert("c", "ALERT x", interval=30.0)
++    assert wait_until(lambda: rig.count("ALERT x") == 1, 2.0)
++    assert rig.alerts.clear("c") is True
++    assert rig.alerts.clear("c") is False
++    assert rig.alerts.clear("never-raised") is False
++    clk.warp(500.0)
++    time.sleep(1.5)
++    assert rig.count("ALERT x") == 1
++
++
++def test_req_con_03_clear_during_the_utterance_does_not_cut_it(mk):
++    clk = WarpClock()
++    rig = mk(clock=clk, default_dur=1.5).start()
++    rig.alerts.raise_alert("c", "ALERT x", interval=30.0)
++    assert wait_until(lambda: rig.utts("ALERT x"), 2.0)
++    assert rig.alerts.clear("c")
++    assert wait_until(lambda: rig.utts("ALERT x")[0]["outcome"] != "running", 4.0)
++    assert rig.utts("ALERT x")[0]["outcome"] == "end"
++    clk.warp(500.0)
++    time.sleep(1.5)
++    assert rig.count("ALERT x") == 1
++
++
++def test_req_con_03_clear_removes_the_queued_item_and_nothing_is_spoken(mk):
++    rig = mk().start()
++    rig.ud.turn_event.push(5, time.monotonic())             # head-turn mute: the worker consumes nothing for 1 s
++    time.sleep(0.15)
++    rig.alerts.raise_alert("c", "ALERT queued", interval=30.0)
++    assert wait_until(lambda: rig.mailbox.peek() is not None, 1.0), "alert never reached the slot"
++    assert rig.alerts.clear("c")
++    assert rig.mailbox.peek() is None, "queued item not removed on clear"
++    time.sleep(1.4)
++    assert rig.count("ALERT queued") == 0
++
++
++def test_req_con_03_clear_never_removes_an_item_that_is_not_the_alerts(mk):
++    rig = mk().start()
++    rig.ud.turn_event.push(5, time.monotonic())
++    time.sleep(0.15)
++    rig.alerts.raise_alert("c", "ALERT queued", interval=30.0)
++    assert wait_until(lambda: rig.mailbox.peek() is not None, 1.0)
++    mode = {"announce": "MODE depth mode"}
++    rig.mailbox.offer(mode)                                 # ties with the alert's item: replaces it
++    assert rig.mailbox.peek() is mode
++    assert rig.alerts.clear("c")
++    assert rig.mailbox.peek() is mode, "clear removed somebody else's item"
++    assert rig.alerts.clear("c") is False
++    assert rig.mailbox.peek() is mode, "clear of a not-raised alert touched the slot"
++    assert wait_until(lambda: rig.count("MODE depth mode") == 1, 3.0)
++    assert rig.count("ALERT queued") == 0
++
++
++# =====================================================================================================
++# Criterion 5: several alerts never cut or lose each other
++# =====================================================================================================
++def test_req_con_05_three_alerts_due_together_are_spoken_one_after_the_other_each_to_the_end(mk):
++    rig = mk(default_dur=0.6).start()
++    for n, iv in (("a", 10.0), ("b", 30.0), ("c", 300.0)):
++        rig.alerts.raise_alert(n, f"ALERT {n}", interval=iv)
++    assert wait_until(lambda: len(rig.utts(startswith="ALERT")) == 3
++                      and all(u["outcome"] != "running" for u in rig.utts(startswith="ALERT")), 6.0)
++    us = rig.utts(startswith="ALERT")
++    assert [u["text"] for u in us] == ["ALERT a", "ALERT b", "ALERT c"]
++    assert all(u["outcome"] == "end" for u in us)
++    assert all(a["end"] <= b["start"] + 0.02 for a, b in zip(us, us[1:]))
++
++
++def _busy_time(utts, a, b):
++    """Length of [a, b] covered by the union of the utterance intervals."""
++    segs = sorted((max(u["start"], a), min(u["end"] if u["end"] else b, b)) for u in utts
++                  if (u["end"] or b) > a and u["start"] < b)
++    total, cur_end = 0.0, a
++    for s, e in segs:
++        s = max(s, cur_end)
++        if e > s:
++            total += e - s
++            cur_end = e
++    return total
++
++
++def _union(windows):
++    out = []
++    for a, b in sorted(windows):
++        if out and a <= out[-1][1]:
++            out[-1] = (out[-1][0], max(out[-1][1], b))
++        else:
++            out.append((a, b))
++    return out
++
++
++def _overlap(windows, a, b):
++    return sum(max(0.0, min(e, b) - max(s, a)) for s, e in windows)
++
++
++def check_alert_invariants(rig, specs, t_end, mute_windows=(), k=1.0, slack=0.5, deliveries_extra=None,
++                           per_handover=0.15, t_raise=None):
++    """Black-box invariants over the stub's log. specs: {text: interval_virtual}. Times real; interval_r = iv/k.
++    1. serial: no two utterances overlap. 2. an alert utterance that was cut was cut by a NON-alert item
++    (never by another alert). 3. no doubling: consecutive deliveries of one alert >= interval_r - 0.2.
++    4. no loss: consecutive deliveries <= interval_r + busy time in between (+ head-turn mutes, as a UNION of the
++    windows) + slack + per_handover x (utterances in between: each hand-over costs the scheduler tick, the
++    worker poll and the stub's start-up), and the last one not older than that at the end of the run."""
++    allu = rig.utts()
++    mutes = _union(mute_windows)
++    probs = []
++    for a, b in zip(allu, allu[1:]):
++        if a["end"] is not None and a["end"] > b["start"] + 0.03:
++            probs.append(f"overlap {a['text']} / {b['text']}")
++    texts_alert = set(specs)
++    for i, u in enumerate(allu):
++        if u["text"] in texts_alert and u["outcome"] == "cut" and u["end"] < t_end - 1.0:
++            nxt = allu[i + 1] if i + 1 < len(allu) else None
++            if nxt is not None and nxt["text"] in texts_alert:
++                probs.append(f"alert {u['text']} cut by alert {nxt['text']}")
++    for text, iv in specs.items():
++        interval_r = iv / k
++        dels = [u["start"] for u in allu if u["text"] == text and u["outcome"] in ("end", "running")]
++        if deliveries_extra:
++            dels = sorted(dels + deliveries_extra.get(text, []))
++        if t_raise is not None:                              # the first utterance is due at the raise
++            first = dels[0] if dels else t_end
++            busy = _busy_time(allu, t_raise, first)
++            mute = _overlap(mutes, t_raise, first)
++            hand = sum(1 for u in allu if t_raise <= u["start"] <= first)
++            if first - t_raise > busy + mute + slack + per_handover * hand:
++                probs.append(f"{text}: first utterance late or never delivered (raise to first {first - t_raise:.2f} s, "
++                             f"busy {busy:.2f}, mute {mute:.2f})")
++            if not dels:
++                continue
++        for a, b in zip(dels, dels[1:]):
++            gap = b - a
++            if gap < interval_r - 0.2:
++                probs.append(f"{text}: doubled (gap {gap:.2f} < {interval_r:.2f})")
++            busy = _busy_time(allu, a + interval_r, b)
++            mute = _overlap(mutes, a + interval_r, b)
++            hand = sum(1 for u in allu if a + interval_r - 0.5 <= u["start"] <= b)
++            if gap > interval_r + busy + mute + slack + per_handover * hand:
++                probs.append(f"{text}: late (gap {gap:.2f}, interval {interval_r:.2f}, busy {busy:.2f}, "
++                             f"mute {mute:.2f}, {hand} utterances in between)")
++        if dels:
++            last = dels[-1]
++            busy = _busy_time(allu, last + interval_r, t_end)
++            mute = _overlap(mutes, last + interval_r, t_end)
++            hand = sum(1 for u in allu if last + interval_r - 0.5 <= u["start"] <= t_end)
++            if t_end - last > interval_r + busy + mute + slack + per_handover * hand:
++                probs.append(f"{text}: silent at the end (last {t_end - last:.2f} s ago, interval {interval_r:.2f})")
++        elif t_raise is None:
++            probs.append(f"{text}: never delivered")
++    return probs
++
++
++def _producers(rig, rng, stop, label="MODE", with_turns=False):
++    """Random mode announcements and detection phrases (both tiers) from a thread, like the real producers."""
++    log = {"mode": 0, "det": 0}
++
++    def run():
++        n = 0
++        while not stop.is_set():
++            stop.wait(rng.uniform(0.2, 1.3))
++            if stop.is_set():
++                break
++            n += 1
++            r = rng.random()
++            if r < 0.3:
++                rig.mailbox.offer({"announce": f"{label} {n}"})
++                log["mode"] += 1
++            else:
++                rig.mailbox.offer(det(f"DET {n}", tier="urgent" if r > 0.85 else "normal",
++                                      priority=rng.uniform(0.5, 3.0)))
++                log["det"] += 1
++
++    th = threading.Thread(target=run, daemon=True)
++    th.start()
++    return th, log
++
++
++@pytest.mark.timeout(240)
++@pytest.mark.parametrize("seed", [11, 12])
++@long_run
++def test_req_con_05_three_alerts_for_5_minutes_with_random_announcements_and_detections(mk, seed):
++    """10 s, 30 s and 300 s alerts raised at once on a ScaledClock (K=5: 330 virtual s in 66 real s) with random
++    mode announcements and detection phrases (normal and urgent) arriving; every alert utterance to its end or cut
++    only by a non-alert, never lost for the rest of the run, never doubled."""
++    k = 5.0
++    rng = random.Random(seed)
++    rig = mk(clock=ScaledClock(k), default_dur=0.3, prefix_dur={"DET": 0.4, "MODE": 0.35}).start()
++    stop = threading.Event()
++    t0 = time.monotonic()
++    specs = {"ALERT a10": 10.0, "ALERT b30": 30.0, "ALERT c300": 300.0}
++    for i, (t, iv) in enumerate(specs.items()):
++        rig.alerts.raise_alert(f"n{i}", t, interval=iv)
++    th, log = _producers(rig, rng, stop)
++    time.sleep(t0 + 330.0 / k - time.monotonic())
++    stop.set()
++    th.join(2)
++    t_end = time.monotonic()
++    rig.stop()
++    probs = check_alert_invariants(rig, specs, t_end, k=k, slack=0.5)
++    counts = {t: len(rig.utts(t)) for t in specs}
++    cuts = {t: sum(1 for u in rig.utts(t) if u["outcome"] == "cut") for t in specs}
++    print(f"[tester] seed {seed}: mode={log['mode']} det={log['det']} alert utterances={counts} cuts={cuts}")
++    assert not probs, probs
++    assert counts["ALERT a10"] >= 25 and counts["ALERT b30"] >= 9 and counts["ALERT c300"] >= 2
++
++
++# =====================================================================================================
++# Criterion 6: not lost  (deterministic forced paths, real worker)
++# =====================================================================================================
++def test_req_con_03_alert_cut_by_a_mode_announcement_is_spoken_again_after_it(mk):
++    rig = mk(default_dur=1.2, prefix_dur={"MODE": 0.4}).start()
++    rig.alerts.raise_alert("c", "ALERT x", interval=30.0)
++    assert wait_until(lambda: rig.utts("ALERT x"), 2.0)
++    time.sleep(0.3)
++    rig.mailbox.offer({"announce": "MODE depth mode"})
++    assert wait_until(lambda: len(rig.utts("ALERT x")) >= 2 and rig.utts("ALERT x")[-1]["outcome"] == "end", 6.0)
++    seq = [(u["text"], u["outcome"]) for u in rig.utts()]
++    assert seq == [("ALERT x", "cut"), ("MODE depth mode", "end"), ("ALERT x", "end")], seq
++
++
++def test_req_con_03_once_alert_cut_by_an_urgent_detection_is_spoken_again(mk):
++    rig = mk(default_dur=1.2, prefix_dur={"DET": 0.4}).start()
++    rig.alerts.raise_alert("c", "ALERT once")
++    assert wait_until(lambda: rig.utts("ALERT once"), 2.0)
++    time.sleep(0.3)
++    rig.mailbox.offer(det("DET urgent", tier="urgent"))
++    assert wait_until(lambda: len(rig.utts("ALERT once")) >= 2 and rig.utts("ALERT once")[-1]["outcome"] == "end", 6.0)
++    assert [u["outcome"] for u in rig.utts("ALERT once")] == ["cut", "end"]
++    time.sleep(1.0)
++    assert len(rig.utts("ALERT once")) == 2
++
++
++def test_req_con_03_head_turn_does_not_discard_a_waiting_alert_but_does_discard_others(mk):
++    rig = mk().start()
++    rig.ud.turn_event.push(5, time.monotonic())             # mute 1 s
++    time.sleep(0.15)
++    rig.alerts.raise_alert("c", "ALERT waits", interval=30.0)
++    assert wait_until(lambda: rig.mailbox.peek() is not None, 1.0)
++    rig.ud.turn_event.push(5, time.monotonic())             # a 2nd turn drains the slot
++    assert wait_until(lambda: rig.count("ALERT waits") >= 1, 4.0), "alert lost to the head-turn drain"
++    # today's behaviour for others: a detection and a mode announcement in the slot ARE drained
++    rig2 = mk().start()
++    rig2.ud.turn_event.push(5, time.monotonic())
++    time.sleep(0.15)
++    rig2.mailbox.offer(det("DET drained"))
++    rig2.ud.turn_event.push(5, time.monotonic())
++    time.sleep(0.2)
++    rig2.mailbox.offer({"announce": "MODE drained"})
++    rig2.ud.turn_event.push(5, time.monotonic())
++    time.sleep(2.0)
++    assert rig2.count("DET drained") == 0 and rig2.count("MODE drained") == 0
++
++
++def test_req_con_03_alert_replaced_in_the_slot_by_a_tie_is_spoken_after_the_replacement(mk):
++    rig = mk(prefix_dur={"MODE": 0.3}).start()
++    rig.ud.turn_event.push(5, time.monotonic())
++    time.sleep(0.15)
++    rig.alerts.raise_alert("c", "ALERT x", interval=30.0)
++    assert wait_until(lambda: rig.mailbox.peek() is not None, 1.0)
++    rig.mailbox.offer({"announce": "MODE depth mode"})
++    assert wait_until(lambda: rig.count("ALERT x") >= 1, 5.0), "replaced alert never spoken"
++    assert [u["text"] for u in rig.utts()] == ["MODE depth mode", "ALERT x"]
++
++
++def test_req_con_03_speech_switch_off_drops_the_alert_without_a_storm_and_repeats_when_on(mk):
++    clk = WarpClock()
++    rig = mk(clock=clk).start()
++    rig.config.update(tts_enabled=False)
++    rig.alerts.raise_alert("c", "ALERT x", interval=10.0)
++    time.sleep(2.0)
++    assert rig.count("ALERT x") == 0
++    assert len(alert_take_times(rig)) == 1, "alert re-offered in a storm while the speech switch is off"
++    rig.config.update(tts_enabled=True)
++    time.sleep(1.0)
++    assert rig.count("ALERT x") == 0, "a dropped utterance counts as delivered: no immediate re-offer"
++    clk.warp(11.0)
++    assert wait_until(lambda: rig.count("ALERT x") == 1, 3.0)
++
++
++def test_req_con_03_tts_worker_error_while_the_alert_is_in_flight_does_not_wedge_or_storm(mk, monkeypatch):
++    clk = WarpClock()
++    rig = mk(clock=clk).start()
++    real = tw._start_espeak
++    calls = {"n": 0}
++
++    def flaky(text, amplitude=100):
++        calls["n"] += 1
++        if calls["n"] == 1:
++            raise OSError("espeak exploded")
++        return real(text, amplitude)
++
++    monkeypatch.setattr(tw, "_start_espeak", flaky)
++    rig.alerts.raise_alert("c", "ALERT x", interval=10.0)
++    time.sleep(1.5)
++    assert len(alert_take_times(rig)) == 1 and rig.count("ALERT x") == 0, "storm or speech after the error"
++    clk.warp(11.0)                                          # next repeat tries again as normal
++    assert wait_until(lambda: rig.count("ALERT x") == 1, 3.0)
++    rig.mailbox.offer({"announce": "MODE still works"})
++    assert wait_until(lambda: rig.count("MODE still works") == 1, 3.0), "scheduler wedged the speech worker"
++
++
++# =====================================================================================================
++# Criterion 6/5: the loss paths, randomised, with the REAL worker (>= 20 runs per path)
++# =====================================================================================================
++def run_loss_path(mk, path, seed, real_seconds=6.0, k=8.0):
++    """One randomised run with the REAL tts_worker + stub. The loss path is forced ONCE per alert item (not
++    continuously), so the alerts still get a fair chance to be delivered."""
++    rng = random.Random(seed)
++    rig = mk(clock=ScaledClock(k), default_dur=0.25, prefix_dur={"MODE": 0.3, "DET": 0.3}).start()
++    stop = threading.Event()
++    specs = {"ALERT f10": 10.0, "ALERT g30": 30.0}
++    t_raise = time.monotonic()
++    rig.alerts.raise_alert("f", "ALERT f10", interval=10.0)
++    rig.alerts.raise_alert("g", "ALERT g30", interval=30.0)
++    prod, plog = _producers(rig, rng, stop, label="MODE")
++    mutes, forced, toggles = [], {"n": 0}, []
++    MUTE_SPAN = 1.0 + 0.5 + 0.4        # 1 s mute + a possible 0.5 s pace and a 0.4 s utterance before it is consumed
++
++    def alert_in_slot():
++        it = rig.mailbox.peek()
++        return it if (it is not None and "announce" in it and it["announce"].startswith("ALERT")) else None
++
++    def injector():
++        n = 0
++        last_take_seen = 0
++        seen_ids = set()
++        off_until = 0.0
++        while not stop.is_set():
++            time.sleep(0.003)
++            now = time.monotonic()
++            if path == "cut":
++                tk = alert_take_times(rig)
++                if len(tk) > last_take_seen:
++                    last_take_seen = len(tk)
++                    if rng.random() < 0.4:                      # cut the utterance that was just taken
++                        time.sleep(rng.uniform(0.03, 0.12))
++                        n += 1
++                        rig.mailbox.offer({"announce": f"MODEX {n}"})
++                        forced["n"] += 1
++            elif path in ("drain", "tie"):
++                if rng.random() < 0.0005:                       # a head turn now and then, as a user does
++                    rig.ud.turn_event.push(5, now)
++                    mutes.append((now, now + MUTE_SPAN))
++                it = alert_in_slot()
++                if it is not None and id(it) not in seen_ids:
++                    seen_ids.add(id(it))
++                    if rng.random() < 0.5:                      # force the loss path ONCE for this item
++                        if path == "drain":
++                            rig.ud.turn_event.push(5, time.monotonic())
++                            mutes.append((time.monotonic(), time.monotonic() + MUTE_SPAN))
++                        else:
++                            n += 1
++                            rig.mailbox.offer({"announce": f"MODEX {n}"})
++                        forced["n"] += 1
++            elif path == "off":
++                if now > off_until and rng.random() < 0.004:
++                    off_until = now + rng.uniform(0.3, 0.8)
++                    rig.config.update(tts_enabled=False)
++                    toggles.append(time.monotonic())
++                    forced["n"] += 1
++                elif off_until and now >= off_until:
++                    rig.config.update(tts_enabled=True)
++                    toggles.append(time.monotonic())
++                    off_until = 0.0
++        rig.config.update(tts_enabled=True)
++
++    inj = threading.Thread(target=injector, daemon=True)
++    inj.start()
++    time.sleep(real_seconds)
++    stop.set()
++    inj.join(2)
++    prod.join(2)
++    t_end = time.monotonic()
++    rig.stop()
++    extra, probs_taken = {}, []
++    # An alert item taken from the mailbox while the speech switch is ON must be followed by a stub utterance of
++    # the same text within 0.8 s (stub start-up included): otherwise it was discarded (head-turn drain, a lost
++    # item). Taken while the switch is OFF: dropped on purpose, counts as delivered (brief criterion 6).
++    starts = [[u["text"], u["start"], False] for u in rig.utts()]
++    for tt, it, en in alert_take_times(rig):
++        hit = next((x for x in starts if x[0] == it["announce"] and not x[2] and -0.05 <= x[1] - tt < 0.8), None)
++        if hit is not None:
++            hit[2] = True
++        elif not en:
++            extra.setdefault(it["announce"], []).append(tt + 0.08)
++        elif t_end - tt > 1.0 and not any(abs(tt - x) < 0.05 for x in toggles):
++            probs_taken.append(f"{it['announce']} taken at {tt - t_raise:.2f} s with speech on and never spoken")
++    probs = probs_taken + check_alert_invariants(rig, specs, t_end, mute_windows=mutes, k=k, slack=0.6,
++                                                 deliveries_extra=extra, t_raise=t_raise)
++    cuts = sum(1 for u in rig.utts(startswith="ALERT") if u["outcome"] == "cut")
++    drops = sum(len(v) for v in extra.values())
++    return probs, {"cuts": cuts, "forced": forced["n"], "dropped": drops, "mutes": len(mutes),
++                   "ticks": len(rig.utts(startswith="ALERT"))}
++
++
++@pytest.mark.timeout(900)
++@pytest.mark.parametrize("path", ["cut", "drain", "tie", "off"])
++@long_run
++def test_req_con_03_loss_path_randomised_runs_with_the_real_worker(mk, path):
++    """>= 20 randomised runs per loss path with the real tts_worker and the stub: no alert lost, doubled or cut
++    by another alert. The path is forced on purpose by an injector thread."""
++    runs = int(os.environ.get("T00A_RUNS", "20"))
++    total = {"cuts": 0, "forced": 0, "dropped": 0, "mutes": 0, "ticks": 0}
++    failures = []
++    for seed in range(runs):
++        probs, stats = run_loss_path(mk, path, 1000 * (1 + ["cut", "drain", "tie", "off"].index(path)) + seed)
++        for key in total:
++            total[key] += stats[key]
++        if probs:
++            failures.append((seed, probs))
++    print(f"[tester] loss path '{path}': {runs} runs, {total}")
++    assert not failures, failures[:3]
++    if path == "cut":
++        assert total["cuts"] >= runs, "the cut path was not really exercised"
++    if path == "off":
++        assert total["dropped"] >= runs // 2, "the speech-off path was not really exercised"
++    assert total["forced"] >= runs, "the loss path was not forced"
++
++
++# =====================================================================================================
++# Criterion 7: raise again
++# =====================================================================================================
++def test_req_con_03_raise_again_same_text_and_interval_changes_nothing(mk):
++    clk = WarpClock()
++    rig = mk(clock=clk).start()
++    for _ in range(300):
++        rig.alerts.raise_alert("c", "ALERT x", interval=30.0)
++        time.sleep(0.005)
++    time.sleep(1.0)
++    assert rig.count("ALERT x") == 1, "re-raising the same alert every loop produced extra utterances"
++    assert len(offered_alert_items(rig)) == 1
++    assert rig.alerts.raised() == ["c"]
++
++
++def test_req_con_03_raise_again_with_a_different_text_or_interval_replaces_it_without_a_second_copy(mk):
++    clk = WarpClock()
++    rig = mk(clock=clk).start()
++    rig.alerts.raise_alert("c", "ALERT old", interval=30.0)
++    assert wait_until(lambda: rig.count("ALERT old") == 1, 2.0)
++    rig.alerts.raise_alert("c", "ALERT new", interval=30.0)
++    assert wait_until(lambda: rig.count("ALERT new") == 1, 2.0), "replacement not spoken at once"
++    clk.warp(31.0)
++    assert wait_until(lambda: rig.count("ALERT new") == 2, 3.0)
++    time.sleep(0.5)
++    assert rig.count("ALERT old") == 1, "the old alert was spoken again"
++    assert rig.alerts.raised() == ["c"]
++    rig.alerts.raise_alert("c", "ALERT new", interval=10.0)  # interval change
++    assert wait_until(lambda: rig.count("ALERT new") == 3, 2.0)
++
++
++def test_req_con_03_replace_while_the_old_one_is_queued_pulls_the_old_item(mk):
++    rig = mk().start()
++    rig.ud.turn_event.push(5, time.monotonic())
++    time.sleep(0.15)
++    rig.alerts.raise_alert("c", "ALERT old", interval=30.0)
++    assert wait_until(lambda: rig.mailbox.peek() is not None, 1.0)
++    rig.alerts.raise_alert("c", "ALERT new", interval=30.0)
++    assert wait_until(lambda: rig.count("ALERT new") >= 1, 4.0)
++    assert rig.count("ALERT old") == 0, "the replaced alert's old item was spoken"
++
++
++# =====================================================================================================
++# Criterion 8: threading, API safety, shutdown
++# =====================================================================================================
++@pytest.mark.timeout(120)
++def test_req_dta_08_api_from_many_threads_never_blocks_and_ends_consistent(mk):
++    """12 threads x 2000 mixed raise/clear/set_repeat/is_raised/raised calls while the real workers run and the
++    stub is speaking: no exception, the slowest call is short, no leaked item, nothing is spoken after the last
++    clear."""
++    rig = mk(default_dur=0.2).start()
++    errs, slow = [], []
++    names = [f"n{i}" for i in range(6)]
++
++    def hammer(seed):
++        rng = random.Random(seed)
++        for _ in range(2000):
++            op = rng.random()
++            nm = rng.choice(names)
++            t = time.monotonic()
++            try:
++                if op < 0.4:
++                    rig.alerts.raise_alert(nm, f"ALERT {nm} {rng.randint(0, 2)}", interval=rng.choice([None, 0.5, 5.0]),
++                                           repeat=rng.choice([True, False, (lambda: True)]))
++                elif op < 0.65:
++                    rig.alerts.clear(nm)
++                elif op < 0.8:
++                    rig.alerts.set_repeat(nm, rng.random() < 0.5)
++                elif op < 0.9:
++                    rig.alerts.is_raised(nm)
++                else:
++                    rig.alerts.raised()
++            except Exception as e:  # noqa: BLE001
++                errs.append(repr(e))
++            slow.append(time.monotonic() - t)
++            if rng.random() < 0.05:
++                time.sleep(0.001)
++
++    ths = [threading.Thread(target=hammer, args=(i,), daemon=True) for i in range(12)]
++    t0 = time.monotonic()
++    for t in ths:
++        t.start()
++    for t in ths:
++        t.join(60)
++    assert not any(t.is_alive() for t in ths), "API call hung"
++    print(f"[tester] 24000 calls in {time.monotonic() - t0:.1f} s, slowest call {max(slow) * 1000:.1f} ms, "
++          f"p99 {sorted(slow)[int(len(slow) * 0.99)] * 1000:.2f} ms")
++    assert not errs, errs[:3]
++    assert max(slow) < 0.5, f"an API call took {max(slow):.3f} s"
++    for nm in names:
++        rig.alerts.clear(nm)
++    time.sleep(1.2)
++    n_before = len(rig.utts())
++    time.sleep(1.5)
++    assert len(rig.utts()) == n_before, "spoken after every alert was cleared"
++    assert rig.mailbox.peek() is None, "a scheduler item leaked in the slot after every alert was cleared"
++    assert rig.alerts.raised() == []
++    # still usable after the storm
++    rig.alerts.raise_alert("after", "ALERT after")
++    assert wait_until(lambda: rig.count("ALERT after") == 1, 3.0)
++
++
++def test_req_dta_08_raise_clear_storm_one_name_ends_in_the_last_state(mk):
++    rig = mk(default_dur=0.15).start()
++    for i in range(500):
++        rig.alerts.raise_alert("c", "ALERT storm", interval=0.5)
++        if i % 3 == 0:
++            rig.alerts.clear("c")
++        time.sleep(0.003)
++    rig.alerts.raise_alert("c", "ALERT final", interval=5.0)
++    assert wait_until(lambda: rig.count("ALERT final") == 1, 3.0)
++    rig.alerts.clear("c")
++    time.sleep(1.0)
++    n = len(rig.utts())
++    time.sleep(1.2)
++    assert len(rig.utts()) == n and rig.mailbox.peek() is None
++    allu = rig.utts()
++    assert all(a["end"] <= b["start"] + 0.03 for a, b in zip(allu, allu[1:]))
++
++
++def test_req_dta_08_the_alert_worker_checks_shutdown_within_0_25_s_when_idle_and_with_alerts_raised(mk):
++    worst = 0.0
++    for raised in (False, True):
++        for _ in range(5):
++            rig = mk(default_dur=0.2).start()
++            if raised:
++                rig.alerts.raise_alert("a", "ALERT a", interval=10.0)
++                rig.alerts.raise_alert("b", "ALERT b", interval=30.0)
++                time.sleep(0.1)
++            t = time.monotonic()
++            rig.ud.shutdown_event.set()
++            rig.threads["alert"].join(2.0)
++            worst = max(worst, time.monotonic() - t)
++            assert not rig.threads["alert"].is_alive()
++            rig.stop()
++    print(f"[tester] alert worker stop time, worst of 10: {worst * 1000:.0f} ms")
++    assert worst <= 0.25
++    assert rig.threads["alert"].daemon
++
++
++def test_req_dta_08_stop_while_an_alert_is_being_spoken_ends_both_workers_and_the_process_quickly(mk):
++    rig = mk(default_dur=5.0).start()
++    rig.alerts.raise_alert("a", "ALERT long", interval=30.0)
++    assert wait_until(lambda: rig.utts("ALERT long"), 2.0)
++    elapsed = rig.stop()
++    print(f"[tester] stop while speaking: {elapsed * 1000:.0f} ms")
++    assert rig.alive() == []
++    assert elapsed <= 1.0
++    time.sleep(0.3)
++    assert rig.orphans() == [], "stub espeak process still running after shutdown"
++
++
++def test_req_dta_08_raise_from_inside_a_repeat_callback_and_a_gst_style_thread_does_not_deadlock(mk):
++    clk = WarpClock()
++    rig = mk(clock=clk).start()
++    seen = {"n": 0}
++
++    def cb():
++        seen["n"] += 1
++        rig.alerts.raise_alert("child", "ALERT child")     # re-entrancy: the callable calls the API
++        rig.alerts.set_repeat("child", True)
++        rig.alerts.is_raised("parent")
++        rig.alerts.raised()
++        if seen["n"] == 3:
++            rig.alerts.clear("child")
++        return True
++
++    rig.alerts.raise_alert("parent", "ALERT parent", interval=30.0, repeat=cb)
++    assert wait_until(lambda: rig.count("ALERT parent") == 1 and seen["n"] >= 3, 3.0), "callback re-entrancy hung"
++    assert rig.threads["alert"].is_alive()
++    # a GStreamer-callback style caller while the worker is speaking
++    rig.set_dur(2.0)
++    rig.alerts.raise_alert("late", "ALERT late")
++    t = time.monotonic()
++    done = []
++    th = threading.Thread(target=lambda: (rig.alerts.raise_alert("cb", "ALERT cb"), done.append(time.monotonic() - t)))
++    th.start()
++    th.join(1.0)
++    assert done and done[0] < 0.05, "raise_alert blocked the caller"
++
++
++def test_req_dta_08_a_repeat_function_that_raises_keeps_the_last_value_and_does_not_hurt_other_alerts(mk):
++    clk = WarpClock()
++    rig = mk(clock=clk).start()
++    state = {"n": 0}
++
++    def flaky():
++        state["n"] += 1
++        if state["n"] > 2:
++            raise RuntimeError("boom")
++        return True
++
++    rig.alerts.raise_alert("bad", "ALERT bad", interval=30.0, repeat=flaky)
++    rig.alerts.raise_alert("good", "ALERT good", interval=30.0)
++    assert wait_until(lambda: rig.count("ALERT bad") == 1 and rig.count("ALERT good") == 1, 3.0)
++    clk.warp(31.0)
++    assert wait_until(lambda: rig.count("ALERT good") == 2 and rig.count("ALERT bad") == 2, 3.0), \
++        "a repeat function that raises stopped the repeat or the other alert"
++    assert rig.threads["alert"].is_alive()
++
++
++def test_req_dta_08_a_blocking_repeat_function_stalls_all_alerts_and_the_stop(mk):
++    """LIMIT, not a requirement of the brief: one blocking repeat callable blocks the one scheduler thread. Records
++    how long the other alert and the stop are delayed (reported by the Tester)."""
++    rig = mk().start()
++    gate = threading.Event()
++    rig.alerts.raise_alert("slow", "ALERT slow", interval=30.0, repeat=lambda: (gate.wait(1.5), True)[1])
++    time.sleep(0.2)
++    t = time.monotonic()
++    rig.alerts.raise_alert("other", "ALERT other")
++    assert wait_until(lambda: rig.count("ALERT other") == 1, 6.0)
++    delay = rig.utts("ALERT other")[0]["start"] - t
++    t = time.monotonic()
++    rig.ud.shutdown_event.set()
++    rig.threads["alert"].join(5.0)
++    stop = time.monotonic() - t
++    gate.set()
++    print(f"[tester] with a repeat callable that blocks 1.5 s: other alert delayed {delay:.2f} s, alert worker stop {stop:.2f} s")
++    assert not rig.threads["alert"].is_alive()
++
++
++def test_req_con_07_a_tiny_interval_is_accepted_and_monopolises_the_channel(mk):
++    """LIMIT, recorded: interval=0.01 is accepted (no minimum), the alert then speaks back to back and a waiting
++    detection phrase is replaced by it again and again. A caller bug, not a requirement; reported."""
++    rig = mk(default_dur=0.15, prefix_dur={"DET": 0.15}).start()
++    rig.alerts.raise_alert("c", "ALERT tiny", interval=0.01)
++    for i in range(10):
++        time.sleep(0.4)
++        rig.mailbox.offer(det(f"DET {i}"))
++    time.sleep(0.5)
++    n_alert, n_det = rig.count("ALERT tiny"), len(rig.utts(startswith="DET"))
++    rig.alerts.clear("c")
++    print(f"[tester] interval=0.01 s over 4.5 s: {n_alert} alert utterances, {n_det} detection phrases spoken of 10 offered")
++    allu = rig.utts()
++    assert all(a["end"] <= b["start"] + 0.03 for a, b in zip(allu, allu[1:])), "overlap"
++
++
++@pytest.mark.parametrize("bad", [0, -1, float("nan"), float("inf"), "30", -0.5])
++def test_req_con_03_invalid_intervals_are_refused_with_value_error(bad):
++    a = AlertScheduler(PriorityMailbox())
++    with pytest.raises(ValueError):
++        a.raise_alert("x", "text", interval=bad)
++    assert a.raised() == []
++
++
++# =====================================================================================================
++# Criterion 9: nothing else changes (real worker, scheduler present and idle)
++# =====================================================================================================
++def test_t00a_criterion_9_detection_phrase_mode_announcement_volume_switch_mute_unchanged_with_scheduler_idle(mk):
++    """Brief criterion 9 (no workbook case): a detection phrase, an urgent cut, a mode announcement, the volume
++    knob (espeak -a), the speech switch and the head-turn mute behave as before with the scheduler running idle."""
++    rig = mk(default_dur=1.0, prefix_dur={"MODE": 0.3, "DET": 1.0}).start()
++    rig.mailbox.offer(det("DET one"))                       # normal detection, spoken to the end
++    assert wait_until(lambda: rig.utts("DET one"), 2.0)
++    time.sleep(0.2)
++    rig.mailbox.offer({"announce": "MODE depth mode"})      # announcement cuts the detection phrase
++    assert wait_until(lambda: len(rig.utts()) >= 2 and rig.utts()[-1]["outcome"] == "end", 4.0)
++    assert [(u["text"], u["outcome"]) for u in rig.utts()] == [("DET one", "cut"), ("MODE depth mode", "end")]
++    rig.config.update(tts_volume=0.0)                       # volume knob: espeak -a 10 (floor)
++    rig.mailbox.offer(det("DET quiet"))
++    assert wait_until(lambda: rig.utts("DET quiet"), 3.0)
++    assert rig.utts("DET quiet")[0]["amp"] == "10", "volume knob at 0 must give espeak -a 10"
++    assert rig.utts("DET one")[0]["amp"] == "100"
++    rig.config.update(tts_enabled=False)                    # speech switch: dropped
++    n = len(rig.utts())
++    time.sleep(1.5)
++    rig.mailbox.offer(det("DET off"))
++    time.sleep(1.0)
++    assert len(rig.utts()) == n
++    rig.config.update(tts_enabled=True)
++    rig.ud.turn_event.push(5, time.monotonic())             # head-turn mute drains the slot
++    time.sleep(0.1)
++    rig.mailbox.offer(det("DET muted"))
++    rig.ud.turn_event.push(5, time.monotonic())
++    time.sleep(1.5)
++    assert rig.count("DET muted") == 0
++    assert rig.alerts.raised() == [] and rig.mailbox.peek() is None
++
++
++# =====================================================================================================
++# Criterion 10: the documented usage runs as written
++# =====================================================================================================
++def test_req_con_03_the_module_docstring_usage_block_runs_as_written():
++    import second_vision.core.alerts as alerts_mod
++    doc = alerts_mod.__doc__
++    block = doc.split("Usage", 1)[1].split("::", 1)[1].split("What it does", 1)[0]
++    code = "\n".join(line[4:] if line.startswith("    ") else line for line in block.splitlines())
++    ud = SimpleNamespace(alerts=AlertScheduler(PriorityMailbox()))
++    ns = {"user_data": ud, "config": SystemConfig()}
++    exec(compile(code, "<docstring>", "exec"), ns)          # noqa: S102
++    assert ud.alerts.raised() == ["battery-low", "camera-lost"], ud.alerts.raised()
++    assert "alerts.set_repeat" in doc and "alerts.clear" in doc
++
++
++# =====================================================================================================
++# Worst-case delay "raised -> spoken" under continuous detection speech (Amendment A, point 4)
++# =====================================================================================================
++def measure_delays(mk, period, tier, n=8, det_dur=1.2, seed=5, give_up=20.0):
++    rig = mk(default_dur=0.3, prefix_dur={"DET": det_dur}).start()
++    rng = random.Random(seed)
++    stop = threading.Event()
++
++    def stream():
++        i = 0
++        while not stop.is_set():
++            i += 1
++            rig.mailbox.offer(det(f"DET {i}", tier=tier, priority=1.0))
++            stop.wait(period)
++
++    th = threading.Thread(target=stream, daemon=True)
++    th.start()
++    time.sleep(1.0)
++    delays = []
++    for i in range(n):
++        time.sleep(rng.uniform(0.2, 2.5))
++        t = time.monotonic()
++        rig.alerts.raise_alert(f"d{i}", f"ALERT d{i}")
++        ok = wait_until(lambda: any(u["outcome"] == "end" for u in rig.utts(f"ALERT d{i}")), give_up, step=0.02)
++        delays.append(([u for u in rig.utts(f"ALERT d{i}") if u["outcome"] == "end"][0]["start"] - t)
++                      if ok else float("inf"))
++        rig.alerts.clear(f"d{i}")
++    stop.set()
++    th.join(2)
++    return delays
++
++
++def _report(label, delays):
++    fin = sorted(d for d in delays if math.isfinite(d))
++    med = f"{fin[len(fin) // 2]:.2f} s" if fin else "none"
++    mx = f"{max(delays):.2f} s" if fin and len(fin) == len(delays) else "never (not heard to the end within the wait)"
++    print(f"[tester] delay raised->spoken, {label}: n={len(delays)} median={med} max={mx} "
++          f"not heard={sum(1 for d in delays if not math.isfinite(d))}")
++
++
++FINDING_URGENT = ("FINDING F-1 (Tester, T-00a): with a sustained stream of URGENT-tier detections the alert is never "
++                  "heard to the end: the scheduler waits for the worker to be idle, and an alert it does get in is cut "
++                  "again by the next urgent detection (priority.preempts(): any urgent item preempts anything). "
++                  "strict xfail: when it is fixed this test turns into a failure, remove the marker then.")
++
++
++@pytest.mark.timeout(240)
++@long_run
++def test_req_con_03_worst_case_delay_under_continuous_normal_detection_speech(mk):
++    """Amendment A item 4: normal-tier detection phrases (1.2 s) offered every 0.1 s for the whole test; 8 alerts
++    raised at random moments. Raised -> heard to the end must be <= 3 s (the wait for the phrase in progress)."""
++    d = measure_delays(mk, period=0.1, tier="normal")
++    _report("continuous normal-tier detections every 0.1 s (phrase 1.2 s)", d)
++    assert max(d) <= 3.0, d
++
++
++@pytest.mark.timeout(240)
++@pytest.mark.xfail(strict=True, reason=FINDING_URGENT)
++@long_run
++def test_req_con_03_worst_case_delay_under_urgent_detections_that_leave_gaps(mk):
++    """Urgent detections every 1.5 s, phrase 1.2 s (a 0.3 s gap between phrases): the alert (0.3 s stub utterance)
++    is offered in the gap and cut by the next urgent detection, every time."""
++    d = measure_delays(mk, period=1.5, tier="urgent", n=3, give_up=8.0)
++    _report("urgent detections every 1.5 s (phrase 1.2 s: finishes before the next)", d)
++    assert max(d) <= 3.0, d
++
++
++@pytest.mark.timeout(240)
++@pytest.mark.xfail(strict=True, reason=FINDING_URGENT)
++@pytest.mark.parametrize("period", [0.8, 0.3, 0.1])
++@long_run
++def test_req_con_03_delay_under_urgent_detections_that_cut_each_other(mk, period):
++    """Urgent detections arriving faster than a phrase lasts cut each other in the speech worker (today's
++    preemption). The worker is then never idle and the alert is never offered (0.1 s = one offer per frame, which is
++    what the detection callback does for an urgent object that stays in view)."""
++    d = measure_delays(mk, period=period, tier="urgent", n=3, give_up=8.0)
++    _report(f"urgent detections every {period} s (phrase 1.2 s: each cuts the previous)", d)
++    assert max(d) <= 3.0, d
++
++
++# =====================================================================================================
++# The real program path: main.py --mock (criterion 8, REQ-DTA-08)
++# =====================================================================================================
++RUNNER = '''
++import json, runpy, sys, threading, time
++sys.path.insert(0, {src!r})
++rec, inst = [], []
++_init = threading.Thread.__init__
++def init(self, *a, **k):
++    _init(self, *a, **k)
++    rec.append((self.name, self.daemon))
++threading.Thread.__init__ = init
++import second_vision.core.alerts as A
++_ai = A.AlertScheduler.__init__
++def ainit(self, *a, **k):
++    _ai(self, *a, **k)
++    inst.append(self)
++A.AlertScheduler.__init__ = ainit
++def raiser():
++    while not inst:
++        time.sleep(0.05)
++    inst[0].raise_alert("runner", "ALERT from main path", interval=3.0)
++threading.Thread(target=raiser, daemon=True).start()
++sys.argv = [{main!r}, "--mock"]
++try:
++    runpy.run_path({main!r}, run_name="__main__")
++finally:
++    json.dump(rec, open({out!r}, "w"))
++'''
++
++
++def _run_main(tmp, src_dir, py, with_runner, ctrl_c_after=7.5):
++    """Start main.py --mock with the stub espeak first on PATH, Ctrl+C after a while; return stop seconds."""
++    d = tmp
++    d.mkdir(exist_ok=True)
++    bindir = d / "bin"
++    bindir.mkdir(exist_ok=True)
++    log = d / "stub.log"
++    log.write_text("")
++    (d / "dur.json").write_text(json.dumps({"default": 0.3, "prefix": {}}))
++    stub = bindir / "espeak-ng"
++    stub.write_text(STUB.format(py=sys.executable))
++    stub.chmod(0o755)
++    env = dict(os.environ, PATH=str(bindir) + os.pathsep + BASE_PATH, STUB_LOG=str(log),
++               STUB_DUR_FILE=str(d / "dur.json"), PYTHONUNBUFFERED="1")
++    env.pop("DISPLAY", None)
++    main_py = src_dir / "second_vision" / "main.py"
++    out = d / "threads.json"
++    if with_runner:
++        script = d / "runner.py"
++        script.write_text(RUNNER.format(src=str(src_dir), main=str(main_py), out=str(out)))
++        cmd = [py, str(script)]
++    else:
++        cmd = [py, str(main_py), "--mock"]
++    p = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=d)
++    time.sleep(ctrl_c_after)
++    t = time.monotonic()
++    p.send_signal(signal.SIGINT)
++    try:
++        output, _ = p.communicate(timeout=15)
++    except subprocess.TimeoutExpired:
++        p.kill()
++        output, _ = p.communicate()
++        return None, -9, output, log, out
++    return time.monotonic() - t, p.returncode, output, log, out
++
++
++@pytest.mark.timeout(120)
++def test_req_dta_08_main_mock_starts_the_alert_worker_speaks_an_alert_and_stops_with_exit_0(tmp_path):
++    stop, rc, output, log, out = _run_main(tmp_path / "new", SRC, sys.executable, with_runner=True, ctrl_c_after=9.0)
++    threads = dict(json.loads(out.read_text()))
++    texts = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
++    starts = [e["t"] for e in texts if e["ev"] == "start" and e["text"] == "ALERT from main path"]
++    print(f"[tester] main.py --mock: exit {rc}, stop {stop:.2f} s, alert spoken {len(starts)}x, "
++          f"alert thread daemon={threads.get('alert-scheduler')}")
++    assert rc == 0, output[-500:]
++    assert "[MAIN] Alert worker started" in output and "[MAIN] Done." in output
++    assert threads.get("alert-scheduler") is True, "alert-scheduler thread missing or not a daemon"
++    assert len(starts) >= 2, "the alert raised in the real program was not spoken (twice)"
++    assert all(abs((b - a) - 3.0) <= 1.0 for a, b in zip(starts, starts[1:])), starts
++
++
++@pytest.mark.timeout(600)
++@pytest.mark.skipif(not BASELINE_SRC.exists(), reason="the T-00a baseline copy is not present")
++@long_run
++def test_req_dta_08_the_alert_worker_adds_nothing_to_the_stop_time_of_main_mock(tmp_path):
++    """Ctrl+C at six phases of the mock generator's 2 s sleep, the baseline and the new tree at each phase: the
++    stop time depends on the phase (mock/ is out of scope), so compare PAIRS. The alert worker must add nothing."""
++    new, base = [], []
++    phases = [2.3, 2.7, 3.1, 3.5, 3.9, 4.3]
++    for i, ph in enumerate(phases):
++        s, rc, *_ = _run_main(tmp_path / f"n{i}", SRC, sys.executable, with_runner=False, ctrl_c_after=ph)
++        assert rc == 0
++        new.append(s)
++        s, rc, *_ = _run_main(tmp_path / f"b{i}", BASELINE_SRC, sys.executable, with_runner=False, ctrl_c_after=ph)
++        assert rc == 0
++        base.append(s)
++    print(f"[tester] Ctrl+C at {phases} s after the start; stop seconds, baseline: {[round(x, 2) for x in base]}")
++    print(f"[tester] stop seconds, with the alert worker (same phases):          {[round(x, 2) for x in new]}")
++    print(f"[tester] difference new - baseline per phase: {[round(n - b, 2) for n, b in zip(new, base)]}")
++    assert all(abs(n - b) <= 0.5 for n, b in zip(new, base)), (base, new)
++    assert sum(new) / len(new) <= sum(base) / len(base) + 0.2

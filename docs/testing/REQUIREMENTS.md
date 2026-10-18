@@ -539,12 +539,40 @@ Links as configured in `scripts/sv-main.sh`:
 - control panel: `/dev/ttyAMA3`
 - camera and earphones: USB
 
-What's built today:
+What's built today (2026-10-18):
 - Link-down and link-up detection for the glasses ESP32 (`workers/serial_worker.py`).
 - Detection of 30 s of panel silence (`workers/config_reader.py`, log only).
-- None of the spoken alerts, alert patterns or camera fallback below exist yet.
+- The repeating spoken-alert scheduler (`core/alerts.py`, T-00a) and the camera no-crash core
+  (T-03a, T-03b). The camera's spoken alert is in work (T-03c1). The vibration patterns and the
+  glasses, panel and earphone alerts below do not exist yet.
 
 **Not stated by the workbook:** what the device does when several peripherals fail at once.
+D-17 (below) answers it for the reconnect confirmations only; the alerts themselves are
+independent, each with its own cadence.
+
+**Decided by the user, 2026-10-18 (DISAGREEMENTS.md D-15, D-16, D-17).** These apply to every
+failsafe alert in this section (REQ-CON-02 to 12):
+- **D-15, failsafe alerts override the switches, once.** A failsafe alert is spoken even when
+  the speech switch is off, at the volume knob's current level but never below 30 % (0.30 on the
+  knob's own 0.0 to 1.0 scale, `tts_volume`). A failsafe vibration pattern plays even when the
+  vibration switch is off, at the strength knob's current level but never below 30 % (0.30 on
+  `motor_strength`). The override is for that one alert or pattern only: afterwards the switch
+  or knob is exactly as the wearer left it. A repeating alert is handled the same way each time
+  it repeats. Object announcements, mode announcements and the depth vibration keep obeying the
+  switches and knobs (D-04, D-14 unchanged).
+- **D-16, an alert in progress finishes.** An urgent object warning does not cut a failsafe
+  alert that is being spoken; the alert finishes (2 to 3 s) first. Acceptance tests: the four
+  strict-`xfail` urgent-tier tests from T-00a.
+- **D-17, "everything is connected" must be true.** The sentence is said only when no other
+  failsafe alert is still raised. While another is raised, the device says a sentence about the
+  part that returned instead ("Vibration is working again", "Controller board connected",
+  "Earphones connected"). The camera's sentence stays "Camera has been reconnected" (REQ-CON-09).
+- **Earphone detection (Lead's choice at the user's request, 2026-10-18, T-04).** The earphones
+  are present when the Pi has a USB sound card that can play sound: a `/proc/asound/cardN` that
+  has a `usbid` file and a `pcm*p` (playback) entry. Not the USB device list: the camera is a
+  USB sound card too (capture only; `card 3 [Light]`), and matching the earphones' name or
+  vendor id would break when the earphones are replaced. Plain file reads, no command run.
+  Reason and the real values on this Pi: T-04's brief.
 
 **Decided feedback per event** (team, 2026-10-12). Speech goes through the existing speech
 system; vibration patterns play on all three motors.
@@ -600,6 +628,9 @@ firmware already accepts.
 - Source: TC-022-007: "Upon reconnection, there should be a vibration feedback and audio
   confirmation that everything is connected."
 - Resolved (team, 2026-10-12): the vibration is a *beep beep* on all three motors.
+- Resolved (user, 2026-10-18; D-17): "everything is connected" only when no other failsafe alert
+  is raised; otherwise "Vibration is working again". The *beep beep* plays either way, under the
+  D-15 rule (switch off or knob low).
 - Type: error-handling · Scope: NOT-BUILT (T-01) · Priority: P1
 
 **REQ-CON-05: Spoken alert when the control panel can't be reached**
@@ -622,6 +653,8 @@ firmware already accepts.
 - Statement: on reconnection, the device confirms by speech that everything is connected.
 - Source: TC-023-007: "Upon reconnection, there should be audio confirmation that everything is
   connected."
+- Resolved (user, 2026-10-18; D-17): "everything is connected" only when no other failsafe alert
+  is raised; otherwise "Controller board connected".
 - Type: error-handling · Scope: NOT-BUILT (T-02) · Priority: P1
 
 **REQ-CON-07: Camera-missing alert**
@@ -674,7 +707,11 @@ firmware already accepts.
 - Sources: TC-025-002 to TC-025-006: "There should be a brief "strong weak, strong weak, strong
   weak" vibration output for all three vibration motors to indicate an error."
 - Type: error-handling · Scope: NOT-BUILT (T-04) · Priority: P1
-- Note: how the Pi detects the earphones isn't specified; see the reviewer comment (W-19).
+- Note: how the Pi detects the earphones isn't specified in the workbook (W-19). Decided
+  2026-10-18 (Lead, at the user's request): a USB sound card with a playback stream in
+  `/proc/asound` (see the decisions block at the top of this section).
+- Resolved (user, 2026-10-18; D-15): the pattern plays even when the vibration switch is off,
+  at the strength knob's level but not below 30 %.
 
 **REQ-CON-11: How often the earphone alert repeats**
 - Statement: the REQ-CON-10 pattern repeats every 30 s while object detection is enabled. It
@@ -694,6 +731,9 @@ firmware already accepts.
 - Source: TC-025-007: "Upon reconnection, there should be a vibration feedback and audio
   confirmation that everything is connected." Its steps are copied from TC-022-007 (W-14).
 - Resolved (team, 2026-10-12): the vibration is the same *beep beep* reconnect pattern.
+- Resolved (user, 2026-10-18; D-17): "everything is connected" only when no other failsafe alert
+  is raised; otherwise "Earphones connected". (Speech through the returned earphones, so the
+  wearer hears it.)
 - Type: error-handling · Scope: NOT-BUILT (T-04) · Priority: P1
 
 **REQ-UPS-01: The X1202 button turns the Pi on**

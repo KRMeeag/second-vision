@@ -1,0 +1,106 @@
+Device ID                                                   Utilization (%)          Architecture                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Utilization (%)          FPS            PID            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Stream                                                      Direction                Frames Queue
+                                                                                                                                       Avg     Max     Min     Capacity
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Monitor did not retrieve any files. This occurs when there is no application currently running.
+If this is not the case, verify that environment variable 'HAILO_MONITOR' is set to 1.
+Device ID                                                   Utilization (%)          Architecture                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Utilization (%)          FPS            PID            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Stream                                                      Direction                Frames Queue
+                                                                                                                                       Avg     Max     Min     Capacity
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Monitor did not retrieve any files. This occurs when there is no application currently running.
+If this is not the case, verify that environment variable 'HAILO_MONITOR' is set to 1.
+Device ID                                                   Utilization (%)          Architecture                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Utilization (%)          FPS            PID            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Stream                                                      Direction                Frames Queue
+                                                                                                                                       Avg     Max     Min     Capacity
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Monitor did not retrieve any files. This occurs when there is no application currently running.
+If this is not the case, verify that environment variable 'HAILO_MONITOR' is set to 1.
+Device ID                                                   Utilization (%)          Architecture                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Utilization (%)          FPS            PID            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Stream                                                      Direction                Frames Queue
+                                                                                                                                       Avg     Max     Min     Capacity
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Monitor did not retrieve any files. This occurs when there is no application currently running.
+If this is not the case, verify that environment variable 'HAILO_MONITOR' is set to 1.
+Device ID                                                   Utilization (%)          Architecture                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Utilization (%)          FPS            PID            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Stream                                                      Direction                Frames Queue
+                                                                                                                                       Avg     Max     Min     Capacity
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Monitor did not retrieve any files. This occurs when there is no application currently running.
+If this is not the case, verify that environment variable 'HAILO_MONITOR' is set to 1.
+Device ID                                                   Utilization (%)          Architecture                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Utilization (%)          FPS            PID            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Stream                                                      Direction                Frames Queue
+                                                                                                                                       Avg     Max     Min     Capacity
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Monitor did not retrieve any files. This occurs when there is no application currently running.
+If this is not the case, verify that environment variable 'HAILO_MONITOR' is set to 1.
+Device ID                                                   Utilization (%)          Architecture                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Utilization (%)          FPS            PID            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Stream                                                      Direction                Frames Queue
+                                                                                                                                       Avg     Max     Min     Capacity
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Monitor did not retrieve any files. This occurs when there is no application currently running.
+If this is not the case, verify that environment variable 'HAILO_MONITOR' is set to 1.
+Device ID                                                   Utilization (%)          Architecture                                                
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Utilization (%)          FPS            PID            
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+Model                                                       Stream                                                      Direction                Frames Queue
+                                                                                                                                       Avg     Max     Min     Capacity
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Monitor did not retrieve any files. This occurs when there is no application currently running.
+If this is not the case, verify that environment variable 'HAILO_MONITOR' is set to 1.
+
+Session terminated, killing shell... ...killed.

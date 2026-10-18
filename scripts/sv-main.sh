@@ -7,15 +7,26 @@
 # starts and the rockers do nothing, with no error to explain why.
 #
 # This is also what second-vision.service runs at boot (scripts/install-service.sh).
-# The service sets SV_SERVICE=1, which turns the desk-friendly fallbacks below
-# into waits and hard failures.
+# The service sets SV_SERVICE=1, which run.sh reads (it refuses to start a second
+# copy while the service is active, unless this is set); this script does not.
+#
+# Mock mode is NEVER started from here, with or without SV_SERVICE, camera or no
+# camera (decision D-13): it announces objects that are not there and drives the
+# motors from fake depth, on a device nobody is watching. Ask for it on purpose,
+# by running run.sh --mock yourself. With no camera attached the program is
+# started anyway: it runs the glasses link, the panel and the speech from the
+# first second, keeps looking for a USB camera and starts vision when one
+# appears. So there is no wait for the camera here either; a camera that is
+# still enumerating is found by the program's own look, every 2 s.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 # run.sh activates my_hailo_env and puts src/ on PYTHONPATH before exec'ing
 # main.py. Calling python3 directly skipped all of that: from a shell without
-# the venv active there is no hailo_apps, and main.py quietly runs mock mode.
-RUN="$REPO_ROOT/scripts/run.sh"
+# the venv active there is no hailo_apps, and main.py refuses to start.
+# SV_RUN_SH replaces it for a test that records the arguments with a stub; unset
+# (always, in service and by hand) it is the line it was.
+RUN="${SV_RUN_SH:-$REPO_ROOT/scripts/run.sh}"
 
 # Two separate ESP32 boards, two separate ports — not competing values for one
 # setting. /dev/serial0 is the haptics/BMI160 (motor) board, confirmed working
@@ -36,41 +47,10 @@ else
     echo "[sv-main] headless (no DISPLAY) — preview disabled; depth, haptics and TTS still run."
 fi
 
-if [ "${SV_SERVICE:-0}" = "1" ]; then
-    # Nobody watches the console on the wearer, so never fall back to mock:
-    # it announces objects that are not there and drives the motors from fake
-    # depth. Fail instead and let systemd retry (Restart=always).
-    #
-    # At boot the USB camera can enumerate after we start — give it a minute.
-    CAMERA_WAIT_SECONDS="${CAMERA_WAIT_SECONDS:-60}"
-    waited=0
-    while [ ! -e "$INPUT" ]; do
-        if [ "$waited" -eq 0 ]; then
-            echo "[sv-main] waiting up to ${CAMERA_WAIT_SECONDS}s for $INPUT ..."
-        fi
-        if [ "$waited" -ge "$CAMERA_WAIT_SECONDS" ]; then
-            echo "[sv-main] ERROR: $INPUT never appeared — is the camera plugged in? systemd will retry." >&2
-            exit 1
-        fi
-        sleep 1
-        waited=$((waited + 1))
-    done
-
-    # main.py treats an unimportable hailo_apps as "no hardware here" and runs
-    # mock mode unasked. Check with the interpreter run.sh is about to use.
-    if ! "$REPO_ROOT/my_hailo_env/bin/python3" -c \
-            "import hailo_apps.python.core.common.hailo_logger, hailo_apps.python.core.gstreamer.gstreamer_app"; then
-        echo "[sv-main] ERROR: hailo_apps does not import from my_hailo_env — refusing to start" \
-             "(main.py would silently run MOCK mode)." >&2
-        exit 1
-    fi
-fi
-
 if [ ! -e "$INPUT" ]; then
-    echo "[sv-main] $INPUT does not exist — no camera attached."
-    echo "[sv-main] Falling back to --mock so the panel can still be exercised."
-    echo "[sv-main] Set INPUT=/dev/videoN to override."
-    exec "$RUN" --mock --serial-port "$SERIAL_PORT" --config-port "$CONFIG_PORT"
+    echo "[sv-main] $INPUT does not exist - no camera attached (yet). Starting anyway:"
+    echo "[sv-main] the program keeps looking for a USB camera and starts vision when one appears."
+    echo "[sv-main] Set INPUT=/dev/videoN to use another node."
 fi
 
 if [ ! -e "$CONFIG_PORT" ]; then

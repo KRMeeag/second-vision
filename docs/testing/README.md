@@ -17,6 +17,12 @@ agents) can work from, without reinterpreting the spreadsheet each time.
 | [MANUAL-TESTS.md](MANUAL-TESTS.md) | Every UAT case that needs a person (plugging hardware, listening, feeling), how a hands-on session runs, and each task's step-by-step procedure | Lead (procedures); the case list is generated |
 | [tools/extract_uat.py](tools/extract_uat.py) | Reads the workbook (never writes it) and refreshes the snapshot | — |
 | [tools/check_traceability.py](tools/check_traceability.py) | Read-only consistency check: every case traced once, every cited requirement and task defined, the workbook unchanged, the manual-test list current; prints the status counts | — |
+| [../handoffs/](../handoffs/README.md) | Self-contained write-ups, with evidence, to give to other agents (first one: the performance test results for the paper) | 2026-10-18 |
+| [DEMO-HANDOFF.md](DEMO-HANDOFF.md) | Start here in a new session for the demo track: current state, the working tree, how the user works, what to type | Updated as items finish |
+| [DEMO-TRACK.md](DEMO-TRACK.md) | The fast lane for demo day: the critical validations done directly, item by item, with one validation pass at the end | 2026-10-18 |
+| [URGENT-TESTS.md](URGENT-TESTS.md) | Tests the user wants right after the P1 failsafes: camera blocked or blurry, and the performance run; includes a review of the paper's image-check method | Proposed 2026-10-17 |
+| [HANDOFF.md](HANDOFF.md) | Where the agent workflow stands and how to pick it up, including from another Claude account | Updated when the workflow changes hands |
+| [WORKBOOK-REVISIONS.md](WORKBOOK-REVISIONS.md), [workbook-revisions.csv](workbook-revisions.csv) | Handoff for revising the workbook: an audit of all 110 cases with the replacement text, from the D-xx and W-xx decisions (2026-10-17) | Written once; superseded when the workbook is revised |
 | [tools/manual_tests.py](tools/manual_tests.py) | Regenerates the case list in MANUAL-TESTS.md from the snapshot and TRACEABILITY.md | — |
 
 ## The agent workflow
@@ -26,9 +32,9 @@ files are run by three roles:
 
 | Role | Does | May edit |
 |---|---|---|
-| **Lead**: main session, started with `.claude/tools/lead.sh` (Sonnet; `--opus` for pipeline tasks) | Splits requirements into small tasks, picks the Developer model, briefs, reviews, accepts / returns / blocks, keeps the records | `docs/testing/` (not the snapshot), `documentation/` |
-| **Developer**: `developer-sonnet` or `developer-opus` | Implements one task, writes and runs tests, reports honestly | `src/`, `tests/`, `scripts/`, its report |
-| **Tester**: `tester` (Sonnet; Opus when the Developer was Opus) | Verifies every task independently; PASS / FAIL / BLOCKED with evidence | `tests/uat/`, its report, `DEVIATIONS.md` |
+| **Lead**: main session, started with `.claude/tools/lead.sh` (Sonnet) | Splits requirements into small tasks, picks the Developer model, briefs, reviews, accepts / returns / blocks, keeps the records | `docs/testing/` (not the snapshot), `documentation/` |
+| **Developer**: `developer-sonnet`; `developer-opus` only for very high-risk tasks (TASK-BOARD, "Model routing") | Implements one task, writes and runs tests, reports honestly | `src/`, `tests/`, `scripts/`, its report |
+| **Tester**: `tester` (Sonnet; Opus only for very high-risk tasks) | Verifies every task independently; PASS / FAIL / BLOCKED with evidence | `tests/uat/`, its report, `DEVIATIONS.md` |
 
 The gate:
 1. One task at a time.
@@ -41,7 +47,7 @@ Nobody in the workflow runs git writes; the user commits. A hook
 (`.claude/hooks/role_guard.py`) keeps each role to its areas, for the file tools and for shell
 commands. In the shell it also blocks sudo, package installs, service control, killing processes by
 name and git writes. sudo has two exceptions: `sudo fuser -v|-k /dev/hailo0` (`-k` only while
-`second-vision.service` is stopped), and the simulated camera unplug
+`second-vision.service` is stopped), and the simulated camera or USB-earphones unplug
 `sudo .claude/tools/usb_sim.py`. Reading command text can't catch everything, so after each
 task the Lead also checks the installed libraries for changed files. Lifecycle states are in
 TASK-BOARD.md and report templates in `reports/README.md`.
@@ -94,6 +100,28 @@ The tool needs only Python 3 and PyYAML. It looks for the workbook at the path a
 - **P1 first.** The critical failsafes come first: loss of connection and camera checks
   (tasks T-01 to T-04, plus the cases already built). Everything else follows.
 - **Motor duty up to 255 is safe** (D-01). Pi-side tests may drive the motors at full scale.
+
+## Test levels (from T-10a)
+
+Three kinds of automated test. The exact commands, and what each does, are in the docstring of
+`tests/conftest.py`. From the repository root, always passing `tests/` (**never a bare `pytest`**:
+it would import `scripts/test_motor_packet.py`, which writes motor packets to `/dev/serial0`).
+
+| Level | Marker | Needs | Command |
+|---|---|---|---|
+| unit | none | nothing | `my_hailo_env/bin/python -m pytest tests/ -q` (or the Poetry environment's python) |
+| GStreamer | `gst` | real GStreamer bindings, no devices (`my_hailo_env`) | `my_hailo_env/bin/python -m pytest tests/ -m gst -v` |
+| device | `device` | the Hailo chip, camera or boards, `second-vision.service` stopped. **Opt-in** | `my_hailo_env/bin/python -m pytest tests/ -q --run-device` |
+
+- `gst` and `device` tests skip with a reason in words when their needs are missing. A skipped
+  test is never counted as a pass.
+- Every test has a 60 s default timeout (`pytest-timeout`, installed in `my_hailo_env` only).
+- The simulated camera unplug is the `camera_unplug` fixture (device level). Keep `--for` short
+  and call `attach` when done: an old detach's timer can re-attach a later detach early.
+- **Evidence run**, saving a dated log with a PASS / FAIL / SKIP line per UAT case ID (put the
+  case ID in the test name, e.g. `test_tc024_003_…`):
+  `my_hailo_env/bin/python scripts/uat_evidence.py --task T-03a [--device] [--tests PATH …]`.
+  The log goes to `docs/testing/reports/<task>/evidence/`.
 
 ## Running the existing unit tests on the shared Pi
 

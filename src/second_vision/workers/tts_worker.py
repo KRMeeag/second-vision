@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import time
 
+from second_vision.core.alerts import CUT, DROPPED, SPOKEN
 from second_vision.core.priority import (
     MIN_UTTERANCE_GAP,
     TIER_URGENT,
@@ -41,6 +42,10 @@ from second_vision.core.priority import (
 #           user_data.turn_event — optional core/turn_event.py TurnEvent;
 #           absent (getattr default None) is tolerated the same way
 #           serial_worker.py tolerates a user_data without one.
+#           user_data.alerts — optional core/alerts.py AlertScheduler (system alerts
+#           that repeat). The worker tells it what became of the items it takes
+#           (take / drain / finish); the queue items themselves are unchanged.
+#           Absent (getattr default None) -> exactly the behaviour without it.
 #   Output: Audio announcement via speaker (espeak-ng, pyttsx3 fallback).
 #   Config: config.tts_enabled, config.tts_volume (the panel's volume knob)
 # ============================================================
@@ -105,7 +110,7 @@ def _espeak_amplitude(volume) -> int:
 TURN_MUTE_SECONDS = 1.0
 
 
-def _check_turn_mute(turn_event, mailbox, now: float, mute_until: float) -> float:
+def _check_turn_mute(turn_event, mailbox, now: float, mute_until: float, alerts=None) -> float:
     """
     Look for a fresh, not-yet-consumed turn event and return the (possibly
     updated) mute deadline.
@@ -128,13 +133,22 @@ def _check_turn_mute(turn_event, mailbox, now: float, mute_until: float) -> floa
     window — the detection pipeline keeps calling offer() on its own,
     unmodified, so whatever is parked there when the window closes reflects
     the current scene.
+
+    `alerts` (the AlertScheduler, or None): the one item the drain leaves alone is a
+    system alert of the scheduler's own that is waiting in the slot. A head turn makes
+    a detection stale; it does not make a system alert stale, and the alert is spoken
+    when the window ends. Every other item is drained as before, mode announcements
+    included.
     """
     if turn_event is None:
         return mute_until
     turn = turn_event.take()
     if turn is None:
         return mute_until
-    mailbox.take()
+    if alerts is not None:
+        alerts.drain()
+    else:
+        mailbox.take()
     return now + TURN_MUTE_SECONDS
 
 
@@ -142,10 +156,11 @@ def tts_worker(user_data, config):
     """Main TTS worker loop."""
     mailbox = user_data.tts_queue
     turn_event = getattr(user_data, "turn_event", None)
+    alerts = getattr(user_data, "alerts", None)
     mute_until = 0.0
 
     while not user_data.shutdown_event.is_set():
-        mute_until = _check_turn_mute(turn_event, mailbox, time.monotonic(), mute_until)
+        mute_until = _check_turn_mute(turn_event, mailbox, time.monotonic(), mute_until, alerts)
         if time.monotonic() < mute_until:
             # Muted: don't consume from the mailbox at all. Checked once per
             # outer-loop iteration — the same cadence _IDLE_SECONDS/_POLL_SECONDS
@@ -155,13 +170,15 @@ def tts_worker(user_data, config):
             time.sleep(_IDLE_SECONDS)
             continue
 
-        item = mailbox.take()
+        item = alerts.take() if alerts is not None else mailbox.take()
         if item is None:
             time.sleep(_IDLE_SECONDS)
             continue
 
         try:
             if not config.get("tts_enabled"):
+                if alerts is not None:
+                    alerts.finish(item, DROPPED)    # dropped on purpose: counts as delivered
                 continue
 
             # Read per item, so a turn of the knob is heard from the next
@@ -171,6 +188,8 @@ def tts_worker(user_data, config):
             _pace(mailbox, user_data)
         except Exception as e:  # never let the worker thread die
             print(f"[TTS] Error processing announcement: {e}")
+            if alerts is not None:
+                alerts.release(DROPPED)             # never leave the scheduler waiting on it
 
 
 def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX):
@@ -178,7 +197,11 @@ def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX):
     Speak `item` at espeak-ng `amplitude`. If a preempting item arrives
     mid-utterance, terminate the current espeak process and switch to it —
     looping until an utterance finishes naturally (or shutdown).
+
+    With user_data.alerts present, every item ends with a finish() call (SPOKEN or CUT)
+    so the alert scheduler knows what became of the alert it offered.
     """
+    alerts = getattr(user_data, "alerts", None)
     while item is not None and not user_data.shutdown_event.is_set():
         text = _text_for(item)
         print(f"[TTS] '{text}'")
@@ -188,9 +211,12 @@ def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX):
             # No espeak-ng available — fall back to a blocking, NON-interruptible
             # engine (dev machines only; the device has espeak-ng).
             _speak_blocking(text, amplitude)
+            if alerts is not None:
+                alerts.finish(item, SPOKEN)
             return
 
         next_item = None
+        cut = False
         while proc.poll() is None:
             if user_data.shutdown_event.is_set():
                 proc.terminate()
@@ -198,10 +224,14 @@ def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX):
             pending = mailbox.peek()
             if pending is not None and preempts(pending, item):
                 proc.terminate()
-                next_item = mailbox.take()  # claim the preempting item
+                cut = True
+                # claim the preempting item
+                next_item = alerts.take() if alerts is not None else mailbox.take()
                 break
             time.sleep(_POLL_SECONDS)
 
+        if alerts is not None:
+            alerts.finish(item, CUT if cut else SPOKEN)
         item = next_item  # None -> utterance finished naturally, loop exits
 
 

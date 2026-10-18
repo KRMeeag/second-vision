@@ -1,0 +1,16 @@
+perf_run npu
+kernel: Linux 6.12.62+rpt-rpi-2712 aarch64
+HailoRT: HailoRT-CLI version 4.23.0
+code: the development tree; files changed in src/scripts and not committed:
+M scripts/second-vision.service
+ M scripts/sv-main.sh
+ M src/second_vision/main.py
+ M src/second_vision/pipeline/app.py
+ M src/second_vision/workers/tts_worker.py
+?? scripts/uat_evidence.py
+?? src/second_vision/core/alerts.py
+?? src/second_vision/workers/alert_worker.py
+model file: -rw-rw-r-- 1 sv-rpi5 sv-rpi5 9681398 Oct 11 08:42 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_deploy/best.hef
+holders of /dev/hailo0 (sudo -n fuser -v, read-only): 
+before: temp=57.6'C, throttled=0x0 (0x0 = never throttled since boot)
+run: 180 s, headless like the boot service, HAILO_MONITOR on; boards: stand-in glasses on a pty (ACKs every packet), no control panel, so mode both

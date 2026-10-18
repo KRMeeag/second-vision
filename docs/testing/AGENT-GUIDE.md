@@ -12,9 +12,15 @@ itself:
 
 | Role | Does | Model | Effort | May change |
 |---|---|---|---|---|
-| **Lead** | Plans, briefs, reviews, accepts or returns, keeps the records, talks to you | Sonnet; Opus if you start it with `--opus` | xhigh | `docs/testing/`, `documentation/` |
-| **Developer** | Implements one task and its tests | Sonnet; Opus for pipeline, threading and high-risk tasks | xhigh | `src/`, `tests/`, `scripts/`, its report |
-| **Tester** | Checks the work independently and tries to break it | Sonnet; Opus when the Developer was Opus | xhigh | `tests/uat/`, its report, `DEVIATIONS.md` |
+| **Lead** | Plans, briefs, reviews, accepts or returns, keeps the records, talks to you | Sonnet | xhigh | `docs/testing/`, `documentation/` |
+| **Developer** | Implements one task and its tests | Sonnet; Opus only for very high-risk tasks | xhigh | `src/`, `tests/`, `scripts/`, its report |
+| **Tester** | Checks the work independently and tries to break it | Sonnet; Opus only for very high-risk tasks | xhigh | `tests/uat/`, its report, `DEVIATIONS.md` |
+
+Since 2026-10-17 everything runs on Sonnet unless a task is very high risk: it could crash or
+hang the device, or leave the motors running, without the wearer knowing; it changes the
+camera pipeline's start/stop or timing shared between threads; and it can't be split smaller.
+Or a Sonnet attempt already failed on such a task. Opus uses up the plan's limit much faster.
+The Lead records why on the board whenever it uses Opus.
 
 One task at a time. Every task is tested. Nothing is committed by an agent: **you** review and
 commit. You are also the person for the hands-on steps (unplugging hardware, listening,
@@ -37,8 +43,8 @@ feeling the motors).
 From the worktree's root:
 
 ```bash
-.claude/tools/lead.sh            # the Lead on Sonnet: most tasks
-.claude/tools/lead.sh --opus     # the Lead on Opus: pipeline or threading tasks
+.claude/tools/lead.sh            # the Lead on Sonnet (always, since 2026-10-17)
+.claude/tools/lead.sh --opus     # the Lead on Opus: only if you decide a task needs it
 ```
 
 The script sets extra-high effort and finds the Claude Code binary that comes with the VS Code
@@ -52,7 +58,39 @@ Tips:
 - **Start a fresh session for each task.** The board and the reports hold everything the
   Lead needs, and a short conversation uses less of the plan's limits than one long one.
   `.claude/tools/lead.sh -c` continues the last conversation instead.
-- **Before an Opus task, the Lead says so**, so you can restart it with `--opus` for that task.
+- **The Lead stays on Sonnet.** If it uses Opus for a Developer or Tester, it says why on the
+  board.
+
+### Leaving it to run on its own
+
+```bash
+.claude/tools/lead_unattended.sh "Work through the P1 tasks, then P2."
+python3 .claude/tools/lead_progress.py -f                                # watch it (Ctrl+C stops watching, not the run)
+```
+
+- **It runs in the background** and keeps going if you close VS Code or the terminal (not
+  through a reboot). Its log goes to `.claude/runs/<date-time>/`.
+- **Nothing waits for approval**, but the safety hook still blocks what each role may not do.
+- **It never waits for you.** A question goes on the board and the task is set aside. A task
+  that only needs your hands-on confirmation goes to "Waiting for a person" in
+  MANUAL-TESTS.md. Then it moves on.
+- **If the Wi-Fi drops**, it waits for the connection and resumes the same session by itself.
+- **Only one run at a time.** Starting a second while one is going is refused, with the
+  command to stop the first.
+- **It stops** when nothing can go ahead without you, or when the plan's usage limit is
+  reached. It ends with a summary of what is waiting for you.
+- **Options:**
+  - `--when-hardware-free` waits until you stop the boot service before starting. A reboot
+    restarts that service.
+  - `--resume <session id>` continues an earlier run instead of starting a new one.
+- **To pause it, queue a stop** (it finishes what it is doing, so a device test is never cut off):
+  `.claude/tools/stop_lead_at_boundary.sh` stops when the current task is finished;
+  `--after-helper` stops when the Developer or Tester running now returns;
+  `--dry-run` shows what it would wait for. It tidies up afterwards (leftover app stopped, camera
+  re-attached). Cancel with `kill $(cat .claude/runs/stop.pid)`.
+- **To continue in the terminal**, answering its questions:
+  `.claude/tools/lead.sh --resume <session id>`. The ID is printed at start and saved in the
+  run folder.
 
 ## 4. Telling the Lead what to do
 
@@ -82,7 +120,10 @@ Plain requests work. Examples:
 
 **RETURNED** means the Tester or the Lead found a problem. The Lead writes attempt 2 with the
 evidence, and the Developer and Tester go again; you don't need to do anything.
-**BLOCKED** means something only you can provide is missing (section 6). The Lead sets the
+**AWAITING-HANDS-ON** means every automated check passed and only your one-time confirmation
+of the real device is left. The code stays, and the task waits in MANUAL-TESTS.md under
+"Waiting for a person". **BLOCKED** means something only you can provide is missing
+(section 6). The Lead sets the
 task's changes aside ("parks" it), asks you, and may move on to the next task meanwhile.
 
 ## 6. When the Lead needs you
@@ -93,7 +134,7 @@ DISAGREEMENTS.md.
 
 **Something needing root.** Agents can't use sudo, except to free the Hailo chip
 (`sudo fuser -k /dev/hailo0`, only while the boot service is stopped) and to simulate a
-camera unplug (`.claude/tools/usb_sim.py`). For anything else, the Lead shows you the exact
+camera or USB-earphones unplug (`.claude/tools/usb_sim.py`). For anything else, the Lead shows you the exact
 command and why. Run it yourself, or say no.
 
 **Hands-on steps.** The procedure is in [MANUAL-TESTS.md](MANUAL-TESTS.md).
@@ -131,7 +172,7 @@ The next task starts only after this.
 | The session stopped mid-task (usage limit, network, closed terminal) | Start the Lead again. It reads the board and continues the active task. |
 | An agent shows `[role_guard] Blocked: …` | That is the safety hook working. The agent adapts or reports to the Lead. |
 | You want to undo a task's changes | Ask the Lead to revert the task from its baseline, or use git yourself. |
-| The camera seems gone after a test | `sudo .claude/tools/usb_sim.py attach --all`, or replug it, or reboot. The tool also re-attaches by itself after its `--for` time. |
+| The camera or the earphones seem gone after a test | `sudo .claude/tools/usb_sim.py attach --all`, or replug it, or reboot. The tool also re-attaches by itself after its `--for` time. |
 | "No available devices" or the Hailo chip is busy | Check the boot service is stopped (`systemctl is-active second-vision`) and that no old pipeline runs (`pgrep -af "main.py\|Parallel-Depth"`). |
 | The Lead says the workbook changed | Expected after you edit the Excel file. It walks you through updating the requirements first. |
 | Tests can't find GStreamer or the Hailo chip | Do setup step 2, and check the boot service is stopped. |

@@ -21,7 +21,8 @@ After=hailort.service
 # audio stays up until we have stopped.
 Wants=user@@UID@.service
 After=user@@UID@.service
-# Retry forever: a camera plugged in late must still come up.
+# Retry forever: whatever ends the program, start it again. (A camera plugged in
+# late needs no restart: the program itself keeps looking for one.)
 StartLimitIntervalSec=0
 
 [Service]
@@ -30,7 +31,9 @@ User=@USER@
 WorkingDirectory=@REPO@
 ExecStart=@REPO@/scripts/sv-main.sh
 SyslogIdentifier=second-vision
-# Wait for the camera and hard-fail instead of mock mode (see sv-main.sh).
+# Marks the service's own launch (run.sh then does not refuse to start). The
+# program starts with no camera attached, keeps looking for one and never falls
+# back to mock mode (see sv-main.sh).
 Environment=SV_SERVICE=1
 # PipeWire's sockets live here; without it espeak-ng has no audio server.
 Environment=XDG_RUNTIME_DIR=/run/user/@UID@

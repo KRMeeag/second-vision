@@ -234,6 +234,132 @@ Original record:
 - *This corrects REQ-PNL-09 as written on 2026-10-12, which said the code already agreed with
   "minimal". That is true only on `feat/depth-callback`.*
 
+### D-15 · Do failsafe alerts override the wearer's off switches and the strength knob? · TC-022 to TC-025 · DECIDED · decided 2026-10-18 by the user
+
+- **Workbook:** silent. The failsafe cases (glasses link lost, panel lost, camera missing,
+  earphones missing) say what must be felt and said, and how often. None says what happens when
+  the wearer has already turned something off at the control panel.
+- **Code today:**
+  - `tts_worker` drops **every** item when `tts_enabled` is off, mode announcements included
+    (`tts_worker.py:158-163`). Nothing marks a system alert as different.
+  - `serial_worker` sends no motor command when `vibration_enabled` is off, and multiplies every
+    command by `motor_strength` (D-14: at the knob's minimum the motors are off).
+- **Why it matters:** the alerts are a safety net for a wearer who cannot see. If speech is
+  switched off, "Critical Error: Camera cannot be reached" is never heard; if the strength knob is
+  at the bottom, the *beep beep* is never felt. The opposite risk: an alert the wearer cannot
+  silence, when they chose silence on purpose (a quiet room).
+- **Questions for the user** (three separate choices; same answer options each):
+  1. The speech switch is off: should failsafe alerts still be spoken? (a) yes, always;
+     (b) no, off means off.
+  2. The vibration switch is off: should failsafe vibration patterns still play? (a) yes, always;
+     (b) no, off means off.
+  3. The strength knob is low: should failsafe patterns play at full strength, at the knob's
+     strength, or at the knob's strength with a floor so they are always felt?
+- **Effect on the plan:** T-00a (repeating spoken alerts) is built without touching today's
+  behaviour (alerts obey the speech switch like every announcement), so question 1 is a one-line
+  change later. T-00b (vibration patterns) is **BLOCKED** until questions 2 and 3 are answered.
+  Recommended by the Lead, for the user to confirm or change: speech (a), vibration (a), strength
+  "full strength", because an alert nobody can perceive is not an alert; the wearer can still turn
+  the whole device off.
+- **Decision (user, 2026-10-18):**
+  1. **Speech:** a failsafe alert is spoken even when the speech switch is off. It is spoken at the
+     volume knob's current level, but never quieter than 30 %: if the knob is below 30 %, that alert is
+     spoken at 30 %.
+  2. **Vibration:** a failsafe pattern plays even when the vibration switch is off. It plays at the
+     strength knob's current level, but never weaker than 30 %: if the knob is below 30 %, that pattern
+     plays at 30 %. (This answers question 3 as "knob's strength with a floor", the floor being 30 %.)
+  3. **One time only.** The override lasts for that one alert or pattern. Afterwards the wearer's settings
+     are exactly as they left them: a switch that was off is off again, a knob that was low is low. It
+     applies to failsafe alerts only; object announcements, mode announcements and the depth vibration
+     keep obeying the switches and the knobs (D-04, D-14 unchanged). A repeating alert is handled the
+     same way each time it repeats.
+  - *Reading for the Lead to confirm in the brief:* "30 %" is the knob's own scale (0.30 on the 0.0 to 1.0
+    value the panel reports: `tts_volume` for speech, `motor_strength` for vibration), not 30 % of
+    some absolute loudness. Say so in the brief and ask only if the code makes the other reading likelier.
+
+### D-16 · May an urgent object warning cut a failsafe alert that is being spoken? · TC-022 to TC-025 · DECIDED · decided 2026-10-18 by the user
+
+- **Workbook:** silent. It says how often each failsafe alert repeats, not what happens when the
+  device has something else urgent to say at the same moment.
+- **Code today (T-00a, measured by the Tester, `reports/T-00a/test-report-1.md` F-1):**
+  - The speech worker lets any urgent-tier item cut whatever is being spoken (`priority.preempts()`).
+    That includes a failsafe alert.
+  - An urgent object that stays in view (a vehicle, say) skips the 10 s repeat floor
+    (`callbacks.py:548-552`), so a new urgent warning is offered at the frame rate.
+  - With such a stream running, a failsafe alert is cut after a fraction of a second, over and over,
+    or never offered; it is heard when the stream pauses. With ordinary (normal-tier) detections
+    the alert is spoken within 1.3 s at worst.
+  - A mode announcement is cut the same way on the untouched baseline, so this is today's rule,
+    not something T-00a broke.
+- **Why it matters:** a failsafe alert is the wearer's only notice that part of the device has
+  stopped working, and a vehicle ahead is also the situation where an object warning matters most.
+- **Question for the user:**
+  (a) keep it: the object warning always wins;
+  (b) let an alert in progress finish (2 to 3 s) before an object warning can cut it;
+  (c) decide after the first alert is heard on the real device.
+- **Effect on the plan:** none now. A fix is a few lines in the speech worker plus a rule for the
+  worker that is never idle, and changes preemption, which the T-00a brief kept as today.
+  The four urgent-tier tests are strict `xfail`, so the limit shows up when it is fixed.
+  Recommended by the Lead: (c), then (a) unless the session shows alerts going unheard.
+- **Decision (user, 2026-10-18): (b)**, let an alert in progress finish (2 to 3 s) before an urgent object
+  warning can cut it. Needs a small task on the speech worker (preemption rule), after the first alerts
+  exist; the four strict `xfail` urgent-tier tests from T-00a become the acceptance tests.
+
+### D-17 · What may the device say it has "reconnected" when something else is still missing? · TC-022-007, TC-023-007, TC-025-007 · DECIDED · decided 2026-10-18 by the user
+
+- **Workbook:** when the glasses board, the control panel or the earphones reconnect, "audio
+  confirmation that everything is connected" (REQ-CON-04, 06, 12). The camera's own sentence is
+  different and explicit: "camera has been reconnected" (REQ-CON-09), so it is not affected.
+- **Not stated:** what happens when more than one thing is missing at once (REQUIREMENTS.md, section 8).
+  If the glasses board returns while the camera is still unplugged, "everything is connected" is false,
+  and it is said to a wearer who cannot see that the camera is not working.
+- **Options:**
+  (a) say the sentence whenever the part that returned is back, whatever else is missing (simplest;
+  can be untrue);
+  (b) say "everything is connected" only when no other failsafe alert is still raised; while something
+  else is missing, say a specific sentence about the part that returned ("Vibration is working again",
+  "Controller board connected", "Earphones connected");
+  (c) always the specific sentence, never "everything".
+- **Effect on the plan:** T-01b, T-02c and the reconnect speech of T-04 wait for this answer. The
+  alerts themselves (T-01a, T-02b, T-03c1) do not. The alert scheduler can answer "is any other alert
+  still raised" (`raised()`), so (b) needs no new mechanism.
+- **Recommended by the Lead:** (b): it keeps the workbook's wording whenever it is true, and never tells
+  the wearer something false.
+- **Decision (user, 2026-10-18): (b)**, as the Lead recommended. "Everything is connected" is said only when
+  no other failsafe alert is still raised; while something else is missing, a specific sentence about the
+  part that returned ("Vibration is working again", "Controller board connected", "Earphones connected").
+
+### D-18 · How does the Pi know the earphones are gone? · TC-025-002 to TC-025-007 · DECIDED · decided 2026-10-18 by the Lead, at the user's request
+
+- **Workbook:** silent (reviewer comment W-19). The cases say what happens when the earphones are
+  missing, not how the Pi finds out.
+- **The user's request (2026-10-18):** choose the easiest and most reliable way; the user suggested watching
+  the USB device list the way the camera is watched (the earphones are a USB device), but any simpler or
+  more reliable method is fine.
+- **Measured on this Pi (2026-10-18, read-only):**
+  - `/proc/asound/cards` lists four sound cards: two HDMI outputs, `card 2 [Audio]` = SPACETOUCH USB Audio
+    (USB id 0666:0880, playback and capture), and `card 3 [Light]` = **the Arducam camera's microphone**
+    (USB id 0c45:0261, capture only).
+  - `aplay -l` (playback devices only) lists cards 0, 1 and 2; the camera is not in it.
+  - USB cards have a `usbid` file in `/proc/asound/cardN/`; a playback stream shows as a `pcm0p` entry.
+- **Options considered:**
+  (a) watch the USB device list in sysfs (as the camera is): works, but "which USB device is the earphones"
+  needs a vendor id, a name or an interface-class test. A vendor id breaks when the earphones are replaced; a
+  class test also matches the camera's microphone, so pulling the earphones would still look "present".
+  (b) run `aplay -l` and read its text: right answer, but code that runs commands (a subprocess every second
+  or so), and a text format to parse.
+  (c) **read `/proc/asound` directly**: "earphones present" = at least one `/proc/asound/cardN` that has a
+  `usbid` file and a `pcm*p` entry. Plain file reads (no command, no root), the same view `aplay -l` gives,
+  independent of brand, and it ignores the camera's microphone (capture only). When the USB sound card is
+  unplugged the kernel removes the card, so the entry disappears.
+- **Decision (Lead):** (c). The answer is also what matters to the wearer: if no USB sound card can play,
+  nothing can be spoken to them, whatever the cause. It reuses the camera watcher's pattern (a polling thread
+  that reports changes), not its USB list.
+- **Not covered by a test of a real unplug yet:** `usb_sim.py` supports only the camera. T-04's automated
+  evidence uses a fake `/proc/asound` tree; the one real earphone pull and replug is a hands-on step
+  (MANUAL-TESTS.md). *Optional for the user:* extending `usb_sim.py` to the earphones (sysfs `3-1`) would
+  let the Tester run it without a person, but it is not needed.
+
 ---
 
 ## Part 2: Workbook defects

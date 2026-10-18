@@ -41,6 +41,17 @@ task that needs one.
 - Anything unexpected is reported to the person straight away, even if it's outside the
   step. Example: the camera dropping out when nobody unplugged it.
 
+## Waiting for a person
+
+The Lead adds a task here when every check that can run without a person has passed, and
+only the person's confirmation of the real device is left. Oldest first; each links to its
+procedure below. Do them in one hands-on session if you can.
+
+| Task | What the person does | Procedure | Since |
+|---|---|---|---|
+| T-03a | One real camera pull and replug, while the program runs (REQ-CON-08, the camera-removed case TC-024-003, no-crash part) | [T-03a](#t-03a--camera-removed-while-running--tc-024-003-its-no-crash-part) | 2026-10-17 |
+| T-03b | One real start with the camera unplugged, then plugging it in (REQ-CON-08 absent-at-start-up half; TC-024-002 no-crash part). Same session as T-03a | [T-03b](#t-03b--start-up-without-a-camera--tc-024-002-its-no-crash-part) | 2026-10-17 |
+
 ## How much of this can be automated
 
 Of the 66 cases in the workflow, most need a person only to *cause* something (pull a
@@ -66,7 +77,8 @@ real board works (TRACEABILITY.md, "Evidence").
 
 ### T-03a · Camera removed while running · TC-024-003 (its no-crash part)
 
-*Status: planned. Steps from the Lead's brief ([reports/T-03a/brief-1.md](reports/T-03a/brief-1.md)).
+*Status: **ready to run** (the Tester's automated checks passed, [decision-2](reports/T-03a/decision-2.md), 2026-10-17). Steps from the Lead's brief ([reports/T-03a/brief-1.md](reports/T-03a/brief-1.md)).
+**Before step 2, switch the real panel's speech and vibration switches on**: in every automated run with the real panel they were off, so nothing could be heard or felt.
 Run after the Tester's automated checks pass. The repeated unplugs, and stopping the program
 while the camera is gone, are covered on the device by the simulated unplug
 (`.claude/tools/usb_sim.py`). This is the one real-camera confirmation.*
@@ -81,6 +93,24 @@ with the boot service stopped.
 | 3 | Person | Unplug the camera, with the object still there | Does the vibration stop within a few seconds? (The Lead checks the program is still running.) |
 | 4 | Person | Wait about 30 s, then flip a panel mode switch | Do you hear "<mode> mode"? |
 | 5 | Person | Plug the camera into a **different** USB port, then show the object again | Does the vibration come back? |
+
+### T-03b · Start-up without a camera · TC-024-002 (its no-crash part)
+
+*Status: **ready to run** (the Tester's automated checks passed, [decision-1](reports/T-03b/decision-1.md), 2026-10-17). Do it in the same session as T-03a's, after it.
+Steps from the Tester's "Manual steps needed" ([test-report-1](reports/T-03b/test-report-1.md)). The repeated starts, stops and camera
+timings are covered on the device by the simulated unplug (`.claude/tools/usb_sim.py`); this is the one real power-on without a camera.*
+
+Needs the glasses ESP32, the control panel and the earphones, with the boot service stopped and the camera **unplugged**.
+**Switch the real panel's speech and vibration switches on first.**
+
+| # | Who | Step | Answer to record |
+|---|---|---|---|
+| 1 | Person | With the camera unplugged, say "go"; the Lead starts the program the way the boot service does (`scripts/sv-main.sh`, service stopped) | — |
+| 2 | Person | Wait about 2 minutes with the glasses on | Do the three motors stay still (no vibration at all)? Does the Lead see the program still running? |
+| 3 | Person | After about 30 s of waiting, flip a panel mode switch | Do you hear "<mode> mode"? |
+| 4 | Person | Plug the camera in, and hold an object about 0.5 m in front of it | Does vibration start within a few seconds, and is it in the mode the panel shows? |
+| 5 | Person | Unplug the camera once more | Does the vibration stop, and does the Lead see the program waiting again (still running)? |
+| 6 | Lead (optional) | One start with a screen attached (`DISPLAY` set) and no camera | Does it wait without errors? |
 
 ## Case list
 
@@ -266,37 +296,37 @@ with the boot service stopped.
 - **Input:** ESP32 Seed Xiao is connected via GPIO Pins
 - **Expected (workbook):** Device will proceed as intended to main pipeline
 
-#### TC-022-002 · assisted · REQ-CON-02, 03 · T-01
+#### TC-022-002 · assisted · REQ-CON-02, 03 · T-01a (speech), T-00c (speech switch off, D-15)
 
 - **Steps:** 1. Power on Raspberry Pi 5
 - **Input:** ESP32 Seed Xiao is disconnected from GPIO before the device starts up. Depth estimation in the controller board is enabled.
 - **Expected (workbook):** Audio output should indicate that the vibration feedback cannot be reached. This feedback should be relayed every 30 seconds.
 
-#### TC-022-003 · assisted · REQ-CON-02, 03 · T-01
+#### TC-022-003 · assisted · REQ-CON-02, 03 · T-01a, T-00c
 
 - **Steps:** 1. Power on Raspberry Pi 6
 - **Input:** ESP32 Seed Xiao is disconnected from GPIO before the device starts up. Depth estimation in the controller board is disabled.
 - **Expected (workbook):** Audio output should indicate that the vibration feedback cannot be reached. This feedback should be only stated once.
 
-#### TC-022-004 · assisted · REQ-CON-02, 03 · T-01
+#### TC-022-004 · assisted · REQ-CON-02, 03 · T-01a, T-00c
 
 - **Steps:** 1. Power on Raspberry Pi 5 with ESP32 Connected 2. During inference in the pipeline, the ESP32's GPIO pins should be removed
 - **Input:** ESP32 Seed Xiao is disconnected from GPIO after the device starts up. Depth Estimation in the controller board is enabled.
 - **Expected (workbook):** Once the connection has been removed, the audio feedback will relay that the vibration feedback cannot be reached. This feedback should be relayed every 30 seconds.
 
-#### TC-022-005 · assisted · REQ-CON-02, 03 · T-01
+#### TC-022-005 · assisted · REQ-CON-02, 03 · T-01a, T-00c
 
 - **Steps:** 1. Power on Raspberry Pi 5 with ESP32 Connected 2. While doing inference in the pipeline, the ESP32's GPIO pins should be removed
 - **Input:** ESP32 Seed Xiao is disconnected from GPIO after the device starts up. Depth Estimation in the controller board is disabled.
 - **Expected (workbook):** Once the connection has been removed, the audio feedback will relay that the vibration feedback cannot be reached. This feedback should be relayed once.
 
-#### TC-022-006 · assisted · REQ-CON-03 · T-01
+#### TC-022-006 · assisted · REQ-CON-03 · T-01a, T-00c
 
 - **Steps:** 1. Power on Raspberry Pi 5 with ESP32 Connected 2. in the control panel, the switch for the depth estimation must be turned off
 - **Input:** ESP32 is not connected to the GPIO Pins, Depth Estimation must be disabled mid-inference
 - **Expected (workbook):** Upon switching, the audio output would immediately inform the visually impaired that the vibration feedback cannot be reached via audio output. This will be done every 30 seconds.
 
-#### TC-022-007 · assisted · REQ-CON-04 · T-01
+#### TC-022-007 · assisted · REQ-CON-04 · T-00b (pattern), T-01b (sentence, D-17)
 
 - **Steps:** 1. Power on Raspberry Pi 5 with ESP32 Connected 2. During inference in the pipeline, the ESP32's GPIO pins should be removed 3. After a while, the GPIO connection should be reinstated
 - **Input:** ESP32 is reconnected after a disconnection.
@@ -310,19 +340,19 @@ with the boot service stopped.
 - **Input:** ESP32 is connected via GPIO Pins
 - **Expected (workbook):** Device will proceed as intended to main pipeline
 
-#### TC-023-002 · assisted · REQ-CON-05 · T-02
+#### TC-023-002 · assisted · REQ-CON-05 · T-02b, T-00c
 
 - **Steps:** 1. Power on Raspberry Pi 5
 - **Input:** ESP32 is disconnected from GPIO before the device starts up.
 - **Expected (workbook):** Audio output should indicate that the controller board cannot be reached, and that the device will use the previously used settings. This feedback should be relayed every 5 minutes.
 
-#### TC-023-004 · assisted · REQ-CON-05 · T-02
+#### TC-023-004 · assisted · REQ-CON-05 · T-02a (settings), T-02b, T-00c
 
 - **Steps:** 1. Power on Raspberry Pi 5 with ESP32 Connected 2. During inference in the pipeline, the ESP32's GPIO pins should be removed
 - **Input:** ESP32 is disconnected from GPIO after the device starts up.
 - **Expected (workbook):** Upon disconnection, output should indicate that the controller board cannot be reached, and that the device will use the previously used settings. This feedback should be relayed every 5 minutes.
 
-#### TC-023-007 · assisted · REQ-CON-06 · T-02
+#### TC-023-007 · assisted · REQ-CON-06 · T-02c (D-17)
 
 - **Steps:** 1. Power on Raspberry Pi 5 with ESP32 Connected 2. During inference in the pipeline, the ESP32's GPIO pins should be removed 3. After a while, the GPIO connection should be reinstated
 - **Input:** ESP32 is reconnected after a disconnection.
@@ -336,19 +366,19 @@ with the boot service stopped.
 - **Input:** USB Camera is Connected
 - **Expected (workbook):** Device will proceed as intended to main pipeline
 
-#### TC-024-002 · assisted · REQ-CON-07, 08 · T-03
+#### TC-024-002 · assisted · REQ-CON-07, 08 · T-03b (start-up half), T-03c1 (spoken alert, in work), T-03c2 (beep beep, needs T-00b), T-00c (speech switch off, D-15)
 
 - **Steps:** 1. Power on Raspberry Pi 5
 - **Input:** USB Camera is not Connected
 - **Expected (workbook):** There should be a quick set of vibration pulse alongside a "Critical Error: Camera cannot be reached" audio error. This should be repeated every 10 seconds In terms of the pipeline, the system should catch the no devices exception and allow the device to proceed in mock mode temporarily. Device should also listen for cameras that may pop up in the list of devices to check if everything is okay.
 
-#### TC-024-003 · assisted · REQ-CON-07, 08 · T-03
+#### TC-024-003 · assisted · REQ-CON-07, 08 · T-03a (removal half), T-03c1 (spoken alert, in work), T-03c2 (beep beep, needs T-00b), T-00c (speech switch off, D-15)
 
 - **Steps:** 1. Power on Raspberry Pi 5 2. Disconnect USB Camera
 - **Input:** Initially have the USB camera connected, then simulate a disconnection
 - **Expected (workbook):** There should be a quick set of vibration pulse alongside a "Critical Error: Camera cannot be reached" audio error. This should be repeated every 10 seconds In terms of the pipeline, the system should catch the no devices exception and allow the device to proceed in mock mode temporarily. Device should also listen for cameras that may pop up in the list of devices to check if everything is okay.
 
-#### TC-024-004 · assisted · REQ-CON-09 · T-03
+#### TC-024-004 · assisted · REQ-CON-09 · T-03c1 (merged T-03d), T-00c
 
 - **Steps:** 1. Power on Raspberry Pi 5 2. Disconnect USB Camera 3. Reconnect USB Camera
 - **Input:** Have the USB camera disconnected initially, then connect it back to the RPI.
@@ -362,37 +392,37 @@ with the boot service stopped.
 - **Input:** USB Earphones is connected
 - **Expected (workbook):** Device will proceed as intended to main pipeline
 
-#### TC-025-002 · assisted · REQ-CON-10, 11 · T-04
+#### TC-025-002 · assisted · REQ-CON-10, 11 · T-04a (needs T-00b; D-18)
 
 - **Steps:** 1. Power on Raspberry Pi 5
 - **Input:** USB Earphones is not connected upon startup. In the controller panel, object detection should be enabled.
 - **Expected (workbook):** There should be a brief "strong weak, strong weak, strong weak" vibration output for all three vibration motors to indicate an error. This feedback should be relayed every 30 seconds.
 
-#### TC-025-003 · assisted · REQ-CON-10, 11 · T-04
+#### TC-025-003 · assisted · REQ-CON-10, 11 · T-04a (needs T-00b; D-18)
 
 - **Steps:** 1. Power on Raspberry Pi 5
 - **Input:** USB Earphones is not connected upon startup. In the controller panel, object detection should be disabled.
 - **Expected (workbook):** There should be a brief "strong weak, strong weak, strong weak" vibration output for all three vibration motors to indicate an error. This feedback should be only stated once.
 
-#### TC-025-004 · assisted · REQ-CON-10, 11 · T-04
+#### TC-025-004 · assisted · REQ-CON-10, 11 · T-04a (needs T-00b; D-18)
 
 - **Steps:** 1. Power on Raspberry Pi 5 with USB earphones connected 2. During inference in the pipeline, the USB connection should be removed
 - **Input:** USB Earphones is disconnected from GPIO after the device starts up. Object Detection in the controller board is enabled.
 - **Expected (workbook):** Once the connection has been removed, there should be a brief "strong weak, strong weak, strong weak" vibration output for all three vibration motors to indicate an error. This feedback should be relayed every 30 seconds.
 
-#### TC-025-005 · assisted · REQ-CON-10, 11 · T-04
+#### TC-025-005 · assisted · REQ-CON-10, 11 · T-04a (needs T-00b; D-18)
 
 - **Steps:** 1. Power on Raspberry Pi 5 with USB earphones connected 2. During inference in the pipeline, USB connection should be removed
 - **Input:** USB Earphones is disconnected from GPIO after the device starts up. Object Detection in the controller board is enabled.
 - **Expected (workbook):** Once the connection has been removed, there should be a brief "strong weak, strong weak, strong weak" vibration output for all three vibration motors to indicate an error. This feedback should be relayed once.
 
-#### TC-025-006 · assisted · REQ-CON-10, 11 · T-04
+#### TC-025-006 · assisted · REQ-CON-10, 11 · T-04a (needs T-00b; D-18)
 
 - **Steps:** 1. Power on Raspberry Pi 5 with USB earphones connected 2. In the control panel, the switch for the object detection must be turned off
 - **Input:** USB earphones is not connected to the GPIO Pins, Object Detection must be disabled mid-inference
 - **Expected (workbook):** Upon switching, There should be a brief "strong weak, strong weak, strong weak" vibration output for all three vibration motors to indicate an error. This will be done every 30 seconds.
 
-#### TC-025-007 · assisted · REQ-CON-12 · T-04
+#### TC-025-007 · assisted · REQ-CON-12 · T-04b (needs T-00b; D-17)
 
 - **Steps:** 1. Power on Raspberry Pi 5 with ESP32 Connected 2. During inference in the pipeline, the ESP32's GPIO pins should be removed 3. After a while, the GPIO connection should be reinstated
 - **Input:** USB earphones reconnected after a disconnection.

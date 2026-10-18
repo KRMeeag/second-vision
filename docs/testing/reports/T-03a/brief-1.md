@@ -1,10 +1,13 @@
 # T-03a · Camera removed while running: stay up, restart vision when a camera returns · Brief, attempt 1
 
 > **Written during the 2026-10-15 dry run; the user's answers to the pre-start questions are
-> recorded at the end (2026-10-15).** Not yet sent to a Developer. No baseline has been taken
-> yet. The Lead reviews the answers, amends anything they change, then starts attempt 1.
+> recorded at the end (2026-10-15). Amended by the Lead on 2026-10-16 before attempt 1:**
+> T-10a is accepted (pytest, the `gst` and `device` levels, the bus helpers and the
+> `camera_unplug` fixture exist), the Lead re-read `app.py` and the library's `bus_call`, and the
+> sections "Design notes from the Lead's reading" and "Testing notes (2026-10-16)" were added.
+> Nothing in the acceptance criteria changed.
 
-- Date: 2026-10-15
+- Date: 2026-10-15 (amended 2026-10-16)
 - Requirements: REQ-CON-08, **only its "removed while running" half**. Quoted from REQUIREMENTS.md:
   > when the device runs as deployed (started at boot) and the camera is absent at start-up or
   > removed while running:
@@ -27,11 +30,11 @@
   timing on the GLib main loop, shared with a panel thread that can request rebuilds at any
   moment (`config_reader.py:103-104`).
 - Tester model: **opus**, because the Developer is Opus (the Lead's routing rule).
-- Test environment: the tests below need GStreamer, which only `my_hailo_env` has, and that
-  environment needs pytest first (task T-10a on the board). Run them with
-  `my_hailo_env/bin/python -m pytest`; the hardware-free suite still runs in the Poetry
-  environment.
-- Baseline: not taken yet. Before attempt 1 it goes to `.claude/baselines/T-03a/`.
+- Test environment: the tests need GStreamer, which only `my_hailo_env` has. T-10a (accepted
+  2026-10-16) provides pytest there, the `gst` marker, `tests/gst_helpers.py` and the default
+  60 s timeout. Run them with `my_hailo_env/bin/python -m pytest tests/ -q`; the hardware-free
+  suite still runs in the Poetry environment (the `gst` tests skip there). See "Testing notes".
+- Baseline: .claude/baselines/T-03a/ (taken 2026-10-16, before attempt 1).
 
 ## What happens today (checked by the Lead against the code, 2026-10-15)
 
@@ -201,6 +204,79 @@ Mock evidence alone leaves criteria 1 to 4 at READY with partial evidence, never
   scratch folder and point the test at it, or explain the method you used.
 - Don't run the real pipeline, unplug anything, or stop services. The device runs belong to the
   Tester and to the Lead with the user. On 2026-10-15 `second-vision.service` was active.
+
+## Design notes from the Lead's reading (2026-10-16; hints, not instructions)
+
+The Lead re-read `pipeline/app.py` and the library's `gstreamer_app.py` (byte-identical to the
+workbench copy as of 2026-10-15). The Developer decides the design and owns the Hailo-docs check.
+Facts to start from, so nothing is rediscovered:
+
+1. **Where the errors go.** `bus.connect("message", self.bus_call, self.loop)` is made in the
+   library's `run()` and again in its `_rebuild_pipeline()`. Both look `bus_call` up on `self`, so
+   an override of `bus_call` in `SecondVisionApp` is used on every pipeline, the first and every
+   rebuilt one. Any ERROR in the library's `bus_call` sets `error_occurred` and calls
+   `shutdown()`. An override must send **only camera-source** messages to the new handling and
+   everything else to `super().bus_call(...)`.
+2. **Naming the camera source.** `SOURCE_PIPELINE` names the v4l2 element `source` (library
+   `gstreamer_helper_pipelines.py`, `SOURCE_PIPELINE(name="source", …)`); the decode helpers are
+   `source_queue_decode` and `source_decodebin`. An ERROR's `message.src` is the element that
+   failed. Classify by that element, as the brief's R3 says; do not match on message text.
+3. **End-of-stream has no useful `message.src`.** A bus EOS message is posted by the pipeline
+   itself, so it cannot be traced to an element. In these pipelines nothing but the live camera
+   can end a stream (`source_type` is not `"file"`), so an EOS on a non-file source is a camera
+   loss. Say in your report how you justified treating it so, and test that a *file* source
+   (`source_type == "file"`) keeps the library's looping behaviour.
+4. **`video_source` is fixed at construction.** The library resolves `/dev/videoN` once and
+   `get_source_pipeline()` reads `self.video_source`. A camera that returns under another node
+   needs `self.video_source` updated before the rebuild (criterion 4's last paragraph).
+5. **The library's `_rebuild_pipeline()` quits the loop on any failure** (R4). When a rebuild
+   onto a returned camera fails (the node exists but cannot be opened yet, or the device has not
+   settled), the program must go back to "camera lost" and try later, not exit. The subclass may
+   implement its own rebuild for this path; it must still go through `_release_old_pipeline()`'s
+   ordering and run on the main loop.
+6. **Checking for a camera costs processes.** `get_usb_video_devices()` runs `udevadm` once per
+   `/dev/video*` node (about 25 nodes on this Pi: the camera's four plus the SoC's decoders). A
+   check on the GLib thread blocks the loop for that long. A small daemon thread that polls and
+   then calls `GLib.idle_add` with the result keeps the loop free, honours `shutdown_event` and
+   needs no extra locking, because the pipeline is still only touched on the main loop. Choose
+   the interval and justify it (R6).
+7. **After a loss, `self.pipeline` is `None`.** `shutdown()` already handles that (the `Shutdown
+   during pipeline rebuild — quitting main loop directly` path), but the library's `run()` then
+   hits `None.set_state(...)` in its cleanup, which it catches and logs. Check that the exit
+   code stays 0 after a loss followed by a clean stop (R5) and that the log is not misleading.
+8. **The panel thread calls `trigger_rebuild()`** and reads `app.pipeline`-related state only
+   through it. Keep any new "camera lost" flag readable from a thread without a lock problem
+   (a plain attribute set on the main loop is enough) and never touch GStreamer from the thread.
+
+## Testing notes (2026-10-16)
+
+- **Developer tests**: `tests/test_camera_loss.py`, marked `gst` (T-10a: they skip in the Poetry
+  environment and run in `my_hailo_env`). Use the helpers in `tests/gst_helpers.py`
+  (`make_test_pipeline`, `post_error`, `post_eos`, `bus_watch`, `run_main_loop`) and the
+  real `GStreamerApp` base the harness pre-imports. Put the UAT case and requirement in the
+  names (`test_tc024_003_con08_<what>`) so the evidence log lists them, and say in each
+  docstring that this is the **removal half** of TC-024-003 only (the alert half is T-03c), so
+  the evidence log's case line is read in that light.
+- **Developer: do not use `--run-device`**, do not run `usb_sim.py`, do not start the real app.
+  The Tester does.
+- **Tester, device level** (`tests/uat/`, marker `device`, `--run-device`, boot service stopped,
+  checked first): launch the program as the boot service does (`scripts/run.sh --input
+  /dev/video0 --width 640 --height 480 --serial-port /dev/serial0 --config-port /dev/ttyAMA3`,
+  without `SV_SERVICE=1`) as a subprocess, capture its output, and use the `camera_unplug`
+  fixture. Stop the subprocess by its PID. Cover at least: unplug in `both`, `depth`, `detection`
+  and `none` modes; replug; repeated unplugs (three in a row); an unplug while a mode switch is
+  pending; a clean stop (SIGINT, and SIGTERM) while the camera is missing.
+- **Tool defect to design around (found by the T-10a Tester, 2026-10-16).** Each
+  `usb_sim.py detach --for N` leaves a timer that, after N s, re-attaches *whichever* detach is
+  current. A 60 s detach was re-attached after 7 s. So: use `--for 20` or less, call `attach`
+  explicitly when a test is done, wait at least the previous `--for` before the next detach, and
+  assert the camera is still absent before relying on it. The tool is outside the workflow's
+  write access; the Lead reports the defect to the user.
+- The fixture's "detach for 10 s" is really about 0.1 s in the harness's own test, because the
+  test attaches as soon as the nodes vanish. These tests must hold the camera away themselves
+  (sleep, then attach).
+- Save every run with `my_hailo_env/bin/python scripts/uat_evidence.py --task T-03a --device
+  --tests <paths> --label <name>`, or as a pytest log, under `reports/T-03a/evidence/`.
 
 ## References
 

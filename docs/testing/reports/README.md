@@ -9,7 +9,9 @@ adds new ones.
 | `brief-<n>.md` | Lead | Before the Developer starts attempt *n* |
 | `dev-report-<n>.md` | Developer | When attempt *n*'s implementation is done |
 | `test-report-<n>.md` | Tester | When verification of attempt *n* is done |
-| `decision-<n>.md` | Lead | After reviewing attempt *n*: ACCEPTED, RETURNED or BLOCKED |
+| `decision-<n>.md` | Lead | After reviewing attempt *n*: ACCEPTED, AWAITING-HANDS-ON, RETURNED or BLOCKED |
+| `changes-<n>.patch` | Lead | With the decision: the task's own changes (the per-task diff), so each task can be reviewed and committed on its own |
+| `evidence/` | Tester | Logs of the test runs it relies on, for the thesis panel |
 
 **Baselines.** Before attempt 1 the Lead copies `src/`, `tests/` and `scripts/` to
 `.claude/baselines/<task>/` and touches `.stamp` there to mark the time. That folder is local
@@ -55,7 +57,7 @@ A mocked test never proves a physical component works.
 - UAT cases: TC-… (see uat-snapshot.yaml for the verbatim text)
 - Priority / depends on:
 - Developer: developer-sonnet | developer-opus. Why: <one or two sentences against the routing rubric>
-- Tester model: sonnet | opus (opus when the Developer is)
+- Tester model: sonnet | opus (opus only when the task met the Opus bar, TASK-BOARD "Model routing")
 - Baseline: .claude/baselines/<task>/ (taken YYYY-MM-DD HH:MM, before attempt 1)
 
 ## Goal
