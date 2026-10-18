@@ -9,17 +9,24 @@ wearer instead (docs/testing/URGENT-TESTS.md section 1; the user's decisions of 
     "Camera view is back."                                                     once, when it clears
 
 How it looks: once a second, on one camera frame taken before any AI runs (pipeline/app.py takes it),
-a tiny grey picture (every 16th pixel in each direction: 40 x 30 = 1,200 pixels of a 640 x 480 frame).
-  * "Blocked or dark": the 95th-percentile brightness under 40 (0 to 255), or the mean under 14. A
+a tiny grey picture: the average brightness of each 16 x 16 block (40 x 30 = 1,200 values for a 640 x 480
+frame). Block averages, not single pixels: this low-light camera turns its gain up in the dark, and a
+covered lens comes out as coloured noise whose bright speckles would hide that the picture is black.
+  * "Blocked or dark": the 95th percentile of the blocks under 40 (0 to 255), or their mean under 14. A
     dark room with a lamp that fills more than about 5 % of the view is not flagged; one that fills less
     is (the models cannot see in it either). It cannot tell a covered lens from a dark room, and does not
     need to: the wearer should be told either way.
-  * "Too bright": the mean over 240.
+  * "Too bright": at least 40 % of the blocks at the camera's white (230 or more).
   * Three checks in a row (about 3 s) to raise, three good ones to clear, so a blink or a passing hand
     never triggers it and it does not flap. A change straight from dark to bright (or back) needs three
     checks of the new kind and says the new sentence, not "Camera view is back."
-The thresholds are the ones agreed in URGENT-TESTS.md, PLACEHOLDERS until real footage sets them: each
-change of what the check sees is logged with the measured mean and 95th percentile, for that purpose.
+The numbers come from the first real footage (the user's screenshots, 2026-10-19), which the first rules
+missed: a finger over the lens measured mean 19.7 and pixel 95th percentile 54 (noise), but block 95th
+percentile 28 (dark, with room to spare under 40); a phone flash measured mean 217, because this camera's
+white tops out at about 241, so the agreed "mean over 240" could never fire, but 62 % of the blocks at
+white (bright, well over 40 %). Still to check on the device: a dim room and a normal room are not
+flagged. Each change of what the check sees is logged with the measured values; SV_VIEW_LOG=1 logs every
+check, for a calibration walk-round; the screen shows them live (core/status_view.py).
 
 These alerts are not "a part is missing" (core/connections.py MISSING_ALERTS): the camera is connected,
 so they do not hold back "Everything is connected". While the camera itself is missing the
@@ -28,15 +35,23 @@ camera-missing alert takes over: pipeline/app.py calls reset(), which withdraws 
 Every alert raised here is a failsafe alert (D41): spoken even with the speech switch off.
 """
 
+import os
 import threading
 
 import numpy as np
 
+try:  # the block averages use cv2 when it is there (it always is on the device); numpy otherwise
+    import cv2
+except ImportError:  # pragma: no cover - a machine without OpenCV
+    cv2 = None
+
 VIEW_CHECK_SECONDS = 1.0        # one look per second
-VIEW_SAMPLE_STEP = 16           # every 16th pixel, each direction
-DARK_P95_BELOW = 40.0           # PLACEHOLDER (URGENT-TESTS.md): 95th percentile under this is dark
-DARK_MEAN_BELOW = 14.0          # PLACEHOLDER: mean under this is dark (the paper's value)
-BRIGHT_MEAN_ABOVE = 240.0       # PLACEHOLDER: mean over this is too bright
+VIEW_SAMPLE_STEP = 16           # one value per 16 x 16 block: its average, so sensor noise cancels
+DARK_P95_BELOW = 40.0           # 95th percentile of the blocks under this is dark (URGENT-TESTS.md)
+DARK_MEAN_BELOW = 14.0          # mean of the blocks under this is dark (the paper's value)
+WHITE_LEVEL = 230.0             # a block this bright is at the camera's white (this one tops out near 241)
+BRIGHT_WHITE_SHARE = 0.40       # at least this share of the blocks at white is too bright
+VIEW_LOG_EVERY_CHECK = os.environ.get("SV_VIEW_LOG", "0") == "1"     # print every check (calibration)
 VIEW_CONFIRM_CHECKS = 3         # checks in a row to raise, and to clear
 VIEW_ALERT_SECONDS = 30.0       # how often a raised view alert is said again
 
@@ -57,37 +72,51 @@ _LUMA = np.array([0.299, 0.587, 0.114], dtype=np.float32)       # ITU-R BT.601, 
 
 def grey_sample(frame, step: int = VIEW_SAMPLE_STEP) -> np.ndarray:
     """
-    The tiny grey picture: every `step`-th pixel of `frame` in each direction, as float32 brightness
+    The tiny grey picture: the average of each `step` x `step` block of `frame`, as float32 brightness
     0 to 255. `frame` is what hailo_apps' get_numpy_from_buffer() returns: an RGB (H, W, 3) array, a
     YUYV (H, W, 2) array (channel 0 is the brightness), an NV12 (Y plane, UV plane) pair, or a grey
-    (H, W) array. Raises ValueError for anything else.
+    (H, W) array. Raises ValueError for anything else, or for a frame smaller than one block.
     """
     if isinstance(frame, (tuple, list)):        # NV12: (Y plane, UV plane)
         frame = frame[0]
     frame = np.asarray(frame)
     if frame.ndim == 2:
-        return frame[::step, ::step].astype(np.float32)
+        return _block_means(frame, step).astype(np.float32)
     if frame.ndim == 3 and frame.shape[2] >= 3:
-        return frame[::step, ::step, :3].astype(np.float32) @ _LUMA
+        return _block_means(np.ascontiguousarray(frame[..., :3]), step).astype(np.float32) @ _LUMA
     if frame.ndim == 3 and frame.shape[2] == 2:     # YUYV: brightness in channel 0
-        return frame[::step, ::step, 0].astype(np.float32)
+        return _block_means(np.ascontiguousarray(frame[..., 0]), step).astype(np.float32)
     raise ValueError(f"not a picture: shape {frame.shape}")
 
 
+def _block_means(plane, step):
+    """The average of each whole step x step block (a partial block at the edge is left out)."""
+    rows, cols = plane.shape[0] // step, plane.shape[1] // step
+    if rows == 0 or cols == 0:
+        raise ValueError(f"frame smaller than one {step} x {step} block: shape {plane.shape}")
+    whole = plane[:rows * step, :cols * step]
+    if cv2 is not None:                 # INTER_AREA at a whole-number factor is exactly the block mean
+        return cv2.resize(whole, (cols, rows), interpolation=cv2.INTER_AREA)
+    return whole.astype(np.float32).reshape(rows, step, cols, step, *plane.shape[2:]).mean(axis=(1, 3))
+
+
 def view_stats(grey) -> tuple:
-    """(mean, 95th percentile) of a grey sample."""
+    """(mean, 95th percentile, share at white) of a grey sample."""
     grey = np.asarray(grey, dtype=np.float32)
     if grey.size == 0:
         raise ValueError("empty sample")
-    return float(grey.mean()), float(np.percentile(grey, 95))
+    return float(grey.mean()), float(np.percentile(grey, 95)), float(np.mean(grey >= WHITE_LEVEL))
 
 
 def classify(grey) -> str:
     """VIEW_DARK, VIEW_BRIGHT or VIEW_OK for one grey sample (see the module docstring)."""
-    mean, p95 = view_stats(grey)
+    return _kind(*view_stats(grey))
+
+
+def _kind(mean: float, p95: float, white: float) -> str:
     if p95 < DARK_P95_BELOW or mean < DARK_MEAN_BELOW:
         return VIEW_DARK
-    if mean > BRIGHT_MEAN_ABOVE:
+    if white >= BRIGHT_WHITE_SHARE:
         return VIEW_BRIGHT
     return VIEW_OK
 
@@ -109,7 +138,7 @@ class CameraViewWatch:
         self._state = VIEW_OK
         self._candidate = None      # the kind being seen that differs from _state
         self._count = 0             # checks in a row of _candidate
-        self._last_stats = None     # (mean, 95th percentile) of the last check, for the status display
+        self._last_stats = None     # (mean, 95th percentile, share at white) of the last check, for the display
 
     @property
     def state(self) -> str:
@@ -119,26 +148,27 @@ class CameraViewWatch:
         """
         What the check sees now, for the status display (core/status_board.py): the settled state,
         the kind being confirmed and how many checks of it so far, the checks it takes, and the
-        last check's mean and 95th percentile (None before the first).
+        last check's mean, 95th percentile and share at white (None before the first).
         """
         with self._lock:
-            mean, p95 = self._last_stats if self._last_stats is not None else (None, None)
+            mean, p95, white = self._last_stats if self._last_stats is not None else (None, None, None)
             return {"state": self._state, "candidate": self._candidate, "count": self._count,
-                    "confirm": self._confirm, "mean": mean, "p95": p95}
+                    "confirm": self._confirm, "mean": mean, "p95": p95, "white": white}
 
     def observe_frame(self, frame) -> str:
         """Classify one camera frame and act on it. Returns what this frame looked like."""
-        grey = grey_sample(frame)
-        mean, p95 = view_stats(grey)
-        kind = classify(grey)
-        self.observe(kind, mean, p95)
+        mean, p95, white = view_stats(grey_sample(frame))
+        kind = _kind(mean, p95, white)
+        if VIEW_LOG_EVERY_CHECK:
+            print(f"[VIEW] check: {kind}{_stats_note(mean, p95, white)}")
+        self.observe(kind, mean, p95, white)
         return kind
 
-    def observe(self, kind: str, mean: float = None, p95: float = None) -> None:
-        """One check's result (VIEW_OK, VIEW_DARK or VIEW_BRIGHT)."""
+    def observe(self, kind: str, mean: float = None, p95: float = None, white: float = None) -> None:
+        """One check's result (VIEW_OK, VIEW_DARK or VIEW_BRIGHT), with its measured values if known."""
         with self._lock:
             if mean is not None and p95 is not None:
-                self._last_stats = (mean, p95)
+                self._last_stats = (mean, p95, white)
             if kind == self._state:
                 self._candidate, self._count = None, 0
                 return
@@ -146,12 +176,12 @@ class CameraViewWatch:
                 self._candidate, self._count = kind, 0
             self._count += 1
             if self._count == 1:
-                print(f"[VIEW] the camera looks {kind}{_stats_note(mean, p95)}; "
+                print(f"[VIEW] the camera looks {kind}{_stats_note(mean, p95, white)}; "
                       f"{self._confirm} checks in a row to act on it")
             if self._count < self._confirm:
                 return
             self._move_to(kind)
-            print(f"[VIEW] camera view is now {kind}{_stats_note(mean, p95)}")
+            print(f"[VIEW] camera view is now {kind}{_stats_note(mean, p95, white)}")
             self._state, self._candidate, self._count = kind, None, 0
 
     def reset(self) -> None:
@@ -174,5 +204,8 @@ class CameraViewWatch:
             self._alerts.raise_alert(VIEW_BACK_ALERT, VIEW_BACK_TEXT)
 
 
-def _stats_note(mean, p95) -> str:
-    return "" if mean is None or p95 is None else f" (mean {mean:.1f}, 95th percentile {p95:.1f})"
+def _stats_note(mean, p95, white=None) -> str:
+    if mean is None or p95 is None:
+        return ""
+    at_white = "" if white is None else f", {white:.0%} at white"
+    return f" (mean {mean:.1f}, 95th percentile {p95:.1f}{at_white})"

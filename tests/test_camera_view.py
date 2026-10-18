@@ -84,14 +84,81 @@ def test_the_wording_and_the_numbers_are_the_agreed_ones():
     assert VIEW_DARK_TEXT == "Camera is blocked or it is too dark. Obstacle warnings may be missing."
     assert VIEW_BRIGHT_TEXT == "Camera is facing very bright light. Obstacle warnings may be missing."
     assert VIEW_BACK_TEXT == "Camera view is back."
-    assert (cv.DARK_P95_BELOW, cv.DARK_MEAN_BELOW, cv.BRIGHT_MEAN_ABOVE) == (40.0, 14.0, 240.0)
+    # "Too bright" was agreed as "mean over 240". This camera's white tops out near 241, so that could never
+    # fire (the user's phone-flash test, 2026-10-19): it became "40 % of the view at white (230+)".
+    assert (cv.DARK_P95_BELOW, cv.DARK_MEAN_BELOW, cv.WHITE_LEVEL, cv.BRIGHT_WHITE_SHARE) == (40.0, 14.0, 230.0, 0.40)
     assert (cv.VIEW_CONFIRM_CHECKS, cv.VIEW_ALERT_SECONDS, cv.VIEW_CHECK_SECONDS) == (3, 30.0, 1.0)
 
 
 def test_the_sample_is_tiny_and_grey():
     grey = grey_sample(rgb(100))
-    assert grey.shape == (30, 40) and grey.dtype == np.float32      # 1,200 pixels of 307,200
+    assert grey.shape == (30, 40) and grey.dtype == np.float32      # 1,200 block averages of 307,200 pixels
     assert np.allclose(grey, 100.0, atol=0.01)
+
+
+def test_each_value_is_the_average_of_its_16_by_16_block():
+    frame = np.zeros((H, W), np.uint8)
+    frame[:16, :16] = 160                                          # one block, half of it bright...
+    frame[:8, :16] = 0
+    assert grey_sample(frame)[0, 0] == pytest.approx(80.0, abs=0.6)
+    assert grey_sample(frame)[0, 1] == 0.0
+
+
+def test_block_averages_cancel_the_noise_a_covered_low_light_camera_makes():
+    """Gain turned up behind a finger: mean 20, but bright speckles everywhere."""
+    noisy = np.clip(RNG.normal(20, 40, (H, W, 3)), 0, 255).astype(np.uint8)
+    one_pixel_each = noisy[::16, ::16].astype(np.float32) @ np.array([0.299, 0.587, 0.114], np.float32)
+    assert np.percentile(one_pixel_each, 95) > cv.DARK_P95_BELOW, "single pixels would call this a lit scene"
+    assert classify(grey_sample(noisy)) == VIEW_DARK
+
+
+def test_the_numpy_way_gives_the_same_blocks_as_opencv(monkeypatch):
+    frame = RNG.integers(0, 256, (H, W, 3), dtype=np.uint8)
+    with_cv2 = grey_sample(frame)
+    monkeypatch.setattr(cv, "cv2", None)
+    assert np.allclose(grey_sample(frame), with_cv2, atol=0.6)     # OpenCV rounds each block to a whole number
+
+
+def test_odd_sizes_leave_out_the_partial_edge_blocks_and_a_tiny_frame_is_an_error():
+    assert grey_sample(np.zeros((442, 639, 3), np.uint8)).shape == (27, 39)
+    with pytest.raises(ValueError):
+        grey_sample(np.zeros((10, 10, 3), np.uint8))
+
+
+# The first real footage (the user's screenshots of the cv2 window, 2026-10-19; the picture area, with the
+# overlay's divider lines painted over from the next columns). The first rules missed both.
+DATA = TESTS_DIR / "data"
+
+
+def real_frame(name):
+    import cv2
+    return cv2.cvtColor(cv2.imread(str(DATA / name)), cv2.COLOR_BGR2RGB)
+
+
+def test_a_finger_over_the_real_camera_is_blocked():
+    frame = real_frame("camera-view-finger.png")
+    mean, p95, white = view_stats(grey_sample(frame))
+    assert classify(grey_sample(frame)) == VIEW_DARK, (mean, p95, white)
+    assert p95 < cv.DARK_P95_BELOW - 8, "the margin it was set with: 28 against 40"
+    pixels = frame[::16, ::16].astype(np.float32) @ np.array([0.299, 0.587, 0.114], np.float32)
+    assert pixels.mean() > 14 and np.percentile(pixels, 95) > 40, "why the first rules missed it: the noise"
+
+
+def test_a_phone_flash_into_the_real_camera_is_too_bright():
+    frame = real_frame("camera-view-phone-flash.png")
+    mean, p95, white = view_stats(grey_sample(frame))
+    assert classify(grey_sample(frame)) == VIEW_BRIGHT, (mean, p95, white)
+    assert white >= cv.BRIGHT_WHITE_SHARE + 0.15, "the margin it was set with: 62 % against 40 %"
+    assert grey_sample(frame).max() < 245 and mean < 240, "why the first rule missed it: this camera's white is about 241"
+
+
+def test_every_check_is_logged_only_when_asked(monkeypatch, capsys):
+    watch = CameraViewWatch(AlertScheduler(PriorityMailbox()))
+    watch.observe_frame(rgb(120))
+    assert "[VIEW] check" not in capsys.readouterr().out
+    monkeypatch.setattr(cv, "VIEW_LOG_EVERY_CHECK", True)
+    watch.observe_frame(rgb(120))
+    assert "[VIEW] check: ok (mean 120.0, 95th percentile 120.0, 0% at white)" in capsys.readouterr().out
 
 
 def test_the_grey_level_weighs_green_most_as_the_eye_does():
@@ -122,6 +189,8 @@ def test_every_frame_format_hailo_apps_hands_out_is_read():
     ("a plain grey wall", rgb(150), VIEW_OK),
     ("a plain white wall in daylight", rgb(220), VIEW_OK),
     ("a dark room with a lamp filling a tenth of the view", with_patch(5, 255, 0.10), VIEW_OK),
+    ("a bright window filling a third of the view", with_patch(120, 241, 0.33), VIEW_OK),
+    ("a bright window filling more than half of it", with_patch(120, 241, 0.55), VIEW_BRIGHT),
     ("facing a bright light", rgb(250), VIEW_BRIGHT),
     ("pure white (sun in the lens)", rgb(255), VIEW_BRIGHT),
     ("noise", RNG.integers(0, 256, (H, W, 3), dtype=np.uint8), VIEW_OK),
@@ -135,19 +204,22 @@ def test_a_lamp_too_small_to_light_the_room_still_counts_as_dark():
     assert classify(grey_sample(with_patch(5, 255, 0.02))) == VIEW_DARK
 
 
-def test_the_boundaries_are_strict():
+def test_the_boundaries():
     grey = np.full((30, 40), 40.0, np.float32)                     # 95th percentile exactly 40: not dark
     assert classify(grey) == VIEW_OK
     grey[:, :] = 39.9
     assert classify(grey) == VIEW_DARK
     mostly_black = np.zeros((30, 40), np.float32)                  # the mean rule on its own: p95 stays high
     mostly_black[:3, :] = 140.0                                    # 10 % at 140: mean 14.0, p95 140
-    assert view_stats(mostly_black) == pytest.approx((14.0, 140.0))
+    assert view_stats(mostly_black) == pytest.approx((14.0, 140.0, 0.0))
     assert classify(mostly_black) == VIEW_OK
     mostly_black[:3, :] = 139.0                                    # mean 13.9
     assert classify(mostly_black) == VIEW_DARK
-    assert classify(np.full((30, 40), 240.0, np.float32)) == VIEW_OK
-    assert classify(np.full((30, 40), 240.5, np.float32)) == VIEW_BRIGHT
+    scene = np.full((30, 40), 120.0, np.float32)                   # "too bright" counts blocks at white
+    scene[:12, :] = 230.0                                          # 12 rows of 30: exactly 40 %
+    assert view_stats(scene)[2] == pytest.approx(0.40) and classify(scene) == VIEW_BRIGHT
+    scene[11, :] = 229.9                                           # just under white: 36.7 %
+    assert classify(scene) == VIEW_OK
 
 
 def test_an_empty_sample_is_an_error_not_a_verdict():

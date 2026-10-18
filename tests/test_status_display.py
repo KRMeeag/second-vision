@@ -224,7 +224,7 @@ def checks(**over):
 
 
 BLOCKED = Check("view", "Camera view", "VIEW", PROBLEM, "BLOCKED OR TOO DARK", "BLOCKED",
-                "brightness 0-255: average 6, top 5 %: 11")
+                "brightness 0-255: average 6, top 5 %: 11, at white: 0 %", "avg 6  top 5% 11  white 0%")
 LONG = "Camera is blocked or it is too dark. Obstacle warnings may be missing."
 
 
@@ -248,12 +248,22 @@ def test_all_well_is_one_quiet_strip():
     all_inside(layout, W, H)
 
 
-def test_a_problem_is_a_red_banner_with_its_measurements():
+def test_a_problem_is_a_red_banner_and_the_measurements_are_live_top_right():
     layout = sv.status_layout(Status(checks(view=BLOCKED)), W, H, now=0.0)
     texts = [(t, color) for t, _, _, color, _ in layout["lines"]]
-    assert texts[0] == ("CAMERA VIEW: BLOCKED OR TOO DARK", sv.COLORS[PROBLEM])
-    assert texts[1][0] == "brightness 0-255: average 6, top 5 %: 11"
+    assert ("CAMERA VIEW: BLOCKED OR TOO DARK", sv.COLORS[PROBLEM]) in texts
     assert ("BLOCKED", sv.COLORS[PROBLEM]) in [(p[0], p[3]) for p in layout["strip"]]
+    readout = [(t, org) for t, org, _, color, _ in layout["lines"] if t.startswith("VIEW ")]
+    assert readout and readout[0][0] == "VIEW  avg 6  top 5% 11  white 0%"
+    text, (x, y) = readout[0]
+    assert y == sv.READOUT_Y and x > W // 2, "top right, clear of the overlay's FPS at the top left"
+    all_inside(layout, W, H)
+
+
+def test_the_live_readout_is_there_whatever_the_state():
+    ok = Check("view", "Camera view", "VIEW", OK, "clear", "OK", readout="avg 118  top 5% 214  white 3%")
+    layout = sv.status_layout(Status(checks(view=ok)), W, H, now=0.0)
+    assert [t for t, *_ in layout["lines"]] == ["VIEW  avg 118  top 5% 214  white 3%"]
 
 
 def test_a_change_being_confirmed_is_yellow():

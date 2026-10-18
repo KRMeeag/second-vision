@@ -3,8 +3,10 @@
 What is drawn (a status from core/status_board.py):
   * along the bottom, every check in a strip: CAMERA OK  VIEW OK  GLASSES OK  EARPHONES OK  PANEL OK, each
     word coloured: green working, red failing, yellow being confirmed, grey not in use;
-  * at the top, one red banner per failing check ("CAMERA VIEW: BLOCKED OR TOO DARK"), with its measured
-    values under it, and a yellow line for a change being confirmed ("Camera view: looks dark (2 of 3)");
+  * at the top, one red banner per failing check ("CAMERA VIEW: BLOCKED OR TOO DARK"), and a yellow line
+    for a change being confirmed ("Camera view: looks dark (2 of 3)");
+  * top right, always, what the camera view check measured last ("VIEW avg 118  top 5% 214  white 3%"): live
+    numbers for setting its thresholds, and for an audience to watch them move;
   * just above the strip, for SAID_SECONDS, the last failsafe sentence the device said, since only the
     wearer hears the earphones.
 Text goes through core/depth_view.py's put_plated (a darkened plate, so it reads on any picture) and
@@ -23,7 +25,6 @@ from second_vision.core.status_board import OFF, OK, PENDING, PROBLEM, SAID_SECO
 
 COLORS = {OK: (80, 220, 80), PROBLEM: (60, 60, 255), PENDING: (0, 215, 255), OFF: (160, 160, 160)}  # BGR
 LABEL_COLOR = (235, 235, 235)
-DETAIL_COLOR = (235, 235, 235)
 SAID_COLOR = (255, 255, 0)          # cyan
 CANVAS_BG = (30, 30, 30)
 
@@ -32,9 +33,11 @@ STRIP_H = 30
 STRIP_SCALE = 0.45
 BANNER_TOP = 64                     # first banner baseline: under the overlay's "FPS:" at y=30
 BANNER_SCALE = 0.7
-DETAIL_SCALE = 0.5
 PENDING_SCALE = 0.6
 SAID_SCALE = 0.55
+READOUT_SCALE = 0.5
+READOUT_Y = 26                      # top right, level with the overlay's "FPS:"
+READOUT_COLOR = (235, 235, 235)
 GAP = 14                            # between strip items
 
 
@@ -61,6 +64,12 @@ def status_layout(status, width: int, height: int, now: float) -> dict:
     limit = (said_lines[0][1][1] - 26) if said_lines else strip_top - 8
 
     lines = []
+    view = status.get("view")
+    if view is not None and view.readout:
+        text, scale = fit_text(f"VIEW  {view.readout}", max_w // 2, READOUT_SCALE, 1)
+        text_w = cv2.getTextSize(text, FONT, scale, 1)[0][0]
+        lines.append((text, (width - MARGIN - text_w, READOUT_Y), scale, READOUT_COLOR, 1))
+
     y = BANNER_TOP
     for c in status.problems() + status.pending():
         problem = c.state == PROBLEM
@@ -69,12 +78,7 @@ def status_layout(status, width: int, height: int, now: float) -> dict:
         if y > limit:
             break
         lines.append((text, (MARGIN, y), scale, COLORS[c.state], 2))
-        y += 26
-        if c.detail and y <= limit:
-            text, scale = fit_text(c.detail, max_w, DETAIL_SCALE, 1)
-            lines.append((text, (MARGIN + 2, y), scale, DETAIL_COLOR, 1))
-            y += 24
-        y += 6 if problem else 0
+        y += 32 if problem else 28
     return {"strip_top": strip_top, "strip": strip, "lines": lines + said_lines}
 
 

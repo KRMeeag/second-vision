@@ -54,6 +54,11 @@ Nothing else needs reading up front: not HANDOFF.md, the task board or old trans
   prints each change as a `[CHECK]` line and keeps it on `user_data.status`; the detection overlay draws it on the
   picture (`core/status_view.py`, through `depth_view.put_plated`); with no live picture the app shows a dark status
   screen. The depth window is not touched. Preview: `reports/DEMO/evidence/status-display-preview.png`.
+- **F5 rules changed after real footage** (2026-10-19; end of [reports/DEMO/F5.md](reports/DEMO/F5.md)). On the device a finger
+  and a phone flash were missed. Now: 16x16 block averages (noise cancels); dark = blocks' 95th percentile under 40 or
+  mean under 14; too bright = 40 % of blocks at white (230+; this camera's white is about 241, so "mean over 240" could
+  never fire). Both real frames are test fixtures in `tests/data/`. The screen shows the measured numbers live, top right;
+  `SV_VIEW_LOG=1` prints every check. **The user still has to check a dim and a normal room stay clear.**
   **Next: the batched device session (F0 to F6), then F8.** Both need the boot service stopped: ask the user.
 - **The agents are paused.** No Lead, Developer or Tester run is alive. **Do not start the Lead** or
   `lead_unattended.sh` until the user says so.
@@ -84,8 +89,8 @@ Do not revert, stash or reset anything.
   - `tests/test_camera_alerts*.py`. No defect found; the device check is pending.
   - The tree as it was before this work is in `.claude/baselines/T-03c1/`; the brief is
     `reports/T-03c1/brief-1.md`.
-- **Test baseline (last full run, after the status display):** the Poetry suite gave 1021 passed, 216 skipped, 0 failed;
-  `my_hailo_env` gave 1120 passed, 117 skipped, 0 failed. Four strict `xfail` tests (two test
+- **Test baseline (last full run, after the F5 rule change):** the Poetry suite gave 1031 passed, 216 skipped, 0 failed;
+  `my_hailo_env` gave 1130 passed, 117 skipped, 0 failed. Four strict `xfail` tests (two test
   functions, one of them run with three delays) in `tests/uat/test_t00a_alert_scheduler.py` are expected
   failures until F7.
 

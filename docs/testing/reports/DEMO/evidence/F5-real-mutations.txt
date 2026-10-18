@@ -1,0 +1,8 @@
+ 0 single pixels again, not block averages          killed: 1 failed, 2 passed in 1.00s
+ 1 the mean-over-240 rule back                      killed: 1 failed, 7 passed in 1.00s
+ 2 white starts at 245                              killed: 1 failed in 0.94s
+ 3 too bright needs 70 % at white                   killed: 1 failed in 0.94s
+ 4 white boundary not inclusive                     killed: 1 failed, 24 passed in 1.02s
+ 5 the numpy fallback is wrong                      killed: 1 failed, 4 passed in 0.95s
+ 6 no live readout                                  killed: 1 failed, 78 passed in 6.64s
+ 7 the per-check log always on                      killed: 1 failed, 8 passed in 0.98s

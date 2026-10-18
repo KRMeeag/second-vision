@@ -39,8 +39,8 @@ missing. If the camera, the glasses board or the earphones are still out, the pa
 sentence instead ("Vibration is working again", "Earphones connected"). The camera always says "Camera has been
 reconnected".
 
-**Full test suites, last run (after the status display):** the Poetry environment gave 1021 passed, 216 skipped, 0 failed;
-`my_hailo_env` gave 1120 passed, 117 skipped, 0 failed (`reports/DEMO/evidence/STATUS-*-full.txt`).
+**Full test suites, last run (after the F5 rule change):** the Poetry environment gave 1031 passed, 216 skipped, 0 failed;
+`my_hailo_env` gave 1130 passed, 117 skipped, 0 failed (`reports/DEMO/evidence/F5-real-*-full.txt`).
 
 ---
 
@@ -223,8 +223,8 @@ Each takes **three checks in a row, about 3 s**, to start or to stop. The thresh
 | I1 | You | Cover the lens with a hand | On screen first a yellow `Camera view: looks dark (1 of 3)`, `(2 of 3)`, then about 3 s later the red `CAMERA VIEW: BLOCKED OR TOO DARK` with the measured brightness, and **"Camera is blocked or it is too dark. Obstacle warnings may be missing."**, again every 30 s | ☐ |
 | I2 | You | Uncover it | About 3 s later: **"Camera view is back."** once | ☐ |
 | I3 | You | The same with the lens cap | Same as I1 and I2 | ☐ |
-| I4 | You | Shine a torch straight into the lens | **"Camera is facing very bright light. Obstacle warnings may be missing."** If nothing comes, note the `[VIEW]` mean: the torch may not fill the view | ☐ |
-| I5 | You | A dim room, then a normal room, some seconds each | **No** alert. Note any `[VIEW] the camera looks dark` line | ☐ |
+| I4 | You | Hold the phone flash close to the lens | **"Camera is facing very bright light. Obstacle warnings may be missing."** (needs 40 % of the view at white: the top-right `white` number at 40 % or more) | ☐ |
+| I5 | You | A dim room, then a normal room, some seconds each | **No** alert. Write down the top-right numbers (`avg`, `top 5%`, `white`) for each: dark needs `top 5%` under 40, bright needs `white` at 40 % or more. Run with `SV_VIEW_LOG=1` to get every check in the terminal | ☐ |
 | I6 | You | Both rockers off, lens covered | Nothing (no obstacle warnings to miss) | ☐ |
 | I7 | You | Lens covered, then pull the camera | The view sentence stops; "Critical Error: Camera cannot be reached" follows | ☐ |
 

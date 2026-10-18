@@ -43,7 +43,8 @@ class Check(NamedTuple):
     state: str              # OK, PROBLEM, PENDING or OFF
     text: str               # what it is: "BLOCKED OR TOO DARK"
     short: str              # the same in a word or two, for the strip: "BLOCKED"
-    detail: str = ""        # measured values, if any: "brightness 0-255: average 6, top 5 %: 11"
+    detail: str = ""        # measured values in words, for the terminal: "brightness 0-255: average 6, ..."
+    readout: str = ""       # the same, short, for the screen's live corner: "avg 6  top 5% 11  white 0%"
 
 
 class Status(NamedTuple):
@@ -97,8 +98,8 @@ def _link_check(key, name, label, missing, in_use) -> Check:
 
 
 def _view_check(view, camera_missing, mode) -> Check:
-    def check(state, text, short, detail=""):
-        return Check("view", "Camera view", "VIEW", state, text, short, detail)
+    def check(state, text, short, detail="", readout=""):
+        return Check("view", "Camera view", "VIEW", state, text, short, detail, readout)
 
     if view is None:
         return check(OFF, "not checked", "-")
@@ -107,23 +108,29 @@ def _view_check(view, camera_missing, mode) -> Check:
     if mode == "none":
         return check(OFF, "paused (both rockers off)", "-")
     snap = view.snapshot()
-    detail = ("" if snap["mean"] is None else
-              f"brightness 0-255: average {snap['mean']:.0f}, top 5 %: {snap['p95']:.0f}")
+    detail = readout = ""
+    if snap["mean"] is not None:
+        white = snap.get("white")
+        detail = f"brightness 0-255: average {snap['mean']:.0f}, top 5 %: {snap['p95']:.0f}"
+        readout = f"avg {snap['mean']:.0f}  top 5% {snap['p95']:.0f}"
+        if white is not None:
+            detail += f", at white: {white:.0%}"
+            readout += f"  white {white:.0%}"
     candidate = snap["candidate"]
     progress = "" if candidate is None else f"{snap['count']} of {snap['confirm']}"
     if snap["state"] in (VIEW_DARK, VIEW_BRIGHT):
         text, short = ("BLOCKED OR TOO DARK", "BLOCKED") if snap["state"] == VIEW_DARK else ("TOO BRIGHT", "BRIGHT")
         if candidate is not None:
             text += f" (looks {_SEEN_AS[candidate]}: {progress})"
-        return check(PROBLEM, text, short, detail)
+        return check(PROBLEM, text, short, detail, readout)
     if candidate is not None:
         return check(PENDING, f"looks {_SEEN_AS[candidate]} ({progress})",
-                     f"{snap['count']}/{snap['confirm']}", detail)
+                     f"{snap['count']}/{snap['confirm']}", detail, readout)
     if snap["mean"] is None:
         # No frame checked yet (just started, the camera just came back, or mock mode, which has no
         # camera pipeline): "clear" would claim a look that never happened.
         return check(OFF, "not checked yet", "-")
-    return check(OK, "clear", "OK", detail)
+    return check(OK, "clear", "OK", detail, readout)
 
 
 # ============================================================
