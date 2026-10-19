@@ -29,12 +29,18 @@ NO_FILES = "did not retrieve any files"
 
 
 def capture(seconds: int = 3, use_sudo: bool = False) -> str:
-    """One look at the monitor: its screen text, or '' if it could not run."""
+    """One look at the monitor: its screen text, or '' if it could not run.
+
+    stdin is /dev/null on purpose. `timeout` runs `script` in the background, and from a terminal
+    (perf_run.py in its desktop window) `script` then reads that terminal, is stopped by SIGTTIN and
+    prints nothing: the whole of the first 20-minute run (2026-10-19) came back empty that way.
+    """
     cmd = ["timeout", str(seconds), "script", "-qfc", "hailortcli monitor", "/dev/null"]
     if use_sudo:
         cmd = ["sudo", "-n", *cmd]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=seconds + 8).stdout
+        out = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                             timeout=seconds + 8).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
     return ANSI.sub("", out)

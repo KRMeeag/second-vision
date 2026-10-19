@@ -234,6 +234,7 @@ def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX, amp
     while item is not None and not user_data.shutdown_event.is_set():
         text = _text_for(item)
         print(f"[TTS] '{text}'")
+        speaking_alert = alerts is not None and alerts.is_failsafe(item)
 
         proc = _start_espeak(text, amplitude)
         if proc is None:
@@ -251,7 +252,7 @@ def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX, amp
                 proc.terminate()
                 return
             pending = mailbox.peek()
-            if pending is not None and preempts(pending, item) and speakable(pending):
+            if pending is not None and _cuts(pending, item, alerts, speaking_alert) and speakable(pending):
                 proc.terminate()
                 cut = True
                 # claim the preempting item
@@ -272,6 +273,26 @@ def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX, amp
         if alerts is not None:
             alerts.finish(item, CUT if cut else SPOKEN)
         item = next_item  # None -> utterance finished naturally, loop exits
+
+
+def _cuts(pending, current, alerts, speaking_alert: bool) -> bool:
+    """
+    Should `pending` cut `current`, which is being spoken? priority.preempts(), with two exceptions
+    for failsafe alerts (D-16, user 2026-10-18: an alert in progress finishes, 2 to 3 s):
+      * an alert being spoken (`speaking_alert`) is not cut by an object warning, however urgent;
+      * an alert waiting in the slot cuts nothing: it is said next, when the utterance in progress
+        ends (the scheduler offers it while the worker speaks an object warning, so a stream of
+        urgent warnings that cut each other cannot keep it out).
+    A mode announcement still cuts either, as before (the wearer's own switch); a cut alert is
+    said again. Without the scheduler (`alerts` None), preempts() alone, as before.
+    """
+    if not preempts(pending, current):
+        return False
+    if alerts is None:
+        return True
+    if speaking_alert and "announce" not in pending:
+        return False
+    return not alerts.is_failsafe(pending)
 
 
 def _pace(mailbox, user_data):

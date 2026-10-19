@@ -25,8 +25,8 @@ Usage (from any thread; none of these calls waits for the speech worker)::
 
 What it does, and what the callers can rely on:
 
-  * Raised alert: spoken at once (the next scheduler tick, 0.05 s, when the speech channel
-    is free), then again `interval` seconds after the START of each previous utterance, for
+  * Raised alert: spoken at once (the next scheduler tick, 0.05 s, as soon as the utterance in
+    progress ends), then again `interval` seconds after the START of each previous utterance, for
     as long as it stays raised and its repeat is on. `interval=None` means once.
   * Repeat off: no more repeats. An utterance not yet delivered (the first one, or one that
     was cut) is still delivered, once. Repeat back on: the cadence resumes from the start
@@ -37,11 +37,15 @@ What it does, and what the callers can rely on:
   * Several alerts: spoken one after another, each to the end, in the order they fall
     due; a second alert is never offered while one is queued or being spoken, so alerts
     cannot cut or replace each other.
-  * Not lost: another announcement (a mode change, an urgent detection) may still cut an
-    alert or replace it in the mailbox slot. The scheduler is told what became of every
-    item it offers (see "Speech worker side") and speaks the alert again as soon as the
-    channel is free, a once-only alert included. A head-turn mute does not discard it: the
-    alert waits in the slot and is spoken when the mute ends.
+  * An alert in progress finishes (D-16, user 2026-10-18): no object warning cuts it, however
+    urgent, and an alert waiting in the slot cuts nothing; it is said when the utterance in
+    progress ends (workers/tts_worker.py `_cuts`). An object warning cannot replace it in the
+    slot either (an announcement outranks every detection).
+  * Not lost: a mode announcement may still cut an alert or replace it in the mailbox slot.
+    The scheduler is told what became of every item it offers (see "Speech worker side") and
+    speaks the alert again as soon as the channel is free, a once-only alert included. A
+    head-turn mute does not discard it: the alert waits in the slot and is spoken when the
+    mute ends.
   * A silent alert (`speak=False`) is raised and counted but never spoken: see raise_alert().
   * `on_speak` (raise_alert) is called each time an utterance of the alert starts: the hook for a
     vibration that goes with the sentence.
@@ -50,9 +54,10 @@ What it does, and what the callers can rely on:
     (failsafe_level below). Neither changes a setting; detections and mode announcements still
     obey the switch and the knob. An item the worker drops after all (an error) counts as
     delivered (no storm of re-offers); the next repeat tries again as normal.
-  * An alert is offered only when the worker is idle and the slot is empty or holds a
-    detection item (which it replaces, as any announcement does). It never overwrites an
-    announcement.
+  * An alert is offered when it is due and the slot is empty or holds a detection item (which
+    it replaces, as any announcement does): when the worker is idle, and also while it is
+    speaking an object warning (the alert then waits in the slot). While an announcement is
+    being spoken it waits for the end. It never overwrites an announcement.
   * raise_alert() with the same text and interval as the alert already raised changes
     nothing, so it can be called every loop. With a different text or interval it replaces
     the alert (no second copy).
@@ -386,8 +391,15 @@ class AlertScheduler:
             # delivered, so it is still pending or past its due time): it is offered again below.
             self._flight = None
             print(f"[ALERT] '{flight.alert.name}' was replaced in the queue; will be offered again")
-        if self._busy is not None:
-            return                                      # the worker is speaking something else
+        busy = self._busy
+        if busy is not None and "announce" in busy:
+            # An announcement (a mode change) is being spoken: wait for it to end, as before. It is
+            # short, and one offered meanwhile would replace the alert in the slot (the mailbox's tie
+            # rule), over and over in a burst of switch flips.
+            return
+        # Behind an object warning, though, the alert is offered at once (D-16): it waits in the
+        # slot, cuts nothing (tts_worker._cuts) and is said when that utterance ends. Waiting for an
+        # idle worker kept it out for good under urgent warnings that cut each other.
         occupant = self._mailbox.peek()
         if occupant is not None and "announce" in occupant:
             return                                      # never overwrite an announcement

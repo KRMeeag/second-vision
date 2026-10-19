@@ -1,0 +1,12 @@
+Mutation check of F7 (D-16: an alert in progress finishes), 2026-10-19
+Tests: tests/test_alerts.py tests/test_alerts_speech.py tests/test_priority.py tests/test_camera_alerts.py tests/uat/test_t00a_alert_scheduler.py (the long T00A_LONG runs not included)
+
+CAUGHT   an object warning may cut an alert being spoken: 1 failed, 30 passed in 1.31s  tests/test_alerts.py::test_d16_an_urgent_detection_waits_for_an_alert_in_progress
+CAUGHT   a waiting alert cuts what is being said: 1 failed, 26 passed in 1.29s  tests/test_alerts.py::test_an_alert_waits_for_the_worker_to_finish_a_detection_phrase_instead_of_cutting_it
+CAUGHT   a mode announcement can no longer cut an alert: 1 failed, 28 passed in 1.29s  tests/test_alerts.py::test_an_alert_cut_by_a_mode_announcement_is_spoken_again_as_soon_as_the_channel_is_free
+CAUGHT   the alert in progress is never recognised: 1 failed, 70 passed in 41.22s  tests/test_alerts_speech.py::test_d16_an_urgent_detection_does_not_cut_an_alert_in_progress
+CAUGHT   the worker ignores the new rule (plain preempts): 1 failed, 70 passed in 41.25s  tests/test_alerts_speech.py::test_d16_an_urgent_detection_does_not_cut_an_alert_in_progress
+CAUGHT   the scheduler waits for an idle worker again: 1 failed, 31 passed in 1.32s  tests/test_alerts.py::test_d16_an_alert_due_during_an_urgent_detection_waits_for_its_end_and_goes_next
+CAUGHT   the scheduler offers behind an announcement too: 1 failed, 59 passed in 7.37s  tests/test_alerts.py::test_randomised_runs_never_lose_double_or_cut_an_alert[tie]
+
+7 of 7 caught

@@ -700,7 +700,7 @@ def test_t03c1_rule4_a_scheduler_failing_in_the_confirmation_is_logged_and_nothi
     assert "Could not announce that the camera is back" in caplog.text
 
 
-def test_t03c1_rule4_one_hook_call_takes_well_under_50_ms(app_mod, monkeypatch):
+def _slowest_hook_call(app_mod, monkeypatch) -> float:
     w, app = unit_world(app_mod, monkeypatch)
     slowest = 0.0
     for i in range(2000):
@@ -717,9 +717,22 @@ def test_t03c1_rule4_one_hook_call_takes_well_under_50_ms(app_mod, monkeypatch):
     app._raise_camera_missing()
     began = time.perf_counter()
     app._announce_camera_back()
-    slowest = max(slowest, time.perf_counter() - began)
-    print(f"slowest of about 3000 hook calls (raise, announce, confirm): {slowest * 1000:.3f} ms")
-    assert slowest < 0.05
+    return max(slowest, time.perf_counter() - began)
+
+
+def test_t03c1_rule4_one_hook_call_takes_well_under_50_ms(app_mod, monkeypatch):
+    """A hook that blocks (a sleep, a lock wait, I/O) is slow on every call of that path, and nothing else runs
+    in this world to make it wait. So up to three attempts: a real block fails all three, while one preemption
+    of the test by the system (50.8 ms once, 2026-10-19, under the full suite; 0.3 to 0.6 ms alone) does not
+    repeat."""
+    attempts = []
+    for _ in range(3):
+        attempts.append(_slowest_hook_call(app_mod, monkeypatch))
+        if attempts[-1] < 0.05:
+            break
+    print(f"slowest of about 3000 hook calls (raise, announce, confirm), per attempt: "
+          f"{', '.join(f'{s * 1000:.3f} ms' for s in attempts)}")
+    assert attempts[-1] < 0.05, attempts
 
 
 def test_t03c1_rule4_the_hooks_make_no_gstreamer_call_only_one_main_loop_timer_and_never_wait():

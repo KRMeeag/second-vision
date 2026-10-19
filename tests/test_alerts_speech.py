@@ -300,16 +300,31 @@ def test_an_alert_cut_by_a_mode_announcement_is_spoken_again(rig):
     assert [(x["text"], x["cut"]) for x in u] == [("x", True), ("depth mode", False), ("x", False)]
 
 
-def test_a_once_alert_cut_by_an_urgent_detection_is_spoken_again_and_only_once_more(rig):
+def test_a_once_alert_cut_by_a_mode_announcement_is_spoken_again_and_only_once_more(rig):
+    """A mode announcement (the wearer's own switch) may still cut an alert; the alert is said again, once."""
+    r = rig(default=0.3, texts={"x": 1.0})
+    r.start()
+    r.ud.alerts.raise_alert("a", "x")
+    assert r.wait_for(lambda: len(r.started()) >= 1)
+    time.sleep(0.3)
+    r.ud.tts_queue.offer({"announce": "depth mode"})
+    time.sleep(4.0)
+    r.stop()
+    assert [(x["text"], x["cut"]) for x in r.utterances()] == [("x", True), ("depth mode", False), ("x", False)]
+
+
+def test_d16_an_urgent_detection_does_not_cut_an_alert_in_progress(rig):
+    """D-16 (user, 2026-10-18), through the real speech worker: the alert finishes, then the car is said.
+    Until F7 the car cut the alert, which was then said again."""
     r = rig(default=0.3, texts={"x": 1.0})
     r.start()
     r.ud.alerts.raise_alert("a", "x")
     assert r.wait_for(lambda: len(r.started()) >= 1)
     time.sleep(0.3)
     r.ud.tts_queue.offer(detection("car", "center", priority=9.0, tier=TIER_URGENT))
-    time.sleep(4.0)
+    time.sleep(3.0)
     r.stop()
-    assert [(x["text"], x["cut"]) for x in r.utterances()] == [("x", True), ("car center", False), ("x", False)]
+    assert [(x["text"], x["cut"]) for x in r.utterances()] == [("x", False), ("car center", False)]
 
 
 def test_a_head_turn_with_an_alert_waiting_in_the_slot_does_not_discard_it(rig):
@@ -669,26 +684,32 @@ def test_main_stops_with_exit_0_after_ctrl_c_and_starts_the_alert_worker(tmp_pat
                ESPEAK_STUB_LOG=str(tmp_path / "e.log"), ESPEAK_STUB_CONFIG='{"default": 1.0}')
     proc = subprocess.Popen([sys.executable, str(SRC / "second_vision" / "main.py"), "--mock"], env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=tmp_path)
-    ready = time.monotonic() + 60
-    out = ""
-    while time.monotonic() < ready and "Generators running" not in out:
-        line = proc.stdout.readline()
-        if not line and proc.poll() is not None:
-            break
-        out += line
-    assert "Alert worker started" in out, out[-800:]
-    time.sleep(2.5)                                  # let the mock detections reach the stub speaker
-    sent = time.monotonic()
-    proc.send_signal(signal.SIGINT)
     try:
-        rest, _ = proc.communicate(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        pytest.fail("main() did not stop within 10 s of Ctrl+C")
-    took = time.monotonic() - sent
-    assert proc.returncode == 0, (proc.returncode, rest[-800:])
-    assert "[MAIN] Done." in rest
-    # Not 1 s: mock mode alone (the baseline, without the alert worker) takes 0.95 to 1.8 s here, depending
-    # on where the mock detection generator is in its 2 s sleep. The alert worker itself stops within
-    # 0.05 s (test_the_alert_worker_is_a_daemon_that_stops_within_a_quarter_second_of_shutdown).
-    assert took <= 2.6, f"stopped {took:.2f} s after Ctrl+C"
+        ready = time.monotonic() + 60
+        out = ""
+        while time.monotonic() < ready and "Generators running" not in out:
+            line = proc.stdout.readline()
+            if not line and proc.poll() is not None:
+                break
+            out += line
+        assert "Alert worker started" in out, out[-800:]
+        time.sleep(2.5)                                  # let the mock detections reach the stub speaker
+        sent = time.monotonic()
+        proc.send_signal(signal.SIGINT)
+        try:
+            rest, _ = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            pytest.fail("main() did not stop within 10 s of Ctrl+C")
+        took = time.monotonic() - sent
+        assert proc.returncode == 0, (proc.returncode, rest[-800:])
+        assert "[MAIN] Done." in rest
+        # Not 1 s: mock mode alone (the baseline, without the alert worker) takes 0.95 to 1.8 s here, depending
+        # on where the mock detection generator is in its 2 s sleep. The alert worker itself stops within
+        # 0.05 s (test_the_alert_worker_is_a_daemon_that_stops_within_a_quarter_second_of_shutdown).
+        assert took <= 2.6, f"stopped {took:.2f} s after Ctrl+C"
+    finally:
+        # A failed check above must not leave mock mode running: three such copies ran for hours (2026-10-19).
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(5)

@@ -45,9 +45,9 @@ Nothing else needs reading up front: not HANDOFF.md, the task board or old trans
 - **F5 is done in code** (2026-10-19; [reports/DEMO/F5.md](reports/DEMO/F5.md)). Once a second a one-shot buffer probe on
   the source's last element (`source_fps_caps`, RGB) hands one frame to `core/camera_view.py`: blocked or dark (95th
   percentile under 40 or mean under 14), too bright (mean over 240), three checks in a row, spoken every 30 s, "Camera view
-  is back." once. One check costs about 1 ms (0.1 % of one core); real GStreamer at 30 fps unharmed. **Not done:** the
-  device performance run (`perf_run.py --duration 180`) and the device check; the thresholds are placeholders until real
-  footage. Five choices to confirm are listed in F5.md.
+  is back." once. One check costs about 1 ms (0.1 % of one core); real GStreamer at 30 fps unharmed. The device
+  performance run was done with the 20-minute NPU run (2026-10-19, [reports/T-15/measurement-2.md](reports/T-15/measurement-2.md):
+  no frame-rate cost). **Not done:** the device check. Five choices to confirm are listed in F5.md.
 - **The failsafe checks are on screen and in the terminal** (2026-10-19; [reports/DEMO/STATUS-DISPLAY.md](reports/DEMO/STATUS-DISPLAY.md)),
   at the user's request, for testing and for the panel watching the TV. `core/status_board.py` reads the five checks
   (camera, camera view, glasses board, earphones, control panel) and the last sentence said; `workers/status_worker.py`
@@ -59,17 +59,45 @@ Nothing else needs reading up front: not HANDOFF.md, the task board or old trans
   mean under 14; too bright = 40 % of blocks at white (230+; this camera's white is about 241, so "mean over 240" could
   never fire). Both real frames are test fixtures in `tests/data/`. The screen shows the measured numbers live, top right;
   `SV_VIEW_LOG=1` prints every check. **The user still has to check a dim and a normal room stay clear.**
-  **Next: the batched device session (F0 to F6), then F8.** Both need the boot service stopped: ask the user.
+- **The NPU run is done** (2026-10-19, 06:46 to 07:06; [reports/T-15/measurement-2.md](reports/T-15/measurement-2.md)): NPU
+  median 85 %, both models at 30 FPS, stability PASS, no throttling. The user started it from their terminal (auto
+  mode blocks an agent's service restart). The NPU sampler's empty capture under a terminal is fixed in
+  `docs/testing/tools/perf_npu.py`.
+- **F8's script and written sequence are done** (2026-10-19; [reports/DEMO/F8.md](reports/DEMO/F8.md)):
+  `docs/testing/tools/demo_run.py` starts the program, walks the presenter through 7 steps, ticks what the program said
+  and sent, and keeps an evidence folder. **Next: the rehearsal with the user on the device**, which is also the
+  device check of F0 to F6 (the checklist's parts cover what the rehearsal does not). It needs the boot service
+  stopped: ask the user.
+- **F7 is done** (2026-10-19; [reports/DEMO/F7.md](reports/DEMO/F7.md)): an alert being said is never cut by an object
+  warning, and one that falls due while a warning is said goes next (D-16). The speech worker's preemption check
+  (`tts_worker._cuts`) and the scheduler's offer rule changed (named, Rule 3). Under urgent warnings one per frame an alert
+  was never heard; now within 1.3 s. DISAGREEMENTS.md D-16 still says "needs a small task": the Lead updates it after
+  the demo.
+- **The team docs have the demo track's contracts** (2026-10-19, the user said yes): `documentation/ARCHITECTURE.md`
+  (the threads as started today, a "Failsafe alerts → speech, vibration and the screen" contract section, D-16 in
+  "Preemption", the File Map's stale lines fixed, new rows in the shared-files map) and `documentation/DECISIONS.md`
+  D42 (D-16, built; D32–D33 marked amended).
+- **The measuring tools read the battery** (2026-10-19): `perf_sample.py` records the X1202 gauge's charge and voltage
+  (I2C 0x36, read-only, no root), its summary gives the drain rate and flags a run whose charge rose (charger in), and
+  `--stop-at-battery PCT` ends a rundown in time; `perf_run.py` passes it on and stops the app as soon as the sampler
+  ends; `perf_plot.py` draws a battery panel. The gauge cannot say whether the charger is plugged in (no rate
+  register on this model), and GPIO6 (the HAT's power-loss line) is unconfigured, so nothing reads it. Tests:
+  `tests/test_perf_tools.py`.
+- **The flaky timing test is fixed** (`test_camera_alerts.py::test_t03c1_rule4_one_hook_call_takes_well_under_50_ms`):
+  up to three attempts. A hook that blocks 60 ms every 500th call still fails all three; one preemption does not.
+- **The fix ranking** for after the demo is [FIX-RANKING.md](FIX-RANKING.md); **one check per task** (the Tester's) is
+  the Lead's rule now (user, 2026-10-19; `.claude/agents/lead.md` step 8).
+- **Three mock-mode tests no longer leave the program running when a check fails** (2026-10-19): three such copies had
+  run for hours after mutation runs (the user stopped them). `test_status_display.py`, `test_earphones_alerts.py` and
+  `test_alerts_speech.py` now stop their copy in a `finally`.
 - **The agents are paused.** No Lead, Developer or Tester run is alive. **Do not start the Lead** or
   `lead_unattended.sh` until the user says so.
-- **The device is busy.** `second-vision.service` has been active since 16:24, and the app inside it was
-  relaunched at 17:21 and again at 18:35. Someone is using it right now, most likely a teammate testing
-  depth estimation. Check `pgrep -af Parallel-Depth` for the current state. It runs the **base checkout** (`second-vision-repo`), not this worktree, so
-  this worktree's code is not what is on the device. Do not stop the service or the app. Ask the user
-  first, every time.
+- **The device was free at 09:38 on 2026-10-19:** `second-vision.service` inactive, no other copy of the program. The
+  service runs the **base checkout** (`second-vision-repo`), not this worktree, so this worktree's code is not what
+  starts at boot. Do not stop the service or the app. Ask the user first, every time.
 - **The hardware is normal:**
   - the camera (USB 1-1) and the earphones (USB 3-1) are attached and authorized;
-  - `hailort.service` runs as usual (HAILO_MONITOR=0, no override in `/run`);
+  - `hailort.service` runs as usual (HAILO_MONITOR=0, no override in `/run`; restored and checked after the NPU run);
   - nothing that this workflow queued is still waiting.
 
 ## The working tree (uncommitted, keep it)
@@ -89,10 +117,15 @@ Do not revert, stash or reset anything.
   - `tests/test_camera_alerts*.py`. No defect found; the device check is pending.
   - The tree as it was before this work is in `.claude/baselines/T-03c1/`; the brief is
     `reports/T-03c1/brief-1.md`.
-- **Test baseline (last full run, after the F5 rule change):** the Poetry suite gave 1031 passed, 216 skipped, 0 failed;
-  `my_hailo_env` gave 1130 passed, 117 skipped, 0 failed. Four strict `xfail` tests (two test
-  functions, one of them run with three delays) in `tests/uat/test_t00a_alert_scheduler.py` are expected
-  failures until F7.
+- **Test baseline (last full run, 2026-10-19, after F7, the battery columns and the timing-test fix):** the Poetry
+  suite gave 1056 passed, 217 skipped, 0 failed; `my_hailo_env` gave 1159 passed, 117 skipped, 0 failed
+  (`evidence/DOCS-BATTERY-*-full.txt`; `tests/test_perf_tools.py` needs psutil, so Poetry skips it). With the long runs on
+  (`T00A_LONG=1`), every speech and alert test: 505 passed, 0 failed. The four former strict `xfail` tests now pass
+  and carry no marker.
+  - **A flaky timing test:** in the run before (after F8's tool), `test_camera_alerts.py::test_t03c1_rule4_one_hook_call_takes_well_under_50_ms`
+    failed once at 50.8 ms against its 50 ms limit (the slowest of about 3,000 calls, while the whole suite loaded the
+    Pi); alone it passed 10 of 10 at 0.3 to 0.6 ms (`evidence/F8-*-full.txt`). One preemption is enough to fail it.
+    Not changed: it is F0's test.
 
 ## How this user works
 
@@ -138,6 +171,13 @@ starts from the truth.
 - **Commit the work.** First run `git add -A docs/handoffs`: the index still holds the old dated
   evidence file names (shown as `AD` in `git status`).
 - **The real camera pull and replug.** F8's rehearsal covers it.
-- **The NPU measurement** was cancelled. Only on the user's request: `.claude/tools/queued_npu_run.sh`. It
+- **The NPU measurement was done on 2026-10-19** (20 minutes; NPU median 85 %; F5's performance check
+  with it): `reports/T-15/measurement-2.md`. The user starts such a run from their own terminal, since
+  auto mode blocks an agent's service restart. The old note, kept for the record: `.claude/tools/queued_npu_run.sh`. It
   stops and restarts the Lead, so read it first.
-- **After demo day:** the Lead reconciles the task board from DEMO-TRACK.md and resumes the workbook.
+- **The battery rundown** (REQ-PERF-01), when the device can be spared for hours: charge to 100 %, unplug the
+  charger, stop the boot service, then
+  `my_hailo_env/bin/python docs/testing/tools/perf_run.py --duration 36000 --stop-at-battery 5 --label rundown`.
+- **After demo day:** the Lead reconciles the task board from DEMO-TRACK.md and resumes the workbook,
+  in the order of [FIX-RANKING.md](FIX-RANKING.md), with one check per task (the Tester's; user,
+  2026-10-19). The user starts the Lead; it stays paused until then.

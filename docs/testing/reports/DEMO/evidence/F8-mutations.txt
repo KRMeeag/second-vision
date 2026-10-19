@@ -1,0 +1,16 @@
+Mutation check of docs/testing/tools/demo_run.py (2026-10-19)
+
+CAUGHT   lines before the Enter ignored (prompt mark dropped): 1 failed, 13 passed in 67.89s (0:01:07)  tests/test_demo_run.py::test_an_unplug_noticed_before_the_enter_still_counts
+CAUGHT   window ignored: 1 failed, 6 passed in 0.18s  tests/test_demo_run.py::test_a_line_before_the_enter_counts_and_one_after_the_window_does_not
+CAUGHT   absent inverted: 1 failed, 5 passed in 0.17s  tests/test_demo_run.py::test_an_absent_line_passes_only_when_it_never_comes
+CAUGHT   repeat count ignored: 1 failed, 4 passed in 0.17s  tests/test_demo_run.py::test_a_repeat_needs_both_lines - assert not True
+CAUGHT   never ends early: 1 failed, 8 passed in 30.31s  tests/test_demo_run.py::test_a_step_that_went_well_moves_on_at_once - ...
+CAUGHT   program not stopped: 1 failed, 12 passed in 21.21s  tests/test_demo_run.py::test_a_whole_step_against_the_stand_in_program
+CAUGHT   missing part not skipped: 1 failed, 16 passed in 58.61s  tests/test_demo_run.py::test_a_step_whose_part_is_missing_is_skipped_and_says_why
+CAUGHT   service check dropped: 1 failed, 17 passed in 3.52s  tests/test_demo_run.py::test_it_refuses_while_the_boot_service_runs - ...
+CAUGHT   run always succeeds: 1 failed, 14 passed in 3.50s  tests/test_demo_run.py::test_a_missed_line_is_reported_and_the_run_fails
+CAUGHT   skip counted as an action: 1 failed, 15 passed in 28.51s  tests/test_demo_run.py::test_the_presenter_can_skip_a_step_or_finish_early_and_the_program_is_still_stopped
+CAUGHT   note not kept: 1 failed, 12 passed in 1.21s  tests/test_demo_run.py::test_a_whole_step_against_the_stand_in_program
+CAUGHT   live lines not shown: 1 failed, 12 passed in 1.21s  tests/test_demo_run.py::test_a_whole_step_against_the_stand_in_program
+
+12 of 12 caught

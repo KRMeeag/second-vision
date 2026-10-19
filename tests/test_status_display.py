@@ -461,19 +461,25 @@ def test_main_starts_the_status_worker_and_prints_the_status(tmp_path):
     env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}", PYTHONPATH=str(SRC), PYTHONUNBUFFERED="1")
     proc = subprocess.Popen([sys.executable, str(SRC / "second_vision" / "main.py"), "--mock"], env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=tmp_path)
-    out, deadline = "", time.monotonic() + 60
-    # Both lines, in either order: the worker's first [CHECK] line can come before main's own print.
-    while time.monotonic() < deadline and not ("[CHECK] Camera:" in out and "Generators running" in out):
-        line = proc.stdout.readline()
-        if not line and proc.poll() is not None:
-            break
-        out += line
-    assert "Status worker started" in out and "[CHECK] Camera: connected" in out, out[-800:]
-    assert "Camera view: not checked yet" in out, "mock mode has no camera pipeline: nothing was checked"
-    proc.send_signal(signal.SIGINT)
     try:
-        rest, _ = proc.communicate(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        pytest.fail("main() did not stop within 10 s of Ctrl+C")
-    assert proc.returncode == 0 and "[MAIN] Done." in rest, (proc.returncode, rest[-1500:])
+        out, deadline = "", time.monotonic() + 60
+        # Both lines, in either order: the worker's first [CHECK] line can come before main's own print.
+        while time.monotonic() < deadline and not ("[CHECK] Camera:" in out and "Generators running" in out):
+            line = proc.stdout.readline()
+            if not line and proc.poll() is not None:
+                break
+            out += line
+        assert "Status worker started" in out and "[CHECK] Camera: connected" in out, out[-800:]
+        assert "Camera view: not checked yet" in out, "mock mode has no camera pipeline: nothing was checked"
+        proc.send_signal(signal.SIGINT)
+        try:
+            rest, _ = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            pytest.fail("main() did not stop within 10 s of Ctrl+C")
+        assert proc.returncode == 0 and "[MAIN] Done." in rest, (proc.returncode, rest[-1500:])
+    finally:
+        # A failed check above must not leave mock mode running: three such copies ran for hours (2026-10-19).
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(5)

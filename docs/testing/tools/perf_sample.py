@@ -18,13 +18,19 @@ Every --interval seconds (10 by default) it records:
 With --app-log it also reads the app's own "[DEPTH] ... depth X FPS / det Y FPS | lat Z ms" lines
 (callbacks.py), which is where the frame rate and camera-to-callback delay already come from.
 
+The battery: the X1202 UPS HAT's gauge (I2C bus 1, address 0x36, the registers its vendor script
+~/x120x/bat.py reads) gives the charge in % and the cell voltage; two register reads per sample, no root.
+It cannot tell whether the charger is plugged in, so the summary flags a run whose charge rose. With
+--stop-at-battery PCT the sampling ends once the charge is at or under PCT: the rundown stops while the Pi
+still has power, instead of at the cut-off.
+
 It writes <out>/perf-<label>.csv and a .txt summary. The summary applies the stability
 rule of REQ-DTA-09 (docs/testing/REQUIREMENTS.md) when the run is long enough: ignoring the first
 minute, memory at the end at most 5 % above memory at minute 1, and average CPU over the last 3
 minutes within 10 percentage points of the first 3.
 
-Not covered: NPU load. `hailortcli monitor` needs HAILO_MONITOR=1; tried on 2026-10-18 with it set
-in the app, it found no files (this Pi uses hailort_service, so it likely has to be set there).
+Not covered here: NPU load. perf_npu.py samples it beside perf_run.py --npu; it needs HAILO_MONITOR=1 on
+hailort_service, which owns the chip (docs/testing/reports/T-15/measurement-2.md).
 """
 from __future__ import annotations
 
@@ -91,6 +97,52 @@ def tree(proc: psutil.Process) -> list[psutil.Process]:
         return [proc, *proc.children(recursive=True)]
     except psutil.Error:
         return []
+
+
+GAUGE_BUS, GAUGE_ADDR = 1, 0x36          # the X1202's battery gauge
+GAUGE_VCELL, GAUGE_SOC = 0x02, 0x04      # cell voltage (1.25 mV / 16 per step), charge (1/256 % per step)
+
+
+def gauge_word(raw: int) -> int:
+    """A gauge register as a number: the gauge sends the high byte first, SMBus reads the low byte first."""
+    return ((raw & 0xFF) << 8) | ((raw >> 8) & 0xFF)
+
+
+def battery() -> tuple:
+    """(charge %, cell volts) from the X1202's gauge, or ("", "") when it cannot be read. Read-only."""
+    try:
+        import smbus2
+        with smbus2.SMBus(GAUGE_BUS) as bus:
+            volts = gauge_word(bus.read_word_data(GAUGE_ADDR, GAUGE_VCELL)) * 1.25 / 1000 / 16
+            charge = gauge_word(bus.read_word_data(GAUGE_ADDR, GAUGE_SOC)) / 256
+        return round(charge, 2), round(volts, 3)
+    except Exception:                       # no smbus2, no HAT, a bus error: the run goes on without it
+        return "", ""
+
+
+def battery_stop(row: dict, threshold) -> bool:
+    """True when --stop-at-battery is set and this sample's charge is at or under it (an unread charge never stops)."""
+    return threshold is not None and row.get("battery_pct", "") != "" and row["battery_pct"] <= threshold
+
+
+def battery_lines(rows: list[dict]) -> list[str]:
+    """The battery part of the summary: the charge and voltage over the run, and the drain rate."""
+    pts = [(r["elapsed_s"], r["battery_pct"], r["battery_v"]) for r in rows if r.get("battery_pct", "") != ""]
+    if not pts:
+        return ["battery (X1202 gauge): no readings"]
+    (t0, p0, v0), (t1, p1, v1) = pts[0], pts[-1]
+    hours = (t1 - t0) / 3600
+    out = [f"battery (X1202 gauge): {p0:.1f} % -> {p1:.1f} %, {v0:.3f} V -> {v1:.3f} V over {hours * 60:.0f} min "
+           f"({len(pts)} readings)"]
+    if p1 > p0 + 0.5:
+        out.append("battery: the charge ROSE, so the charger was connected: this run says nothing about battery life")
+    elif p0 - p1 >= 1.0 and hours > 0:
+        rate = (p0 - p1) / hours
+        out.append(f"battery drain: {rate:.1f} % per hour; at that rate 100 % to 5 % takes about {95 / rate:.1f} h "
+                   "(a straight-line estimate: a Li-ion cell does not drain evenly, so a rundown is the measurement)")
+    else:
+        out.append("battery drain: under 1 % over the run, too little to estimate a rate from")
+    return out
 
 
 def throttled_flags(use_sudo: bool = False) -> str:
@@ -205,7 +257,7 @@ def summary(rows: list[dict], frames: list[tuple[float, float, float]], interval
                    f"{statistics.median(w):.1f}, 5th percentile {pct(w, 5):.1f}, 1st percentile {pct(w, 1):.1f}, "
                    f"min {min(w):.1f} FPS; longest window {max(g):.2f} s (15 frames take 0.50 s at 30 FPS); "
                    f"windows over 1 s: {sum(1 for x in g if x > 1.0)}")
-    return out + stability(rows, interval)
+    return out + battery_lines(rows) + stability(rows, interval)
 
 
 def sample(proc: psutil.Process | None, started: float, use_sudo: bool = False) -> dict:
@@ -221,6 +273,7 @@ def sample(proc: psutil.Process | None, started: float, use_sudo: bool = False) 
            "core_max_pct": max(cores), "cores_pct": " ".join(f"{c:.0f}" for c in cores),
            "mem_used_mb": (mem.total - mem.available) / 2**20,
            "app_cpu_pct": "", "app_rss_mb": "", "throttled": throttled_flags(use_sudo)}
+    row["battery_pct"], row["battery_v"] = battery()
     if proc is not None:
         procs, cpu, rss = tree(proc), 0.0, 0.0
         for p in procs:
@@ -255,13 +308,24 @@ def self_check() -> int:
     rows[-1]["app_rss_mb"] = 900.0
     assert "FAIL" in "\n".join(stability(rows, 10.0))
     assert "not judged" in stability(rows[:10], 10.0)[0]
+    assert gauge_word(0x00D1) == 0xD100 and abs(gauge_word(0x00D1) * 1.25 / 1000 / 16 - 4.18) < 1e-9
+    assert round(gauge_word(0x3A63) / 256, 1) == 99.2                      # the high byte is the whole percent
+    drain = [{"elapsed_s": i * 10.0, "battery_pct": 90.0 - i * 10 / 360, "battery_v": 4.0} for i in range(361)]
+    text = "\n".join(battery_lines(drain))
+    assert "90.0 % -> 80.0 %" in text and "10.0 % per hour" in text and "about 9.5 h" in text, text
+    assert "ROSE" in "\n".join(battery_lines([dict(drain[0], battery_pct=80.0), dict(drain[-1], battery_pct=90.0)]))
+    assert "too little" in "\n".join(battery_lines(drain[:3]))
+    assert battery_lines([dict(drain[0], battery_pct="")]) == ["battery (X1202 gauge): no readings"]
+    assert battery_stop({"battery_pct": 5.0}, 5) and not battery_stop({"battery_pct": 5.1}, 5)
+    assert not battery_stop({"battery_pct": ""}, 5) and not battery_stop({"battery_pct": 1.0}, None)
     print("self-check ok")
     return 0
 
 
 def resummarize(stem: Path, interval: float) -> int:
     """Rewrite STEM.txt's summary from STEM.csv (and STEM-app.log), keeping its header and stop lines."""
-    NUM = ("temp_c", "cpu_mhz", "cpu_max_mhz", "core_max_pct", "mem_used_mb", "app_cpu_pct", "app_rss_mb")
+    NUM = ("elapsed_s", "temp_c", "cpu_mhz", "cpu_max_mhz", "core_max_pct", "mem_used_mb", "app_cpu_pct",
+           "app_rss_mb", "battery_pct", "battery_v")
     rows = []
     for r in csv.DictReader(open(f"{stem}.csv")):
         rows.append({k: (float(v) if k in NUM and v != "" else v) for k, v in r.items()})
@@ -290,6 +354,8 @@ def main() -> int:
     ap.add_argument("--live", action="store_true", help="print each sample as it is taken")
     ap.add_argument("--sudo-vcgencmd", action="store_true",
                     help="read `vcgencmd get_throttled` with `sudo -n` (read-only; needs passwordless sudo)")
+    ap.add_argument("--stop-at-battery", type=float, metavar="PCT",
+                    help="end the sampling once the battery charge is at or under PCT (a rundown that stops in time)")
     ap.add_argument("--self-check", action="store_true", help="test the script's own parsing and exit")
     args = ap.parse_args()
     if args.self_check:
@@ -305,6 +371,7 @@ def main() -> int:
     psutil.cpu_percent(percpu=True)                       # first call only primes the counters
     run_start = time.monotonic()
     t_end = run_start + args.duration
+    ended = ""
     try:
         while time.monotonic() < t_end:
             if proc is None or not proc.is_running():
@@ -320,7 +387,14 @@ def main() -> int:
                       f"cores {row['cores_pct']:<15}  mem {row['mem_used_mb']:6.0f} MB  "
                       f"app cpu {row['app_cpu_pct'] if row['app_cpu_pct'] == '' else format(row['app_cpu_pct'], '5.0f')}%  "
                       f"app rss {row['app_rss_mb'] if row['app_rss_mb'] == '' else format(row['app_rss_mb'], '5.0f')} MB  "
-                      f"throttled {row['throttled']}", flush=True)
+                      f"throttled {row['throttled']}  "
+                      f"battery {row['battery_pct'] if row['battery_pct'] == '' else format(row['battery_pct'], '5.1f')} %",
+                      flush=True)
+            if battery_stop(row, args.stop_at_battery):
+                ended = (f"ended at the battery threshold: {row['battery_pct']:.1f} % after "
+                         f"{row['elapsed_s'] / 3600:.2f} h (--stop-at-battery {args.stop_at_battery:g})")
+                print(ended, flush=True)
+                break
     except KeyboardInterrupt:
         print("stopped early; writing what was sampled")
 
@@ -338,7 +412,8 @@ def main() -> int:
     lines = [f"perf_sample {args.label}", f"command: {' '.join(sys.argv)}",
              f"samples: {len(rows)} every {args.interval:g} s; app found: {'yes' if proc else 'NO'}",
              f"HAILO_MONITOR set in the app: {'yes' if env and 'HAILO_MONITOR=1' in env else 'no / unreadable'}",
-             f"vcgencmd get_throttled: {rows[-1]['throttled'] if rows else 'n/a'}", ""]
+             f"vcgencmd get_throttled: {rows[-1]['throttled'] if rows else 'n/a'}"]
+    lines += [ended, ""] if ended else [""]
     lines += summary(rows, frames, args.interval, windows) if rows else ["no samples"]
     Path(f"{stem}.txt").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))

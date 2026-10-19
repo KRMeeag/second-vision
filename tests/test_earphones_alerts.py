@@ -683,22 +683,28 @@ def test_main_starts_the_earphones_worker_and_still_stops_cleanly_on_ctrl_c(tmp_
                PYTHONUNBUFFERED="1")
     proc = subprocess.Popen([sys.executable, str(src / "second_vision" / "main.py"), "--mock"], env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=tmp_path)
-    ready = time.monotonic() + 60
-    out = ""
-    while time.monotonic() < ready and "Generators running" not in out:
-        line = proc.stdout.readline()
-        if not line and proc.poll() is not None:
-            break
-        out += line
-    assert "Earphones worker started" in out, out[-800:]
-    time.sleep(1.5)                                  # a few readings of the real /proc/asound
-    sent = time.monotonic()
-    proc.send_signal(signal.SIGINT)
     try:
-        rest, _ = proc.communicate(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        pytest.fail("main() did not stop within 10 s of Ctrl+C")
-    assert proc.returncode == 0, (proc.returncode, rest[-800:])
-    assert "[MAIN] Done." in rest
-    assert time.monotonic() - sent <= 2.6, "stopped too long after Ctrl+C"
+        ready = time.monotonic() + 60
+        out = ""
+        while time.monotonic() < ready and "Generators running" not in out:
+            line = proc.stdout.readline()
+            if not line and proc.poll() is not None:
+                break
+            out += line
+        assert "Earphones worker started" in out, out[-800:]
+        time.sleep(1.5)                                  # a few readings of the real /proc/asound
+        sent = time.monotonic()
+        proc.send_signal(signal.SIGINT)
+        try:
+            rest, _ = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            pytest.fail("main() did not stop within 10 s of Ctrl+C")
+        assert proc.returncode == 0, (proc.returncode, rest[-800:])
+        assert "[MAIN] Done." in rest
+        assert time.monotonic() - sent <= 2.6, "stopped too long after Ctrl+C"
+    finally:
+        # A failed check above must not leave mock mode running: three such copies ran for hours (2026-10-19).
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(5)

@@ -6,7 +6,8 @@ no threads, no espeak. Runs in the Poetry environment and in my_hailo_env alike.
 
 What is real here: AlertScheduler and PriorityMailbox. What is a model: the speech worker.
 `SpeechSim` follows tts_worker's rules in virtual time (one utterance at a time, an urgent or
-announcement item preempts, a 0.5 s gap after an utterance unless an urgent item waits, the
+announcement item preempts except where tw._cuts says not (D-16: no object warning cuts an alert,
+and an alert waiting in the slot cuts nothing), a 0.5 s gap after an utterance unless an urgent item waits, the
 head-turn mute and drain, the speech switch) and talks to the scheduler through exactly the
 calls tts_worker makes: take(), drain(), finish(item, SPOKEN|CUT|DROPPED). The REAL tts_worker
 with a stub espeak is in tests/test_alerts_speech.py; this file proves the scheduling logic,
@@ -35,7 +36,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from second_vision.core.alerts import CUT, DROPPED, SPOKEN, AlertScheduler
-from second_vision.core.priority import TIER_NORMAL, TIER_URGENT, PriorityMailbox, item_tier, preempts
+from second_vision.core.priority import TIER_NORMAL, TIER_URGENT, PriorityMailbox, item_tier
 from second_vision.workers import tts_worker as tw
 from second_vision.workers.alert_worker import alert_worker
 
@@ -108,7 +109,8 @@ class SpeechSim:
         if self.current is not None:
             c = self.current
             pending = self.mailbox.peek()
-            if pending is not None and preempts(pending, c["item"]):
+            # The worker's own rule (D-16): preempts(), but no object warning cuts an alert and a waiting alert cuts nothing.
+            if pending is not None and tw._cuts(pending, c["item"], self.sched, self.sched.is_failsafe(c["item"])):
                 nxt = self.sched.take()
                 self._end(now, CUT, cut_by=tw._text_for(nxt) if nxt else None)
                 self.sched.finish(c["item"], CUT)
@@ -470,12 +472,42 @@ def test_a_once_only_alert_that_was_cut_is_spoken_again_and_then_not_again():
     assert [(e["text"], e["outcome"]) for e in w.sim.log] == [("x", CUT), ("depth mode", SPOKEN), ("x", SPOKEN)]
 
 
-def test_an_alert_cut_by_an_urgent_detection_is_spoken_again():
+def test_d16_an_urgent_detection_waits_for_an_alert_in_progress():
+    """D-16 (user, 2026-10-18): an alert in progress finishes. Until F7 the car cut it and it was said again."""
     w = World(duration=4.0)
     w.at(0.0, lambda: w.sched.raise_alert("a", "x"))
     w.at(1.0, lambda: w.mailbox.offer(detection("car", "center", priority=9.0, tier=TIER_URGENT)))
     w.run(30)
-    assert [(e["text"], e["outcome"]) for e in w.sim.log] == [("x", CUT), ("car center", SPOKEN), ("x", SPOKEN)]
+    log = w.sim.log
+    assert [(e["text"], e["outcome"]) for e in log] == [("x", SPOKEN), ("car center", SPOKEN)]
+    assert log[1]["start"] >= log[0]["end"] - 1e-9
+
+
+def test_d16_an_alert_due_during_an_urgent_detection_waits_for_its_end_and_goes_next():
+    """The alert does not cut the warning being said, and the next warning does not get ahead of it."""
+    w = World(duration=4.0)
+    w.at(0.0, lambda: w.mailbox.offer(detection("car", "center", priority=9.0, tier=TIER_URGENT)))
+    w.at(1.0, lambda: w.sched.raise_alert("a", "x"))
+    w.at(2.0, lambda: w.mailbox.offer(detection("bus", "center", priority=9.5, tier=TIER_URGENT)))
+    w.run(30)
+    log = w.sim.log
+    assert [(e["text"], e["outcome"]) for e in log] == [("car center", SPOKEN), ("x", SPOKEN)]
+    assert log[1]["start"] - log[0]["end"] <= HANDOFF + 1e-9, "said as soon as the warning ended"
+
+
+def test_d16_urgent_detections_that_cut_each_other_cannot_keep_an_alert_out():
+    """The case the Tester found (F-1): a new urgent warning every 0.1 s, each cutting the last, so the worker was
+    never idle and the alert was never offered. Now it is offered behind the warning and said when it ends."""
+    w = World(duration=1.2)
+    t = 0.0
+    while t < 20.0:
+        w.at(t, lambda: w.mailbox.offer(detection("car", "center", priority=9.0, tier=TIER_URGENT)))
+        t = round(t + 0.1, 6)
+    w.at(5.0, lambda: w.sched.raise_alert("a", "x"))
+    w.run(20)
+    spoken = [e for e in w.sim.log if e["text"] == "x"]
+    assert [e["outcome"] for e in spoken] == [SPOKEN], spoken
+    assert spoken[0]["start"] - 5.0 <= 1.2 + HANDOFF + 1e-9, "at most one warning's length late"
 
 
 def test_a_head_turn_does_not_discard_an_alert_waiting_in_the_slot():

@@ -69,10 +69,18 @@
 | 1 | GLib MainLoop | Main thread | GStreamer bus events | Pipeline state mgmt | App lifetime |
 | 2 | Depth streaming | GStreamer-managed | Camera frames | SCDepthV3 inference → depth_callback | While depth pipeline active |
 | 3 | Det streaming | GStreamer-managed | Camera frames | YOLOv8 inference → det_callback | While det pipeline active |
-| 4 | TTS Worker | `threading.Thread` daemon | `tts_queue` | espeak-ng audio | App lifetime |
-| 5 | Serial Writer | `threading.Thread` daemon | `serial_queue` | Binary packets to ESP32 | App lifetime |
-| 6 | Config Reader | `threading.Thread` daemon | Arduino serial text | `SystemConfig` updates | App lifetime |
-| 7 | *(opt)* Watchdog | `threading.Thread` daemon | Frame count | Restart on stall | If `--enable-watchdog` |
+| 4 | `tts-worker` | `threading.Thread` daemon | `tts_queue`, taken through `user_data.alerts` | espeak-ng audio | App lifetime |
+| 5 | `alert-scheduler` | `threading.Thread` daemon | the raised failsafe alerts (`user_data.alerts`), every 0.05 s | one alert at a time into `tts_queue` | App lifetime |
+| 6 | `serial-writer` | `threading.Thread` daemon | `serial_queue`, `user_data.patterns` | Binary packets to the glasses ESP32; its ACKs: glasses lost / back | App lifetime |
+| 7 | `config-reader` | `threading.Thread` daemon | Control panel serial text | `SystemConfig` updates; panel lost / back | Only with `--config-port` |
+| 8 | `earphones-watch` | `threading.Thread` daemon | `/proc/asound`, every 1 s | earphones lost / back | App lifetime |
+| 9 | `status-board` | `threading.Thread` daemon | the alerts and the camera view check, every 0.5 s | `user_data.status`, `[CHECK]` lines | App lifetime |
+| 10 | `camera-watch` | `threading.Thread` daemon (`pipeline/app.py`) | looks for a USB camera every 2 s while there is none | starts vision when one appears | While no camera |
+| 11 | *(opt)* Watchdog | the library's (`GStreamerApp`) | Frame count | Restart on stall | If `--enable-watchdog` |
+| 12 | *(opt)* `mode-cycler` | `threading.Thread` daemon | a timer | mode changes (a debug stand-in for the panel) | If `--cycle-modes` |
+
+Mock mode adds `mock-det` and `mock-depth`. The first stop request starts `shutdown-timer`
+(`pipeline/app.py`), which forces the exit if the stop hangs.
 
 The debug overlay is **not** a separate thread. It is drawn with cv2 inline inside the
 detection callback, gated on `user_data.use_frame`. A separate composite debug window
@@ -164,6 +172,58 @@ rockers reach the Pi only as the `M:` line. The panel never sends `depth_enabled
 `detection_enabled`, so those two `SystemConfig` fields stay True for the whole run, whatever the
 rockers say. Depth is on in mode `depth` or `both`, and detection in `detection` or `both`
 (`core/connections.py` `depth_on()`).
+
+### Failsafe alerts → speech, vibration and the screen
+
+*Built by the demo track, 2026-10-18 and 19 (`docs/testing/DEMO-TRACK.md`, F0 to F7). Decisions: D41 in
+[DECISIONS.md](DECISIONS.md), and D-15 to D-18 in `docs/testing/DISAGREEMENTS.md`.*
+
+A failsafe alert is something the device says or plays about itself because a part stopped working.
+Every part that can be lost reports through one object, **`user_data.alerts`**, the `AlertScheduler`
+in `core/alerts.py`. It is the only code that decides *when* an alert is spoken. Callers say what,
+and how often, and clear it when the condition ends:
+
+```python
+alerts.raise_alert(name, text, interval=None, repeat=True, speak=True, on_speak=None)
+#   interval: seconds between repeats, None = once;  repeat: bool, or a callable read every tick
+#   speak=False: a SILENT alert, raised and counted but never spoken (the earphones: nothing to speak through)
+#   on_speak: called each time the speech worker STARTS the sentence (the camera's vibration rides on it)
+alerts.clear(name)            # stops it; a sentence under way is not cut
+alerts.is_raised(name); alerts.raised(); alerts.last_spoken()   # -> (text, time) of the last one started
+```
+
+The speech worker takes from the mailbox through the scheduler (`take()`, `drain()`, `finish(item,
+SPOKEN|CUT|DROPPED)`, `is_failsafe(item)`), so an alert is never lost or doubled, and one cut by a
+mode announcement is said again. An alert reaches `tts_queue` as `{"announce": text}`, the existing
+mode-announcement contract; no queue key changed.
+
+| Part | Lost when | Said / played | Back |
+|---|---|---|---|
+| Camera | the source fails, or none at start (`pipeline/app.py`) | "Critical Error: Camera cannot be reached" at once and every 10 s, each time with the camera pattern | "Camera has been reconnected" once, 1 s after vision runs |
+| Camera view | 3 checks in a row (one a second, `core/camera_view.py`) see it dark/blocked or at bright light | "Camera is blocked or it is too dark..." / "Camera is facing very bright light..." every 30 s; none in mode `none` | "Camera view is back." once |
+| Glasses board | no ACK for `ACK_TIMEOUT_SECONDS` (2.5 s, `workers/serial_worker.py`) | "Vibration is not working" every 30 s while depth is on, once while off | the reconnect pattern, then the "back" sentence |
+| Control panel | 30 s without its heartbeat (`B:alive`, sent every 10 s; `ALIVE_TIMEOUT_SECONDS` in `workers/config_reader.py`), or its port cannot be opened | "Controller board cannot be reached. Using the current settings." every 5 minutes | the "back" sentence; settings stay as they were (none are saved) |
+| Earphones | no USB sound card that can play, two reads in a row (`/proc/asound`, D-18; `workers/earphones_worker.py`, every 1 s) | silent alert; the earphones pattern every 30 s while detection is on, once while off | the reconnect pattern, then the "back" sentence |
+
+- **The "back" sentence (D-17):** "Everything is connected" only when no other part is still missing
+  (`core/connections.py` `MISSING_ALERTS`); otherwise the returning part's own sentence ("Vibration is
+  working again", "Earphones connected", "Controller board connected"). The camera's is always its own.
+- **Overrides (D41):** every alert is spoken with the speech switch off, and every pattern played with
+  the vibration switch off, at the knob's level but never under 30 %, for that one alert. Settings are
+  never changed.
+- **Patterns** (`core/haptic_patterns.py`, `user_data.patterns.play(name)`): `reconnect` (two short
+  pulses), `camera` (two long), `earphones` (strong, weak, three times), on all three motors. The serial
+  worker plays them in place of depth commands for at most 2.25 s, then hands the motors back.
+- **An alert in progress finishes (D-16, F7):** see "Preemption" below.
+- **On screen and in the terminal:** `workers/status_worker.py` reads the five checks every 0.5 s
+  (`core/status_board.py` `read_status()`, read-only), keeps them on `user_data.status`, and prints
+  each change as a `[CHECK]` line. The detection overlay draws them on the picture (`core/status_view.py`:
+  a status strip, red banners, the last sentence said for 8 s, the camera view's brightness top right).
+  With no live picture the app shows a dark status screen. The depth window is not touched.
+- **The camera view check reads frames without slowing the camera branch:** once a second a one-shot
+  buffer probe on the source's last element (`source_fps_caps`, RGB) hands one frame over and removes
+  itself (`pipeline/app.py` `_request_view_frame`); a check costs about 1 ms. Measured on the device:
+  no frame-rate cost (`docs/testing/reports/T-15/measurement-2.md`).
 
 ---
 
@@ -298,6 +358,19 @@ on-device A/B comparison. A pending item that would not be spoken does not preem
 speech switch off, a detection cannot cut a failsafe alert. A preempting item is spoken at its own
 volume.
 
+**A failsafe alert in progress finishes (D-16, built 2026-10-19 as F7; `workers/tts_worker.py` `_cuts`).**
+Two exceptions to the rule above, both for the alert scheduler's own item:
+- an alert being spoken is not cut by an object warning, however urgent: it finishes (2 to 3 s), then
+  the warning is said;
+- an alert waiting in the slot cuts nothing. The scheduler offers it while the worker speaks an object
+  warning (not only when the worker is idle), so it is said as soon as that phrase ends, ahead of later
+  warnings: an announcement outranks every detection in the mailbox. Behind a mode announcement it waits
+  for the end, as before.
+
+A mode announcement still cuts an alert (the wearer's own switch), and the alert is said again. Before
+F7, urgent warnings for an object staying in view cut each other every frame, the worker was never idle,
+and an alert was never heard; now within 1.3 s.
+
 All tunables live in `core/priority.py`, plus the detection-side constants in
 `pipeline/callbacks.py`. See [FIELD-TESTING.md](FIELD-TESTING.md) for the symptom → parameter
 tuning map.
@@ -338,22 +411,29 @@ src/second_vision/
 ├── main2.py                ← Temporary smoke-test script (deletion pending — see TASKS.md)
 ├── pipeline/
 │   ├── app.py              ← SecondVisionApp: extends GStreamerApp (NOT GStreamerParallelApp)
-│   ├── callbacks.py        ← on_det_frame (built), on_depth_frame (placeholder)
+│   ├── callbacks.py        ← on_det_frame and on_depth_frame (both built; depth through DepthPostProcessor)
 │   └── TBR-*.py            ← Draft/staging files, unwired. Not imported by anything
 ├── workers/
-│   ├── tts_worker.py       ← espeak-ng, serialized + interruptible
-│   ├── serial_worker.py    ← packet packing built; serial I/O still stubbed
-│   └── config_reader.py    ← text protocol parsing built; serial I/O still stubbed
+│   ├── tts_worker.py       ← espeak-ng, serialized + interruptible; failsafe alerts finish (D-16)
+│   ├── alert_worker.py     ← runs the alert scheduler's step every 0.05 s
+│   ├── serial_worker.py    ← glasses ESP32 link: real port, packets, heartbeat, ACK / link state, patterns
+│   ├── config_reader.py    ← control panel link: real port, text protocol, lost / back
+│   ├── earphones_worker.py ← looks for the earphones every 1 s
+│   └── status_worker.py    ← the failsafe status every 0.5 s: user_data.status, [CHECK] lines
 ├── core/
 │   ├── config.py           ← SystemConfig: thread-safe shared state
 │   ├── priority.py         ← PriorityMailbox + all TTS scoring/preemption tunables
+│   ├── alerts.py           ← AlertScheduler: when each failsafe alert is spoken (see "Failsafe alerts")
+│   ├── connections.py      ← the parts that can be lost: wording, cadence, D-17's "back" sentence
+│   ├── haptic_patterns.py  ← the failsafe vibration patterns (PatternPlayer)
+│   ├── camera_view.py      ← blocked / too dark / too bright, from one frame a second
+│   ├── status_board.py, status_view.py ← the status: read it (no cv2), draw it (cv2)
 │   ├── protocol.py         ← PLANNED — packing currently lives in serial_worker.py
-│   └── depth_utils.py      ← Placeholder; real approach still in the prototyping repo
+│   └── depth_utils.py      ← the depth post-processing (ported from the prototyping repo)
 └── mock/
     └── data_generator.py   ← fake detections + depth for --mock mode
 
-tests/
-└── test_priority.py        ← 19 tests: mailbox, scoring, tiers, preemption, worker
+tests/                      ← the unit, GStreamer and device tests (test_*.py); tests/uat/ for UAT cases
 ```
 
 `SecondVisionApp` extends **`GStreamerApp`**. `GStreamerParallelApp` exists only in the
@@ -373,9 +453,11 @@ coordinates directly on what lands and how it affects the other side.
 | File | Workstreams that touch it |
 |---|---|
 | `pipeline/callbacks.py` | depth (`_process_real_depth`), detection (`_process_real_detections`), TTS (tuning constants) |
-| `pipeline/app.py` | control (`get_pipeline_string`, `_connect_callback`), depth (branch wiring), detection (tracker params) |
+| `pipeline/app.py` | control (`get_pipeline_string`, `_connect_callback`), depth (branch wiring), detection (tracker params), failsafe alerts (camera lost / back, the camera view probe; demo track) |
 | `core/config.py`, `workers/config_reader.py` | control |
 | `workers/serial_worker.py`, `core/protocol.py` | firmware, depth (hazard fields), failsafe patterns (demo track) |
 | `workers/tts_worker.py`, `core/alerts.py`, `core/haptic_patterns.py` | TTS, failsafe alerts and patterns (demo track) |
+| `core/connections.py`, `workers/earphones_worker.py` | failsafe alerts (glasses, panel, earphones; demo track), control (`depth_on`, `detection_on`) |
+| `core/camera_view.py`, `core/status_board.py`, `core/status_view.py`, `workers/status_worker.py` | failsafe checks on screen (demo track); detection (`_draw_detection_overlay` draws the status) |
 | `core/priority.py` | TTS |
 | `main.py` | all — worker startup and `user_data` construction |

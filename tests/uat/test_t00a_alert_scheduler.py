@@ -663,16 +663,30 @@ def test_req_con_03_alert_cut_by_a_mode_announcement_is_spoken_again_after_it(mk
     assert seq == [("ALERT x", "cut"), ("MODE depth mode", "end"), ("ALERT x", "end")], seq
 
 
-def test_req_con_03_once_alert_cut_by_an_urgent_detection_is_spoken_again(mk):
+def test_req_con_03_once_alert_cut_by_a_mode_announcement_is_spoken_again(mk):
+    """Changed by F7 (D-16): an urgent detection no longer cuts an alert (the test below), so the cut is made by a
+    mode announcement, which still may."""
+    rig = mk(default_dur=1.2, prefix_dur={"MODE": 0.4}).start()
+    rig.alerts.raise_alert("c", "ALERT once")
+    assert wait_until(lambda: rig.utts("ALERT once"), 2.0)
+    time.sleep(0.3)
+    rig.mailbox.offer({"announce": "MODE depth"})
+    assert wait_until(lambda: len(rig.utts("ALERT once")) >= 2 and rig.utts("ALERT once")[-1]["outcome"] == "end", 6.0)
+    assert [u["outcome"] for u in rig.utts("ALERT once")] == ["cut", "end"]
+    time.sleep(1.0)
+    assert len(rig.utts("ALERT once")) == 2
+
+
+def test_req_con_03_d16_an_urgent_detection_does_not_cut_an_alert_in_progress(mk):
+    """D-16 (user, 2026-10-18): the alert in progress finishes; the urgent warning is said after it."""
     rig = mk(default_dur=1.2, prefix_dur={"DET": 0.4}).start()
     rig.alerts.raise_alert("c", "ALERT once")
     assert wait_until(lambda: rig.utts("ALERT once"), 2.0)
     time.sleep(0.3)
     rig.mailbox.offer(det("DET urgent", tier="urgent"))
-    assert wait_until(lambda: len(rig.utts("ALERT once")) >= 2 and rig.utts("ALERT once")[-1]["outcome"] == "end", 6.0)
-    assert [u["outcome"] for u in rig.utts("ALERT once")] == ["cut", "end"]
-    time.sleep(1.0)
-    assert len(rig.utts("ALERT once")) == 2
+    assert wait_until(lambda: any(u["outcome"] == "end" for u in rig.utts("DET urgent")), 6.0)
+    assert [u["outcome"] for u in rig.utts("ALERT once")] == ["end"]
+    assert rig.utts("DET urgent")[0]["start"] >= rig.utts("ALERT once")[0]["start"] + 1.2 - 0.1, "said after the alert"
 
 
 def test_req_con_03_head_turn_does_not_discard_a_waiting_alert_but_does_discard_others(mk):
@@ -1203,10 +1217,10 @@ def _report(label, delays):
           f"not heard={sum(1 for d in delays if not math.isfinite(d))}")
 
 
-FINDING_URGENT = ("FINDING F-1 (Tester, T-00a): with a sustained stream of URGENT-tier detections the alert is never "
-                  "heard to the end: the scheduler waits for the worker to be idle, and an alert it does get in is cut "
-                  "again by the next urgent detection (priority.preempts(): any urgent item preempts anything). "
-                  "strict xfail: when it is fixed this test turns into a failure, remove the marker then.")
+# FINDING F-1 (Tester, T-00a), fixed by F7 (D-16, 2026-10-19): with a sustained stream of URGENT-tier detections the
+# alert was never heard to the end. The scheduler waited for an idle worker, and an alert it did get in was cut again
+# by the next urgent detection. Now the alert is offered while the worker speaks, waits in the slot, and no object
+# warning cuts it (tts_worker._cuts). The two tests below were strict xfail until then.
 
 
 @pytest.mark.timeout(240)
@@ -1220,7 +1234,6 @@ def test_req_con_03_worst_case_delay_under_continuous_normal_detection_speech(mk
 
 
 @pytest.mark.timeout(240)
-@pytest.mark.xfail(strict=True, reason=FINDING_URGENT)
 @long_run
 def test_req_con_03_worst_case_delay_under_urgent_detections_that_leave_gaps(mk):
     """Urgent detections every 1.5 s, phrase 1.2 s (a 0.3 s gap between phrases): the alert (0.3 s stub utterance)
@@ -1231,7 +1244,6 @@ def test_req_con_03_worst_case_delay_under_urgent_detections_that_leave_gaps(mk)
 
 
 @pytest.mark.timeout(240)
-@pytest.mark.xfail(strict=True, reason=FINDING_URGENT)
 @pytest.mark.parametrize("period", [0.8, 0.3, 0.1])
 @long_run
 def test_req_con_03_delay_under_urgent_detections_that_cut_each_other(mk, period):

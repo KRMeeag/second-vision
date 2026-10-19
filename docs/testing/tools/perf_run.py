@@ -3,6 +3,11 @@
 
     my_hailo_env/bin/python docs/testing/tools/perf_run.py --duration 1200 --label both-20min
     my_hailo_env/bin/python docs/testing/tools/perf_run.py --duration 1200 --label npu-20min --npu
+    my_hailo_env/bin/python docs/testing/tools/perf_run.py --duration 36000 --stop-at-battery 5 --label rundown
+
+The last is the battery rundown (REQ-PERF-01): charge to 100 %, unplug the charger, start it; it ends when the
+X1202's gauge reads 5 % (or after 10 h), stops the app and writes the same evidence set with the battery in it.
+Add --real-boards to include what the real boards draw from the Pi (and to let the panel set the mode).
 
 What it does, in order:
   1. Checks the device is free: the boot service stopped, no other copy of the app, a camera present.
@@ -129,6 +134,8 @@ def main() -> int:
     ap.add_argument("--real-boards", action="store_true",
                     help="use the real glasses board and control panel (default: stand-ins, so the "
                          "motors stay quiet and a panel switch left off cannot turn detection or depth off)")
+    ap.add_argument("--stop-at-battery", type=float, metavar="PCT",
+                    help="end the run once the battery charge is at or under PCT (the rundown)")
     args = ap.parse_args()
 
     out = Path(args.out)
@@ -163,7 +170,9 @@ def main() -> int:
              f"{'on' if args.npu else 'off'}; hailort_service has "
              f"{service_monitor_setting()}; "
              f"boards: "
-             f"{'real glasses and panel' if args.real_boards else 'stand-in glasses on a pty (ACKs every packet), no control panel, so mode both'}"]
+             f"{'real glasses and panel' if args.real_boards else 'stand-in glasses on a pty (ACKs every packet), no control panel, so mode both'}",
+             f"battery at the start (X1202 gauge): {_battery_note()}"
+             + (f"; the run ends at {args.stop_at_battery:g} %" if args.stop_at_battery is not None else "")]
     Path(f"{stem}-system.txt").write_text("\n".join(facts) + "\n")
     print("\n".join(facts), flush=True)
 
@@ -195,9 +204,11 @@ def main() -> int:
     print(f"app running (pid {app.pid}); sampling for {args.duration:g} s", flush=True)
 
     # 4 + 5. sampler, with screenshots
+    battery_stop = ["--stop-at-battery", str(args.stop_at_battery)] if args.stop_at_battery is not None else []
     sampler = subprocess.Popen([py, str(TOOLS / "perf_sample.py"), "--duration", str(args.duration), "--live",
                                 "--sudo-vcgencmd", "--label", args.label, "--out", str(out),
-                                "--app-log", f"{stem}-app.log"], cwd=REPO)
+                                "--app-log", f"{stem}-app.log", *battery_stop], cwd=REPO)
+    sampled_from = time.monotonic()
     shots = {}
     npu_thread = None
     if args.npu:
@@ -205,9 +216,14 @@ def main() -> int:
         npu_thread = threading.Thread(target=perf_npu.sample_loop, args=(stem, time.monotonic(), args.duration),
                                       daemon=True)
         npu_thread.start()
-    time.sleep(args.duration / 2)
-    shots["mid"] = screenshot(Path(f"{stem}-screen-mid.png"))
-    sampler.wait()
+    # Half-way, unless the sampler ends first (a rundown stops at its battery threshold, not at --duration):
+    # then the app is stopped at once instead of running on for the rest of the half.
+    try:
+        sampler.wait(timeout=args.duration / 2)
+    except subprocess.TimeoutExpired:
+        shots["mid"] = screenshot(Path(f"{stem}-screen-mid.png"))
+        sampler.wait()
+    sampled_min = (time.monotonic() - sampled_from) / 60
     if npu_thread:
         npu_thread.join(timeout=30)
 
@@ -241,8 +257,15 @@ def main() -> int:
 
     # 7. chart
     subprocess.run([py, str(TOOLS / "perf_plot.py"), str(stem), "--title",
-                    f"Second Vision, detection + depth, {args.duration / 60:g} min"])
+                    f"Second Vision, detection + depth, {sampled_min:.0f} min"])
     return 0
+
+
+def _battery_note() -> str:
+    """The charge and voltage now, from perf_sample's gauge reader; read-only."""
+    import perf_sample
+    charge, volts = perf_sample.battery()
+    return "unreadable" if charge == "" else f"{charge:.1f} %, {volts:.3f} V (unplug the charger for a battery run)"
 
 
 if __name__ == "__main__":

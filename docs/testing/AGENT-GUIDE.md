@@ -114,7 +114,7 @@ Plain requests work. Examples:
 | 3. Implement | Developer | The Lead waits; the terminal shows the Developer working | `src/`, `tests/`, `reports/<task>/dev-report-1.md` |
 | 4. Verify | Tester | The Lead waits; the terminal shows the Tester working | `tests/uat/`, `reports/<task>/test-report-1.md`, `reports/<task>/evidence/` |
 | 5. Hands-on steps, if any | You, guided by the Lead | One step at a time | Your answers, quoted in the decision |
-| 6. Review | Lead | Its findings | — |
+| 6. Quick checks | Lead | Its findings, if any | — (since 2026-10-19 the Tester's check is the one check: the Lead no longer reviews the code, it only runs the scripted safety checks: nothing written outside the repo, no `sudo` in code, no file outside the task's scope) |
 | 7. Decide | Lead | ACCEPTED, RETURNED or BLOCKED | `reports/<task>/decision-1.md` |
 | 8. Records | Lead | The list of files to commit | Board, traceability, `documentation/TASKS.md` |
 

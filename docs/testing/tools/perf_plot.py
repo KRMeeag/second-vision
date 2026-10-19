@@ -99,7 +99,8 @@ def main() -> int:
         for r in csv.DictReader(open(f"{stem}-npu.csv")):
             if r["device_util_pct"] != "":
                 npu.append((float(r["elapsed_s"]), float(r["device_util_pct"])))
-    H = H0 + (280 if npu else 0)
+    charge = col("battery_pct") if rows and "battery_pct" in rows[0] else []      # runs before 2026-10-19 have none
+    H = H0 + (280 if npu else 0) + (280 if charge else 0)
     img = np.full((H, W, 3), BG, np.uint8)
     cv2.putText(img, title, (40, 38), FONT, 1.0, FG, 2, cv2.LINE_AA)
     head = [l for l in Path(f"{stem}.txt").read_text().splitlines() if l.startswith("samples:")][:1] \
@@ -122,6 +123,9 @@ def main() -> int:
     if npu:
         panel(img, box(6), "NPU (Hailo-8) utilisation, from hailortcli monitor",
               [("NPU %", npu, COLORS[3])], xmax, "%", (0, 100))
+    if charge:
+        panel(img, box(7 if npu else 6), "Battery charge (X1202 gauge; a rising line means the charger was in)",
+              [("charge %", charge, COLORS[1])], xmax, "%", (0, 100))
     cv2.imwrite(f"{stem}.png", img)
     print(f"written: {stem}.png")
     return 0

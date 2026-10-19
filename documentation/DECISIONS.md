@@ -175,6 +175,9 @@ item is urgent-tier **or** beats the current one by more than `PREEMPT_MARGIN`.
 `PREEMPT_USE_TIER` flips this to pure relative-margin. **Both paths are kept alive
 deliberately** — the intent is to A/B them on-device, so don't hardcode one.
 
+*Amended by D42 (2026-10-19): a failsafe alert is the exception. No object warning cuts one being
+spoken, and one waiting cuts nothing. `preempts()` itself is unchanged.*
+
 ## D34: Layered suppression, one authority
 
 Two independent cooldowns used to coexist: a per-track one in `callbacks.py` and a separate
@@ -320,7 +323,7 @@ heard; with the strength knob at the bottom, the vibration pattern would never b
 keeps the wearer's choice of a quieter setting while still making sure the alert is perceived.
 
 **See also** (`docs/testing/DISAGREEMENTS.md`): D-16, an alert in progress finishes (2 to 3 s) before an
-urgent object warning can cut it; D-17, "everything is connected" is said only when no other failsafe
+urgent object warning can cut it (recorded and built as D42 below); D-17, "everything is connected" is said only when no other failsafe
 alert is still raised.
 
 **Built (2026-10-18, demo item F1; `docs/testing/reports/DEMO/F1.md`)**: the override is a property of
@@ -335,3 +338,37 @@ the message, never a change to the switches.
   pattern's strong pulse is duty 76, under the unmeasured start threshold of 90 in `core/haptics.py`.
   The device check confirms whether it is felt.
 - **A pattern holds the motors** for at most 2.25 s; a ground hazard is still sent during it.
+
+## D42: A failsafe alert in progress finishes; an object warning waits for it
+
+*Decided by the team, 2026-10-18 (the user, for the team). Recorded in `docs/testing/DISAGREEMENTS.md`
+as D-16, option (b). The UAT workbook says how often each alert repeats, not what happens when the
+device has something else urgent to say at the same moment. Amends D32–D33.*
+
+**What**:
+- **An alert being spoken is not cut by an object warning**, however urgent. It finishes (2 to 3 s),
+  then the warning is said.
+- **An alert that falls due while an object warning is being said goes next**, as soon as that phrase
+  ends, ahead of later warnings. It does not cut the phrase in progress.
+- **Unchanged:** a mode announcement (the wearer's own switch) may still cut an alert, which is then
+  said again; behind a mode announcement an alert waits for its end.
+
+**Why**: a failsafe alert is the wearer's only notice that part of the device has stopped working, and
+a vehicle ahead is also when an object warning matters most. Before this, an urgent object that stayed
+in view was announced again on every frame. The announcements cut each other, so the speech worker was
+never idle, and the alert scheduler, which waited for an idle worker, never offered the alert: the
+wearer was never told (the Tester's finding F-1 on T-00a, 2026-10-18).
+
+**Cost**: when an alert falls due during an urgent warning, that warning's next repeat waits for the
+phrase in progress (about 1.2 s) and the alert (2 to 3 s). Alerts repeat every 10 s (the camera, when
+there are no detections anyway), 30 s (the glasses board) or 5 minutes (the control panel), so at most
+once per repeat.
+
+**Built (2026-10-19, demo item F7; `docs/testing/reports/DEMO/F7.md`)**:
+- `workers/tts_worker.py` `_cuts()`: `priority.preempts()` with the two exceptions above. Without the
+  alert scheduler it is `preempts()` exactly.
+- `core/alerts.py`: the scheduler offers a due alert while the worker speaks an object warning, not only
+  when it is idle. Behind a mode announcement it still waits, so a burst of switch flips cannot keep
+  replacing it in the mailbox slot.
+- Measured with a stub speaker (`tests/uat/test_t00a_alert_scheduler.py`): under urgent warnings arriving
+  every 0.8, 0.3 or 0.1 s, the alert went from never heard to heard within 1.3 s.

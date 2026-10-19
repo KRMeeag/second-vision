@@ -1,0 +1,28 @@
+my_hailo_env, 2026-10-19 11:11:05, b0d8d2b + working tree
+........................................................................ [  5%]
+.........s.............................................................. [ 11%]
+........................................................................ [ 16%]
+.................................................ssssssssssssss......... [ 22%]
+........................................................................ [ 28%]
+........................................................................ [ 33%]
+........................................................................ [ 39%]
+........................................................................ [ 45%]
+........................................................................ [ 50%]
+........................................................................ [ 56%]
+........................................................................ [ 62%]
+.....s.................................................................. [ 67%]
+........................................................................ [ 73%]
+........................................................................ [ 79%]
+............................................................
+[tester-virtual] cut: 60 runs x 330 virtual s, forced loss events 3282, alert utterances cut 5042, dropped by switch 0, head-turn mute windows 0, alert utterances 7281, runs with a lost/doubled/cut alert: 0
+.
+[tester-virtual] drain: 60 runs x 330 virtual s, forced loss events 25486, alert utterances cut 1224, dropped by switch 0, head-turn mute windows 28697, alert utterances 3458, runs with a lost/doubled/cut alert: 0
+.
+[tester-virtual] tie: 60 runs x 330 virtual s, forced loss events 1170, alert utterances cut 1436, dropped by switch 0, head-turn mute windows 3463, alert utterances 3903, runs with a lost/doubled/cut alert: 0
+.
+[tester-virtual] off: 60 runs x 330 virtual s, forced loss events 2978, alert utterances cut 1041, dropped by switch 1777, head-turn mute windows 0, alert utterances 2909, runs with a lost/doubled/cut alert: 0
+....s.... [ 84%]
+........ss.......ssss...................sssss.s......................... [ 90%]
+............................ssssssssssssssssssssssssssssssssssssssssssss [ 96%]
+ssssssssssssssssssssssssssssssssssssssssssss....                         [100%]
+1155 passed, 117 skipped in 445.88s (0:07:25)

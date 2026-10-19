@@ -39,7 +39,9 @@ files are run by three roles:
 The gate:
 1. One task at a time.
 2. The Lead briefs, then the Developer implements, then the Tester verifies, then the Lead
-   decides.
+   decides. The Tester's check is the one check (user, 2026-10-19): a Tester `PASS` accepts the
+   task once the Lead's scripted safety checks (no writes outside the repo, no `sudo` in code, no
+   file outside the task's scope) find nothing.
 3. Only an accepted task, or a blocked one that the Lead has parked (its changes set aside,
    the reason written down, the user asked), frees the slot for the next.
 

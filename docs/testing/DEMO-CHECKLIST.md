@@ -31,8 +31,8 @@ If this file and the code disagree, the code is right: tell the session, and fix
 | **F4** Camera alert vibration | The camera *beep beep* (two long pulses) with each spoken camera alert, so every 10 s. None for the return sentence. | Done | 20 new. [F4.md](reports/DEMO/F4.md) | ☐ not done |
 | **F5** Camera blocked / too dark / too bright | Lens blocked or too dark, or facing bright light, for about 3 s: a spoken warning that obstacle warnings may be missing, every 30 s; "Camera view is back." once. | Done; thresholds are **placeholders** until real footage | 50 new (3 on real GStreamer); one check costs about 1 ms. **Performance run pending.** [F5.md](reports/DEMO/F5.md) | ☐ not done |
 | **F6** Control panel lost / back | Lost (silent for 30 s, or cannot be opened): "Controller board cannot be reached. Using the current settings." at once, then every 5 minutes. Back: a "connected" sentence. Settings stay as they were. | Done | 22 new. [F6.md](reports/DEMO/F6.md) | ☐ not done |
-| **F7** (if time) An alert finishes before an urgent warning cuts it | — | Not built (optional) | 4 expected-failure tests wait for it (`tests/uat/test_t00a_alert_scheduler.py`) | no device check |
-| **F8** The demo run | One written sequence and a rehearsal with you on the device. Replaces most of section 4 once it exists. | **Not started** | — | ☐ |
+| **F7** An alert finishes before an urgent warning cuts it (D-16) | An alert being said is never cut by an object warning; an alert that falls due while a warning is said goes next, as soon as that phrase ends. A mode announcement can still cut it (said again). | Done | The 4 former expected-failure tests pass; 6 new or rewritten. [F7.md](reports/DEMO/F7.md) | heard in the F8 rehearsal (no separate check) |
+| **F8** The demo run | One written sequence and a rehearsal with you on the device: `my_hailo_env/bin/python docs/testing/tools/demo_run.py` walks you through 7 steps (normal use; camera, glasses, earphones, panel out and back; lens covered and flashed; the chart), ticks what the program said and sent, and keeps an evidence folder. Covers most of section 4 in one run. | Script done, rehearsal pending | 21 new, 12 of 12 mutants caught. [F8.md](reports/DEMO/F8.md) | ☐ rehearsal |
 
 The "connected" sentence (decision D-17): **"Everything is connected"** is said only when nothing else is still
 missing. If the camera, the glasses board or the earphones are still out, the part that returned says its own
@@ -239,8 +239,8 @@ Stop the program from Part B first: this starts its own copy, the way the boot s
 
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
-| J1 | Session | `my_hailo_env/bin/python docs/testing/tools/perf_run.py --duration 180 --label f5-view-check --out docs/testing/reports/DEMO/evidence` | A clean run and stop; its summary file | ☐ |
-| J2 | Session | Compare with `reports/T-15/evidence/perf-both-20min.txt` (frame rate median 29.6 fps; camera-to-callback delay median 104 ms, p95 127 ms) | Both within run-to-run noise | ☐ |
+| J1 | Session | `my_hailo_env/bin/python docs/testing/tools/perf_run.py --duration 180 --label f5-view-check --out docs/testing/reports/DEMO/evidence` | A clean run and stop; its summary file | ☑ 2026-10-19, by the 20-minute NPU run instead (the same tool, with F5's check in the code; the view check reported "clear" and no errors): exit 0 in 0.6 s, `reports/T-15/measurement-2.md` |
+| J2 | Session | Compare with `reports/T-15/evidence/perf-both-20min.txt` (frame rate median 29.6 fps; camera-to-callback delay median 104 ms, p95 127 ms) | Both within run-to-run noise | ☑ 29.4 to 29.5 fps (per 15 frames: median 30.0, the same as before); delay median 106 ms, p95 129 ms. App CPU 80 % of one core against 73 %, for all the demo track's new workers together (not split) |
 
 ---
 
