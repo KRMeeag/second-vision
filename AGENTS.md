@@ -53,7 +53,7 @@ second-vision-repo/                ← also checked out as git worktrees beside 
 │   │   │   └── imu_telemetry.py, turn_event.py ← Head-turn data from the glasses' IMU
 │   │   └── mock/                  ← Fake data for --mock mode (testing only)
 │   └── custom_depth_detection/    ← Older prototype drafts, not part of the app
-├── models/hef_deploy/, hef_eval/  ← Detection model (HEF) and labels.json
+├── models/hef_v2/, hef_v3/        ← Detection model builds (HEF, labels.json); pipeline/app.py DET_MODEL_VERSION picks the one in use
 ├── firmware/
 │   ├── esp32_haptic_feedback/     ← Glasses ESP32: motors, BMI160
 │   └── control-panel/             ← Control panel ESP32: switches, knobs (PROTOCOL.md)

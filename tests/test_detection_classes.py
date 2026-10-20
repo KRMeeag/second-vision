@@ -18,6 +18,7 @@ mocked-hailo harness this project uses for callback logic). Run with:
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,7 +26,13 @@ from types import SimpleNamespace
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MODEL_DIRS = [REPO_ROOT / "models" / "hef_deploy", REPO_ROOT / "models" / "hef_eval"]
+# The model folder the pipeline uses is app.py's DET_MODEL_VERSION. Read from the
+# source text, not imported: importing app needs GStreamer, which the Poetry
+# environment lacks.
+_APP_SOURCE = (REPO_ROOT / "src" / "second_vision" / "pipeline" / "app.py").read_text()
+DET_MODEL_VERSION = re.search(r'^DET_MODEL_VERSION = "([^"]+)"$', _APP_SOURCE, re.M).group(1)
+MODEL_DIRS = [REPO_ROOT / "models" / DET_MODEL_VERSION / "hef_deploy",
+              REPO_ROOT / "models" / DET_MODEL_VERSION / "hef_eval"]
 
 # No conftest/package install — put src/ on the path so `second_vision.*` resolves.
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -230,4 +237,43 @@ def test_labels_json_follows_model_class_order(model_dir):
 
 @pytest.mark.parametrize("model_dir", MODEL_DIRS, ids=lambda d: d.name)
 def test_every_model_label_is_mapped(model_dir):
-    assert set(_labels_json(model_dir)[1:]) == set(callbacks.DETECTION_CLASS_MAP)
+    # A subset, not equality: the map may keep a class the deployed model no longer
+    # has (hef_v3 dropped "Pole"), so a model that brings it back still works. What
+    # must never happen is a model label with no entry: it would be dropped silently.
+    unmapped = set(_labels_json(model_dir)[1:]) - set(callbacks.DETECTION_CLASS_MAP)
+    assert not unmapped, f"model labels with no entry in DETECTION_CLASS_MAP: {sorted(unmapped)}"
+
+
+# ============================================================
+# The deployed model: the pipeline's default HEF, its labels, its class count
+# ============================================================
+def test_the_pipeline_default_hef_is_the_deployed_model_and_exists():
+    m = re.search(r'^DEFAULT_DET_HEF_PATH = REPO_ROOT / "models" / DET_MODEL_VERSION / "hef_deploy" / "best.hef"$',
+                  _APP_SOURCE, re.M)
+    assert m, "app.py's DEFAULT_DET_HEF_PATH is no longer built from DET_MODEL_VERSION"
+    hef = REPO_ROOT / "models" / DET_MODEL_VERSION / "hef_deploy" / "best.hef"
+    assert hef.is_file() and hef.stat().st_size > 1_000_000, f"the default detection HEF is missing: {hef}"
+
+
+@pytest.mark.parametrize("model_dir", MODEL_DIRS, ids=lambda d: d.name)
+def test_the_deployed_model_ships_a_labels_json_beside_its_hef(model_dir):
+    """Without labels.json the postprocess emits COCO names and detection goes silent (app.DET_LABELS_SIDECAR)."""
+    assert (model_dir / "labels.json").is_file(), \
+        f"{model_dir} has no labels.json: write it from metadata.yaml ('unlabeled', then the names in index order)"
+
+
+@pytest.mark.parametrize("model_dir", MODEL_DIRS, ids=lambda d: d.name)
+def test_the_hefs_class_count_matches_its_labels(model_dir):
+    """nms_config.json is the config the HEF was compiled with; its class count is the HEF's (hailortcli parse-hef
+    agrees, checked by hand for hef_v3: 13). The labels must have exactly that many names after 'unlabeled'."""
+    classes = json.loads((model_dir / "nms_config.json").read_text())["classes"]
+    assert len(_labels_json(model_dir)) - 1 == classes, (len(_labels_json(model_dir)) - 1, classes)
+
+
+def test_pole_is_not_a_class_of_the_deployed_model_but_its_map_entry_is_harmless():
+    """hef_v3 dropped "Pole": detection cannot announce a pole, and the stale map key changes nothing."""
+    labels = _labels_json(MODEL_DIRS[0])
+    if DET_MODEL_VERSION == "hef_v2":
+        pytest.skip("hef_v2 still has Pole")
+    assert "Pole" not in labels
+    assert "Pole" in callbacks.DETECTION_CLASS_MAP

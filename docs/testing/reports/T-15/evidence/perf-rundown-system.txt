@@ -1,0 +1,11 @@
+perf_run rundown
+kernel: Linux 6.12.62+rpt-rpi-2712 aarch64
+HailoRT: HailoRT-CLI version 4.23.0
+code: the development tree; files changed in src/scripts and not committed:
+M src/second_vision/core/haptic_patterns.py
+ M src/second_vision/workers/serial_worker.py
+model file: -rw-rw-r-- 1 sv-rpi5 sv-rpi5 9681398 Oct 11 08:42 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_deploy/best.hef
+holders of /dev/hailo0 (sudo -n fuser -v, read-only): 
+before: temp=52.1'C, throttled=0x0 (0x0 = never throttled since boot)
+run: 36000 s, headless like the boot service, NPU monitor sampling off; hailort_service has HAILO_MONITOR=0; boards: stand-in glasses on a pty (ACKs every packet), no control panel, so mode both
+battery at the start (X1202 gauge): 90.2 % by the gauge, 4.086 V, on battery; the run ends at 3.5 V

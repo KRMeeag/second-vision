@@ -63,3 +63,13 @@ in TRACEABILITY.md. Many detection cases carry a stale workbook result (W-21) an
 **Measurements that serve these cases** (`docs/testing/tools/perf_run.py`): the 20-minute run covers
 TC-015-003 (stability) and the frame-rate part of REQ-PERF-01. The battery rundown (REQ-PERF-01) is still
 to do and would also exercise rank 1.
+
+## Added 2026-10-20, from the 3.6-hour battery rundown ([measurement-3.md](reports/T-15/measurement-3.md))
+
+| Finding | Why it matters | Where |
+|---|---|---|
+| **Memory grows about 7 to 11 MB an hour and does not level off** (196 to 240 MB in 3.6 h; two vision restarts account for about 12 MB) | Fails the stability rule over a long run (+21.8 %, limit +5 %); about 70 MB over an 8-hour day, not urgent on 8 GB | Extends T-12 (rank 4 above): the per-restart leak is not the only one |
+| **The camera dropped on its own, twice in 20 s, at 90.9 min on battery** (3.88 V, no undervolt flag) | The failsafe worked (spoken alert, pattern, recovery in about a second), but the cause is unknown and it has recurred since 2026-10-15 | Unassigned; the camera alert path is verified on a real event |
+| **The detection frame-rate figure is inflated after a vision restart** (293.8, then 90.9, 64.3, 53.8 FPS) | Misleads anyone reading the `[DEPTH]` line, and any summary of it | Detection owner (`pipeline/callbacks.py`); display only, unverified |
+| **A persistent table in the centre was announced about every 1.3 s for 31 minutes** | An urgent-tier object skips the repeat limit; constant speech is a real wearer-facing problem | Detection owner (tuning) |
+| **Nothing shuts the Pi down at the end of a battery run or at low battery** | The Pi kept running at 3.46 V after the run; at the HAT's cut-off the power drops abruptly | Already rank 1 (T-06, T-07) |

@@ -19,8 +19,8 @@ Usage (from any thread; play() never waits)::
 What callers can rely on:
 
   * A pattern plays even with the vibration switch off, at the strength knob's level but never
-    under 30 % (core/alerts.py failsafe_level), by the same plain multiply as the depth vibration:
-    duty x level. It never changes a setting.
+    under 30 % (core/alerts.py failsafe_level), mapped onto the range the motors are felt in
+    (felt_duty): never below PWM_FLOOR while a step is on. It never changes a setting.
   * Patterns play one at a time, each to its end, in the order asked. Asking for one that is
     already waiting does nothing, so at most one of each waits.
   * While the glasses board is not answering, patterns are dropped, not kept: there is nothing
@@ -36,12 +36,31 @@ import threading
 from collections import deque
 from typing import NamedTuple, Optional
 
+from second_vision.core.haptics import PWM_FLOOR      # the duty the motors are assumed to start turning at (unmeasured)
+
 PATTERN_RECONNECT = "reconnect"
 PATTERN_CAMERA = "camera"
 PATTERN_EARPHONES = "earphones"
 
 STRONG_DUTY = 255
-WEAK_DUTY = 150         # PLACEHOLDER: low enough to feel the step down, high enough to feel at all
+WEAK_DUTY = 190         # PLACEHOLDER: clearly under strong, and over the motors' start duty even at the 30 % floor
+                        # (was 150: at half the knob that is 75, under the start duty; the user felt it weak, 2026-10-19)
+
+
+def felt_duty(step_duty: int, level: float, floor: int = PWM_FLOOR) -> int:
+    """
+    The duty a pattern step sends at strength `level` (0.3 to 1.0, core/alerts.py failsafe_level).
+
+    An off step (0) stays off. Any other step is mapped onto the range the motors can be felt in:
+    `floor` at level 0 up to the step's own duty at level 1, so the quietest a failsafe pattern gets is
+    still above the start duty. (Plain duty x level sent 76 for the strong step and 45 for the weak one at
+    the 30 % floor, under the assumed start duty of 90; changed 2026-10-19 on the user's report that the
+    earphones pattern was weak at a low knob. The depth vibration keeps its own rule, D40.) A step at or
+    under `floor` is sent as it is: it has no range to map onto.
+    """
+    if step_duty <= floor:
+        return max(0, step_duty)
+    return min(255, int(floor + (step_duty - floor) * level))
 
 # Steps of (seconds, duty at full strength), on all three motors. Every pattern ends on an off
 # step: it leaves the motors stopped, and a gap before the depth stream or the next pattern.

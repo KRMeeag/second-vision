@@ -3,10 +3,13 @@
 
     my_hailo_env/bin/python docs/testing/tools/perf_run.py --duration 1200 --label both-20min
     my_hailo_env/bin/python docs/testing/tools/perf_run.py --duration 1200 --label npu-20min --npu
-    my_hailo_env/bin/python docs/testing/tools/perf_run.py --duration 36000 --stop-at-battery 5 --label rundown
+    my_hailo_env/bin/python docs/testing/tools/perf_run.py --duration 36000 --stop-at-volts 3.5 --wait-for-battery --label rundown
 
-The last is the battery rundown (REQ-PERF-01): charge to 100 %, unplug the charger, start it; it ends when the
-X1202's gauge reads 5 % (or after 10 h), stops the app and writes the same evidence set with the battery in it.
+The last is the battery rundown (REQ-PERF-01). It refuses to start while the charger is in (the HAT's power-loss
+line, GPIO6), or with --wait-for-battery waits for you to unplug it and starts at once. It ends after two readings in
+a row at 3.5 V or under (the gauge's percentage drifts; the vendor script's own shutdown is 3.20 V) or after
+--duration, stops the app and writes the same evidence set with the battery and the power source in it. The Pi
+STAYS ON afterwards (nothing here shuts it down): plug the charger in, or shut it down yourself.
 Add --real-boards to include what the real boards draw from the Pi (and to let the panel set the mode).
 
 What it does, in order:
@@ -135,7 +138,11 @@ def main() -> int:
                     help="use the real glasses board and control panel (default: stand-ins, so the "
                          "motors stay quiet and a panel switch left off cannot turn detection or depth off)")
     ap.add_argument("--stop-at-battery", type=float, metavar="PCT",
-                    help="end the run once the battery charge is at or under PCT (the rundown)")
+                    help="end the run once the gauge's percentage is at or under PCT (it drifts: prefer --stop-at-volts)")
+    ap.add_argument("--stop-at-volts", type=float, metavar="V",
+                    help="end the run after two readings in a row at or under V cell volts (the rundown; try 3.5)")
+    ap.add_argument("--wait-for-battery", action="store_true",
+                    help="a rundown: wait (up to 2 h) for the charger to be unplugged, then start at once")
     args = ap.parse_args()
 
     out = Path(args.out)
@@ -152,9 +159,22 @@ def main() -> int:
         problems.append("another copy of the app is running: " + other[0][:100])
     if not Path("/dev/video0").exists():
         problems.append("no /dev/video0: no camera attached")
+    rundown = args.stop_at_battery is not None or args.stop_at_volts is not None
+    if rundown and not args.wait_for_battery and _ac_power() == "1":
+        problems.append("the charger is connected: a battery run says nothing then. Unplug it, or add --wait-for-battery")
+    if args.wait_for_battery and not rundown:
+        problems.append("--wait-for-battery needs --stop-at-volts (or --stop-at-battery): it is for a rundown")
     if problems:
         print("NOT STARTED:\n  " + "\n  ".join(problems))
         return 1
+
+    if args.wait_for_battery and _ac_power() != "0":
+        print("Waiting for the charger to be unplugged (the HAT's power-loss line), up to 2 hours; nothing is running.",
+              flush=True)
+        if not wait_for_battery():
+            print("NOT STARTED: the charger was never unplugged within 2 hours")
+            return 1
+        print(f"{time.strftime('%H:%M:%S')} the charger is out: on battery, starting.", flush=True)
 
     # 2. system facts
     dirty = sh(["git", "-C", str(REPO), "status", "--short", "--", "src", "scripts"])
@@ -162,7 +182,7 @@ def main() -> int:
              f"kernel: {sh(['uname', '-srm'])}", f"HailoRT: {sh(['hailortcli', '--version']).splitlines()[0]}",
              "code: the development tree; files changed in src/scripts and not committed:",
              dirty or "  (none)",
-             f"model file: {sh(['ls', '-l', str(REPO / 'models/hef_deploy/best.hef')])}",
+             f"model file: {sh(['ls', '-l', str(det_model_file())])}",
              f"holders of /dev/hailo0 (sudo -n fuser -v, read-only): {sh(['sudo', '-n', 'fuser', '-v', '/dev/hailo0'])}",
              f"before: {sh(['sudo', '-n', 'vcgencmd', 'measure_temp'])}, "
              f"{sh(['sudo', '-n', 'vcgencmd', 'get_throttled'])} (0x0 = never throttled since boot)",
@@ -172,7 +192,8 @@ def main() -> int:
              f"boards: "
              f"{'real glasses and panel' if args.real_boards else 'stand-in glasses on a pty (ACKs every packet), no control panel, so mode both'}",
              f"battery at the start (X1202 gauge): {_battery_note()}"
-             + (f"; the run ends at {args.stop_at_battery:g} %" if args.stop_at_battery is not None else "")]
+             + (f"; the run ends at {args.stop_at_volts:g} V" if args.stop_at_volts is not None else "")
+             + (f"; and at {args.stop_at_battery:g} % by the gauge" if args.stop_at_battery is not None else "")]
     Path(f"{stem}-system.txt").write_text("\n".join(facts) + "\n")
     print("\n".join(facts), flush=True)
 
@@ -204,7 +225,8 @@ def main() -> int:
     print(f"app running (pid {app.pid}); sampling for {args.duration:g} s", flush=True)
 
     # 4 + 5. sampler, with screenshots
-    battery_stop = ["--stop-at-battery", str(args.stop_at_battery)] if args.stop_at_battery is not None else []
+    battery_stop = (["--stop-at-battery", str(args.stop_at_battery)] if args.stop_at_battery is not None else []) \
+        + (["--stop-at-volts", str(args.stop_at_volts)] if args.stop_at_volts is not None else [])
     sampler = subprocess.Popen([py, str(TOOLS / "perf_sample.py"), "--duration", str(args.duration), "--live",
                                 "--sudo-vcgencmd", "--label", args.label, "--out", str(out),
                                 "--app-log", f"{stem}-app.log", *battery_stop], cwd=REPO)
@@ -261,11 +283,43 @@ def main() -> int:
     return 0
 
 
+def wait_for_battery(read=None, sleep=time.sleep, clock=time.monotonic, limit: float = 2 * 3600, every: float = 2.0) -> bool:
+    """
+    Wait until the HAT's power-loss line says the charger is out ("0"). True when it is, False after `limit` seconds
+    with the charger still in. A line that cannot be read ("") is not "out": the run would then measure nothing.
+    """
+    read = read or _ac_power
+    deadline = clock() + limit
+    while read() != "0":
+        if clock() > deadline:
+            return False
+        sleep(every)
+    return True
+
+
+def det_model_file() -> Path:
+    """The detection HEF the program uses by default: app.py's DET_MODEL_VERSION (read from its text, since importing
+    app needs GStreamer). Falls back to the old path when the constant is not found, so a missing file shows in the
+    evidence instead of the tool failing."""
+    m = re.search(r'^DET_MODEL_VERSION = "([^"]+)"$',
+                  (REPO / "src/second_vision/pipeline/app.py").read_text(), re.M)
+    if not m:
+        return REPO / "models/hef_deploy/best.hef"
+    return REPO / "models" / m.group(1) / "hef_deploy" / "best.hef"
+
+
 def _battery_note() -> str:
     """The charge and voltage now, from perf_sample's gauge reader; read-only."""
     import perf_sample
     charge, volts = perf_sample.battery()
-    return "unreadable" if charge == "" else f"{charge:.1f} %, {volts:.3f} V (unplug the charger for a battery run)"
+    source = {"1": "the charger is IN", "0": "on battery", "": "power source unreadable"}[perf_sample.ac_power()]
+    return "unreadable" if charge == "" else f"{charge:.1f} % by the gauge, {volts:.3f} V, {source}"
+
+
+def _ac_power() -> str:
+    """"1" with the charger in, "0" on battery, "" unknown (perf_sample's reader of the HAT's power-loss line)."""
+    import perf_sample
+    return perf_sample.ac_power()
 
 
 if __name__ == "__main__":

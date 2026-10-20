@@ -1,0 +1,10 @@
+Mutation check of the model-switch tests (tests/test_detection_classes.py), 2026-10-20
+
+CAUGHT   v3 shipped without labels.json (as delivered): 1 failed, 20 passed in 0.22s  tests/test_detection_classes.py::test_labels_json_follows_model_class_order[hef_deploy]
+CAUGHT   v3 labels in v2's order (a Pole entry kept): 1 failed, 20 passed in 0.17s  tests/test_detection_classes.py::test_labels_json_follows_model_class_order[hef_deploy]
+CAUGHT   a model label with no class-map entry: 1 failed, 11 passed in 0.16s  tests/test_detection_classes.py::test_on_list_classes_arrive_under_mapped_name[Bench-bench]
+CAUGHT   nms_config says 14 classes, labels say 13: 1 failed, 27 passed in 0.19s  tests/test_detection_classes.py::test_the_hefs_class_count_matches_its_labels[hef_deploy]
+CAUGHT   DET_MODEL_VERSION names a folder that does not exist: 1 failed, 20 passed in 0.22s  tests/test_detection_classes.py::test_labels_json_follows_model_class_order[hef_deploy]
+CAUGHT   default path back to the old models/hef_deploy: 1 failed, 24 passed in 0.18s  tests/test_detection_classes.py::test_the_pipeline_default_hef_is_the_deployed_model_and_exists
+
+6 of 6 caught

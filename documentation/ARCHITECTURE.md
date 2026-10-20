@@ -210,7 +210,8 @@ mode-announcement contract; no queue key changed.
   working again", "Earphones connected", "Controller board connected"). The camera's is always its own.
 - **Overrides (D41):** every alert is spoken with the speech switch off, and every pattern played with
   the vibration switch off, at the knob's level but never under 30 %, for that one alert. Settings are
-  never changed.
+  never changed. A pattern's strength is mapped onto the motors' felt range (`felt_duty()`, never under
+  `PWM_FLOOR` while a step is on), not multiplied, so it is felt at any knob position.
 - **Patterns** (`core/haptic_patterns.py`, `user_data.patterns.play(name)`): `reconnect` (two short
   pulses), `camera` (two long), `earphones` (strong, weak, three times), on all three motors. The serial
   worker plays them in place of depth commands for at most 2.25 s, then hands the motors back.

@@ -1,0 +1,4 @@
+elapsed_s,temp_c,cpu_mhz,cpu_max_mhz,undervolt,fan_rpm,core_max_pct,cores_pct,mem_used_mb,app_cpu_pct,app_rss_mb,throttled,battery_pct,battery_v,ac_power
+10.0,57.3,1500.0,2400.0,0,5240,5.4,0 5 1 1,2998.28125,,,unavailable,,,
+20.1,58.4,1500.0,2400.0,0,5233,1.0,0 1 0 1,2989.078125,,,unavailable,,,
+25.0,57.3,1500.0,2400.0,0,5240,1.6,0 2 1 1,2989.59375,,,unavailable,,,

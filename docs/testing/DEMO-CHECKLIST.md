@@ -100,8 +100,8 @@ The bench script opens the glasses port itself, so do this before starting the p
 |---|---|---|---|---|
 | A1 | Session | Run the bench script in [F1.md → "Device check"](reports/DEMO/F1.md) (plays each pattern at strength 1.0, then at 0) | "UART Connection to ESP32 is WORKING!", then six patterns | ☐ |
 | A2 | You | At strength 1.0: feel *reconnect*, *camera*, *earphones* | Three different feels. Reconnect = two short pulses; camera = two long pulses; earphones = strong, weak, three times | ☐ |
-| A3 | You | At strength 0 (the 30 % floor): feel them again | Still felt, and still different. **If a pattern is not felt, say so: the fix is one line (F1.md, the scaling question)** | ☐ |
-| A4 | You | Is the weak pulse of the earphones pattern felt? | Yes | ☐ |
+| A3 | You | At strength 0 (the 30 % floor): feel them again | Still felt, and still different. Since 2026-10-19 every on step is at or over duty 90 (strong 139, weak 120 at the floor; was 76 and 45, felt weak). **Say whether strong and weak of the earphones pattern can still be told apart here: they are close at the floor (F1.md, "Changed 2026-10-19")** | ☐ |
+| A4 | You | Is the weak pulse of the earphones pattern felt, at the knob half-way (weak 140) and at the floor (120)? | Yes at both | ☐ |
 
 Notes:
 

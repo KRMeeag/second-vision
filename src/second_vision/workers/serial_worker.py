@@ -7,6 +7,7 @@ import time
 
 from second_vision.core.alerts import failsafe_level
 from second_vision.core.connections import glasses_back, glasses_lost
+from second_vision.core.haptic_patterns import felt_duty
 
 # Guarded like every other optional dependency in this project: a missing
 # pyserial must degrade to "no board attached", not take the whole pipeline
@@ -338,12 +339,13 @@ def _play_pattern_step(port, tick, config, last_write_at: float) -> float:
     most recent write, for the caller to carry forward.
 
     The vibration switch is not consulted, and the strength is the knob's level
-    but never under 30 % (failsafe_level, D41), by the same plain multiply as the
-    depth duties. Read per step, so a turn of the knob applies from the next one.
+    but never under 30 % (failsafe_level, D41), mapped onto the range the motors
+    are felt in (felt_duty: an on step never goes under PWM_FLOOR). Read per step,
+    so a turn of the knob applies from the next one.
     """
     if tick.duty is None:
         return last_write_at
-    duty = min(255, int(tick.duty * failsafe_level(config.get("motor_strength"))))
+    duty = felt_duty(tick.duty, failsafe_level(config.get("motor_strength")))
     _send_packet(port, _pack_motor_update(duty, duty, duty))
     return time.monotonic()
 

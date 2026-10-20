@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "4242 python3 src/second_vision/main.py --input /dev/video0"

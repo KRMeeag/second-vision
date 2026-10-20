@@ -1,0 +1,15 @@
+Mutation check of the rundown's charger line, voltage stop and wait (perf_sample.py, perf_run.py), 2026-10-19
+Tests: tests/test_perf_tools.py
+
+CAUGHT   a charger-in sample can end the run: 1 failed in 0.09s  tests/test_perf_tools.py::test_perf_sample_self_check_passes - Asserti...
+CAUGHT   the voltage test is reversed: 1 failed in 0.09s  tests/test_perf_tools.py::test_perf_sample_self_check_passes - Asserti...
+CAUGHT   one low reading ends the run: 1 failed, 10 passed in 0.19s  tests/test_perf_tools.py::test_the_rundown_ends_after_two_low_readings_in_a_row_not_one
+CAUGHT   the voltage stop is never passed on: 1 failed, 10 passed in 0.32s  tests/test_perf_tools.py::test_the_rundown_ends_after_two_low_readings_in_a_row_not_one
+CAUGHT   an unreadable line counts as unplugged: 1 failed, 7 passed in 0.09s  tests/test_perf_tools.py::test_an_unreadable_charger_line_never_counts_as_unplugged
+CAUGHT   the wait never gives up: 1 failed, 6 passed in 60.09s (0:01:00)  tests/test_perf_tools.py::test_the_wait_gives_up_after_its_limit_with_the_charger_still_in
+CAUGHT   a rundown starts with the charger in: 1 failed, 8 passed in 0.11s  tests/test_perf_tools.py::test_a_rundown_is_refused_with_the_charger_in
+CAUGHT   a charger-in run is not called out: 1 failed in 0.10s  tests/test_perf_tools.py::test_perf_sample_self_check_passes - Asserti...
+CAUGHT   a mixed run is not called out: 1 failed in 0.10s  tests/test_perf_tools.py::test_perf_sample_self_check_passes - Asserti...
+CAUGHT   the charger line is read the wrong way round: 1 failed, 4 passed in 0.08s  tests/test_perf_tools.py::test_the_charger_line_is_one_with_the_adapter_in_zero_on_battery_and_empty_when_unreadable
+
+10 of 10 caught

@@ -13,8 +13,9 @@ Nothing else needs reading up front: not HANDOFF.md, the task board or old trans
   is `user_data.patterns.play(...)` in `core/haptic_patterns.py`; F2, F3 and F4 call it. Failsafe alerts
   are now spoken with the speech switch off. Its device check (feel each pattern; the bench snippet is in
   F1.md) waits for the batched device session.
-  - The user chose plain multiply for the pattern strength. At the 30 % floor, strong is duty 76,
-    under the unmeasured motor start threshold of 90: check that it is felt.
+  - The user chose plain multiply for the pattern strength on 10-18, then **changed it on 10-19** after finding the
+    earphones pattern weak at a low knob: the knob now maps onto the felt range (`felt_duty()`, every on step at or
+    over duty 90; weak step 190). Strong 139 and weak 120 at the floor are close: check they can be told apart.
 - **F2 is done in code** (2026-10-18 night; [reports/DEMO/F2.md](reports/DEMO/F2.md)). The glasses board
   lost gives "Vibration is not working", every 30 s while depth is on and once while it is off. Back gives
   the reconnect *beep beep* and the D-17 sentence. Shared wording and rules now live in
@@ -77,21 +78,51 @@ Nothing else needs reading up front: not HANDOFF.md, the task board or old trans
   (the threads as started today, a "Failsafe alerts → speech, vibration and the screen" contract section, D-16 in
   "Preemption", the File Map's stale lines fixed, new rows in the shared-files map) and `documentation/DECISIONS.md`
   D42 (D-16, built; D32–D33 marked amended).
-- **The measuring tools read the battery** (2026-10-19): `perf_sample.py` records the X1202 gauge's charge and voltage
-  (I2C 0x36, read-only, no root), its summary gives the drain rate and flags a run whose charge rose (charger in), and
-  `--stop-at-battery PCT` ends a rundown in time; `perf_run.py` passes it on and stops the app as soon as the sampler
-  ends; `perf_plot.py` draws a battery panel. The gauge cannot say whether the charger is plugged in (no rate
-  register on this model), and GPIO6 (the HAT's power-loss line) is unconfigured, so nothing reads it. Tests:
-  `tests/test_perf_tools.py`.
+- **The measuring tools read the battery** (2026-10-19): `perf_sample.py` records the X1202 gauge's voltage and
+  percentage (I2C 0x36, read-only, no root) and, since the evening, **whether the charger is in** (the HAT's power-loss
+  line, GPIO6, read as an input as its vendor script does). **The gauge's percentage drifts** (85 % at a full-cell
+  4.185 V), so a rundown stops on **voltage** (`--stop-at-volts 3.5`, two readings in a row; the vendor script's own
+  shutdown is 3.20 V) and the summary says how many samples were on battery. `perf_run.py` refuses a rundown with the
+  charger in, or with `--wait-for-battery` waits for the unplug and starts at once; `perf_plot.py` draws a battery
+  panel. Tests: `tests/test_perf_tools.py` (12; 10 of 10 deliberate breakages caught,
+  `reports/T-15/evidence/rundown-tool-mutations.txt`). Nothing shuts the Pi down at the end.
 - **The flaky timing test is fixed** (`test_camera_alerts.py::test_t03c1_rule4_one_hook_call_takes_well_under_50_ms`):
   up to three attempts. A hook that blocks 60 ms every 500th call still fails all three; one preemption does not.
+- **The detection model is now hef_v3** (2026-10-20; [reports/DEMO/MODEL-V3.md](reports/DEMO/MODEL-V3.md)), at the user's
+  request. The user had moved `models/hef_deploy` and `hef_eval` under `hef_v2/` and added `hef_v3/`, which left
+  `app.py`'s default HEF path pointing at nothing. Now `app.py` has `DET_MODEL_VERSION = "hef_v3"` (the one constant to
+  change for the next model). **hef_v3 has 13 classes, no Pole** (every class after Motorcycle moved down one index) **and
+  shipped without a `labels.json`**; mine is derived from each folder's `metadata.yaml`, the rule that reproduces v2's file
+  byte for byte. Tests follow the constant and gained checks (the HEF exists, a `labels.json` beside it, the NMS class count
+  equals the label count; 6 of 6 deliberate breakages caught). **Not run on the device yet**: a 40 s start with the camera
+  on a person or a chair is the only proof the labels line up (steps in MODEL-V3.md). Requirements and the workbook still say
+  14 classes (REQ-DET-01, D-06): the Lead's to update.
 - **The fix ranking** for after the demo is [FIX-RANKING.md](FIX-RANKING.md); **one check per task** (the Tester's) is
   the Lead's rule now (user, 2026-10-19; `.claude/agents/lead.md` step 8).
 - **Three mock-mode tests no longer leave the program running when a check fails** (2026-10-19): three such copies had
   run for hours after mutation runs (the user stopped them). `test_status_display.py`, `test_earphones_alerts.py` and
   `test_alerts_speech.py` now stop their copy in a `finally`.
-- **The agents are paused.** No Lead, Developer or Tester run is alive. **Do not start the Lead** or
-  `lead_unattended.sh` until the user says so.
+- **The Lead was restarted on 2026-10-19 at 12:10** at the user's request (run `.claude/runs/20261019-121023`, Sonnet at
+  extra-high effort, one check per task). Watch it: `python3 .claude/tools/lead_progress.py -f`. Its brief was to reconcile
+  the board with F0 to F8, give each a Tester pass, then prepare the next tasks in [FIX-RANKING.md](FIX-RANKING.md) order
+  (battery announcements and clean shutdown first). **It is no longer running: see the next point.** The user's answers the same day:
+  keep Sonnet; F5's rules 1 to 4 stand; no status in the depth window; and the freeze on `src/` and `scripts/` (a file
+  `.claude/runs/DEMO-FREEZE`, written for the rehearsal) was **lifted at once**, so a Developer may change the program
+  while the user rehearses. The Lead runs a device test only when the service is stopped and no copy of the program is
+  running (lead.md's hardware rule); if the rehearsal needs the device, queue a stop with
+  `.claude/tools/stop_lead_at_boundary.sh`.
+- **That Lead died at 12:36:57 on 2026-10-19, killed by its own Tester**, and the user asked for a pause at 13:59, so no
+  agent is running now. The T-17 Tester's Ctrl+C test (a scratch script under that run's scratchpad) ends by SIGKILLing
+  every process that `pgrep -af "stub_app|perf_sample|perf_run"` lists. `pgrep -f` matches the whole command line, and the
+  Lead's command line holds its entire brief, which named `perf_sample.py`. **When a Lead is started, its brief must not
+  contain a program, script or process name a Tester might `pgrep -f` for** (perf_sample, perf_run, main.py, second_vision,
+  pytest, Parallel-Depth, usb_sim ...): say "the battery reader in the perf tools" instead. Nothing was lost: no change to
+  `src/`, `scripts/` or `tests/`; the device is intact (service stopped, camera and earphones attached, no Hailo override, no
+  leftover process). What the Lead had done before: reconciled the board, TRACEABILITY, `documentation/TASKS.md` and
+  DISAGREEMENTS (the stale T-03c1 slot is cleared); wrote [reports/DEMO/VERIFICATION-PLAN.md](reports/DEMO/VERIFICATION-PLAN.md)
+  (nine slices, T-17 first); and started the first Tester pass, **T-17, IN-TEST**, with a brief, a dev-report and full-suite
+  evidence under `reports/T-17/`. The Tester's own report was not written. A fresh Lead continues from the board
+  (the T-17 pass is attempt 1 still in test).
 - **The device was free at 09:38 on 2026-10-19:** `second-vision.service` inactive, no other copy of the program. The
   service runs the **base checkout** (`second-vision-repo`), not this worktree, so this worktree's code is not what
   starts at boot. Do not stop the service or the app. Ask the user first, every time.
@@ -117,9 +148,12 @@ Do not revert, stash or reset anything.
   - `tests/test_camera_alerts*.py`. No defect found; the device check is pending.
   - The tree as it was before this work is in `.claude/baselines/T-03c1/`; the brief is
     `reports/T-03c1/brief-1.md`.
-- **Test baseline (last full run, 2026-10-19, after F7, the battery columns and the timing-test fix):** the Poetry
-  suite gave 1056 passed, 217 skipped, 0 failed; `my_hailo_env` gave 1159 passed, 117 skipped, 0 failed
-  (`evidence/DOCS-BATTERY-*-full.txt`; `tests/test_perf_tools.py` needs psutil, so Poetry skips it). With the long runs on
+- **Test baseline (last full run, 2026-10-20 11:36, after the switch to hef_v3):** the Poetry suite gave 1078 passed,
+  217 skipped, 0 failed; `my_hailo_env` gave 1190 passed, 117 skipped, 0 failed (`evidence/MODEL-V3-*-full.txt`;
+  `tests/test_perf_tools.py` needs psutil, so Poetry skips it). Earlier: 1072 and 1175 after the failsafe pattern strength
+  change (`evidence/FELT-*-full.txt`), 1056 and 1159 before that (`evidence/DOCS-BATTERY-*-full.txt`), all with 0 failed. A full
+  pass is about 5 minutes in the first environment and 7.5 in the second, because many tests wait on real clocks; for a small
+  change run only the tests around it, and the full pair before a commit. With the long runs on
   (`T00A_LONG=1`), every speech and alert test: 505 passed, 0 failed. The four former strict `xfail` tests now pass
   and carry no marker.
   - **A flaky timing test:** in the run before (after F8's tool), `test_camera_alerts.py::test_t03c1_rule4_one_hook_call_takes_well_under_50_ms`
@@ -175,9 +209,21 @@ starts from the truth.
   with it): `reports/T-15/measurement-2.md`. The user starts such a run from their own terminal, since
   auto mode blocks an agent's service restart. The old note, kept for the record: `.claude/tools/queued_npu_run.sh`. It
   stops and restarts the Lead, so read it first.
-- **The battery rundown** (REQ-PERF-01), when the device can be spared for hours: charge to 100 %, unplug the
-  charger, stop the boot service, then
-  `my_hailo_env/bin/python docs/testing/tools/perf_run.py --duration 36000 --stop-at-battery 5 --label rundown`.
+- **The battery rundown is done** (REQ-PERF-01; 2026-10-19 21:09 to 00:47; [reports/T-15/measurement-3.md](reports/T-15/measurement-3.md); **paper-ready summary and handoff: [reports/T-15/BATTERY-RESULTS.md](reports/T-15/BATTERY-RESULTS.md)**; **3.64 h is a lower bound**, since the stop at 3.5 V was a safety margin and the Pi stayed up at least an hour longer at idle):
+  **3.64 hours on battery under full load** (detection + depth, stand-in glasses board, speech) from 4.05 V to the 3.5 V stop,
+  on battery in all 1,307 samples, frame rate and delay unchanged, no throttling or undervoltage even at 3.5 V. New findings
+  in that report: the **camera dropped on its own twice at 90.9 minutes and the failsafe worked** (the second time on record
+  with nobody touching it); **memory still grows about 7 to 11 MB an hour** (stability rule FAIL at +21.8 %); the detection
+  frame-rate figure is inflated after a vision restart; a persistent table was announced about every 1.3 s for 31 minutes
+  (detection owner). **The Pi stays on after a rundown by design: at 01:26 it was still on battery at 3.46 V and falling.
+  Plug the charger in.** The boot service is still STOPPED (`sudo systemctl start second-vision` when wanted).
+- **A new Lead is armed (2026-10-20 01:37), waiting for the charger.** The Pi was still on battery at 3.43 V and falling, and
+  nothing shuts it down, so `.claude/tools/start_lead_when_charging.sh .claude/runs/brief-20261020.md` polls the HAT's
+  power-loss line and starts the Lead (as `lead_unattended.sh --when-hardware-free`) the moment the charger is in (gives up after
+  8 hours; log `.claude/runs/start_when_charging.log`; cancel with the PID in `.claude/runs/start_when_charging.pid`). The brief
+  was checked for process names a Tester might search for (the cause of the 10-19 kill), and the role files now say: a helper
+  never kills by name or by a search over command lines, and heavy work waits for power (charger out and cell under 3.6 V). **Do
+  not start a second Lead while it waits or runs.**
 - **After demo day:** the Lead reconciles the task board from DEMO-TRACK.md and resumes the workbook,
   in the order of [FIX-RANKING.md](FIX-RANKING.md), with one check per task (the Tester's; user,
   2026-10-19). The user starts the Lead; it stays paused until then.

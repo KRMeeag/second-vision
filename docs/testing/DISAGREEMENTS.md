@@ -276,6 +276,12 @@ Original record:
   - *Reading for the Lead to confirm in the brief:* "30 %" is the knob's own scale (0.30 on the 0.0 to 1.0
     value the panel reports: `tts_volume` for speech, `motor_strength` for vibration), not 30 % of
     some absolute loudness. Say so in the brief and ask only if the code makes the other reading likelier.
+- **Built (2026-10-18, demo item F1; board T-00b and T-00c; recorded as D41 in `documentation/DECISIONS.md`).**
+  Every alert raised on the alert scheduler is a failsafe alert: spoken with the speech switch off at
+  `max(tts_volume, 0.30)`, and its patterns played with the vibration switch off at `max(motor_strength, 0.30)`,
+  by a plain multiply (the user's choice). Four older T-00a tests were rewritten because D-15 reversed what they
+  pinned (F1.md lists them). Tester pass queued (VERIFICATION-PLAN). *Open on the device:* at the 30 % floor a
+  strong pulse is duty 76, under the unmeasured motor start threshold of 90, so it may not be felt.
 
 ### D-16 · May an urgent object warning cut a failsafe alert that is being spoken? · TC-022 to TC-025 · DECIDED · decided 2026-10-18 by the user
 
@@ -304,6 +310,12 @@ Original record:
 - **Decision (user, 2026-10-18): (b)**, let an alert in progress finish (2 to 3 s) before an urgent object
   warning can cut it. Needs a small task on the speech worker (preemption rule), after the first alerts
   exist; the four strict `xfail` urgent-tier tests from T-00a become the acceptance tests.
+- **Built (2026-10-19, demo item F7; board T-00d), recorded as D42 in `documentation/DECISIONS.md`.** The speech
+  worker's preemption check (`tts_worker._cuts`) and the scheduler's offer rule changed (named, Rule 3): no object
+  warning cuts an alert being said, and an alert that falls due during an object warning goes next, within about
+  1.3 s even under one urgent warning per frame. The four former `xfail` tests pass with their markers removed.
+  A mode announcement may still cut an alert (the wearer's own switch). **Status: DECIDED and built; it closes when
+  the Tester pass of T-00d is accepted.** (The line above, "Needs a small task", is out of date.)
 
 ### D-17 · What may the device say it has "reconnected" when something else is still missing? · TC-022-007, TC-023-007, TC-025-007 · DECIDED · decided 2026-10-18 by the user
 
@@ -328,6 +340,11 @@ Original record:
 - **Decision (user, 2026-10-18): (b)**, as the Lead recommended. "Everything is connected" is said only when
   no other failsafe alert is still raised; while something else is missing, a specific sentence about the
   part that returned ("Vibration is working again", "Controller board connected", "Earphones connected").
+- **Built (2026-10-18 and 19; board T-01b, T-02c, T-04b; `core/connections.py`).** "Still missing" is read from
+  four named alerts (camera, glasses board, earphones, panel), not from everything raised, because the scheduler
+  keeps a spent once-only sentence raised until cleared ("Camera has been reconnected" must not block
+  "Everything is connected"). A blocked camera view is not a missing part (F5, rule 2, confirmed by the user
+  2026-10-19). Tester passes queued.
 
 ### D-18 · How does the Pi know the earphones are gone? · TC-025-002 to TC-025-007 · DECIDED · decided 2026-10-18 by the Lead, at the user's request
 
@@ -359,6 +376,30 @@ Original record:
   evidence uses a fake `/proc/asound` tree; the one real earphone pull and replug is a hands-on step
   (MANUAL-TESTS.md). *Optional for the user:* extending `usb_sim.py` to the earphones (sysfs `3-1`) would
   let the Tester run it without a person, but it is not needed.
+
+- **Built (2026-10-18, demo item F3; board T-04a, T-04b).** The code follows this entry (`/proc/asound/cardN` with a
+  `usbid` file and a `pcm*p` entry), not DEMO-TRACK's "same rule as usb_sim.py's `earphones()`" (a sysfs walk): the two
+  give the same answer on this Pi and differ only for a USB device with both a video node and a speaker, which this
+  project does not have. `usb_sim.py` has supported the earphones since 2026-10-18. *Open on the device:* that its
+  `authorized=0` makes the card leave `/proc/asound` as a real unplug does (the checklist reads `/proc/asound/cards`
+  during the detach).
+
+### D-19 · What must the panel-lost sentence say about the settings? · TC-023-002, TC-023-004 · OPEN · raised 2026-10-19 by the Lead
+
+- **Workbook:** "Audio output should indicate that the controller board cannot be reached, **and that the device will
+  use the previously used settings**. This feedback should be relayed every 5 minutes." (TC-023-002, TC-023-004;
+  REQ-CON-05: "previously used" means the last session's settings, team 2026-10-12.)
+- **Code today (demo item F6, board T-02b):** "Controller board cannot be reached. Using the current settings."
+  every 5 minutes. "Current" is literally true: nothing changes while the panel is gone and the settings in use are
+  the panel's last report. But nothing saves the settings between sessions (T-02a is not built), so a panel that is
+  dead at power-on gives the **built-in defaults** (everything on, full strength and volume), not the "previously
+  used" ones. The sentence is then true but the workbook's promise is not kept.
+- **Why it matters:** low harm (the defaults are the safest settings), but the workbook is the authority and the two
+  panel-lost cases are P1.
+- **Options:** (a) keep "current settings" and treat the workbook's "previously used" as met in-session; the
+  power-on half stays open until T-02a; (b) build T-02a (FIX-RANKING rank 5), then change the sentence to the
+  workbook's words when settings are restored; (c) change the workbook's wording to "current".
+- **Recommended by the Lead:** (b) later, (a) for the demo. Not decided; agents must not pick a side.
 
 ---
 

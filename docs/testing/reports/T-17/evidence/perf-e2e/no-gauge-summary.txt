@@ -1,0 +1,23 @@
+perf_sample t17
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 25.0 --live --sudo-vcgencmd --label t17 --out /tmp/claude-1000/-home-sv-rpi5-Projects-Second-Vision-worktrees-kenth/47f56bb9-ab4d-4e1b-b930-ade37f0ee6e1/scratchpad/runs/e2e-no-gauge/out --app-log /tmp/claude-1000/-home-sv-rpi5-Projects-Second-Vision-worktrees-kenth/47f56bb9-ab4d-4e1b-b930-ade37f0ee6e1/scratchpad/runs/e2e-no-gauge/out/perf-t17-app.log
+samples: 3 every 10 s; app found: NO
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: unavailable
+
+temperature: min 57.3, mean 57.7, max 58.4 C
+CPU clock: min 1500.0, mean 1500.0, max 1500.0 MHz
+system memory used: min 2989.1, mean 2992.3, max 2998.3 MB
+app CPU: no data
+app resident memory: no data
+busiest core: min 1.0, mean 2.7, max 5.4 %
+CPU clock below its maximum in 3 of 3 samples (lowest 1500 MHz, at 57 to 58 C): short dips; thermal throttling is judged by the flags below
+throttle flags seen (vcgencmd get_throttled): unavailable (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+FPS and delay: no app log lines read (pass --app-log)
+battery (X1202 gauge): no readings
+stability (REQ-DTA-09): not judged, the run is shorter than 7 minutes
+
+stop: exited 0 0.0 s after Ctrl+C
+stand-in glasses received 0 packets
+after: , 
+screenshots: {'mid': 'failed: ', 'end': 'failed: '}

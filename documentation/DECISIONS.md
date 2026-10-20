@@ -333,10 +333,13 @@ the message, never a change to the switches.
   An item that would not be spoken cannot cut in on it.
 - **Vibration.** A pattern from `core/haptic_patterns.py` is played by `workers/serial_worker.py` even
   with `vibration_enabled` off, at duty × `failsafe_level(motor_strength)`.
-- **Strength scaling.** Plain multiply, the same as depth (D40), chosen by the user on 2026-10-18. The
-  alternative was to map the knob onto the motors' felt range above `PWM_FLOOR`. At the 30 % floor a
-  pattern's strong pulse is duty 76, under the unmeasured start threshold of 90 in `core/haptics.py`.
-  The device check confirms whether it is felt.
+- **Strength scaling.** *Amended 2026-10-19.* It was a plain multiply, the same as depth (D40), chosen by the user
+  on 2026-10-18; at the 30 % floor a pattern's strong pulse was duty 76, under the unmeasured start threshold of
+  90 in `core/haptics.py`. The user then found the earphones pattern weak at a low knob, and chose the alternative:
+  the knob maps onto the motors' felt range, `felt_duty()` in `core/haptic_patterns.py`:
+  `PWM_FLOOR + (duty − PWM_FLOOR) × level` for an on step, level still the knob never under 30 %, an off step
+  stays off, and nothing changes at full strength. The earphones pattern's weak step is 190 (was 150). Depth
+  vibration is unchanged (D40). The device check (DEMO-CHECKLIST Part A) still sets the numbers.
 - **A pattern holds the motors** for at most 2.25 s; a ground hazard is still sent during it.
 
 ## D42: A failsafe alert in progress finishes; an object warning waits for it

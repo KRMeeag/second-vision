@@ -175,17 +175,17 @@
 > [docs/testing/TASK-BOARD.md](../docs/testing/TASK-BOARD.md). The Lead ticks a box here only
 > when it accepts the task on Tester evidence. P1 = critical failsafes, done first.
 
-- [ ] **T-00** *(proposed, P1)* Alert output foundation: vibration patterns from the Pi and
+- [/] **T-00** *(proposed, P1)* Alert output foundation: vibration patterns from the Pi and
       repeating spoken alerts, used by T-01 to T-04
-- [ ] **T-01** *(P1)* Glasses ESP32 link lost: "Vibration is not working", repeating or once
+- [/] **T-01** *(P1)* Glasses ESP32 link lost: "Vibration is not working", repeating or once
       per the depth switch; *beep beep* + spoken confirmation on reconnect
-- [ ] **T-02** *(P1)* Control panel link lost: spoken alert every 5 min, keep the last
+- [/] **T-02** *(P1)* Control panel link lost: spoken alert every 5 min, keep the last
       session's settings (needs saving between sessions), confirmation on reconnect
-- [ ] **T-03** *(P1)* Camera missing or removed must never crash the device: keep running,
+- [/] **T-03** *(P1)* Camera missing or removed must never crash the device: keep running,
       keep checking USB, alert every 10 s, recover on reconnect. Never fall back to `--mock`
-- [ ] **T-04** *(P1)* Earphones missing or lost: "strong weak ×3" vibration, repeating or once
+- [/] **T-04** *(P1)* Earphones missing or lost: "strong weak ×3" vibration, repeating or once
       per the detection switch; confirmation on reconnect
-- [ ] **T-05** *(P2)* Each of the 14 detection classes gets its own spoken label (no more
+- [ ] **T-05** *(P2)* Each detection class (14 in hef_v2, 13 in hef_v3, which has no Pole) gets its own spoken label (no more
       Bicycle/Tricycle → "vehicle")
 - [ ] **T-06** *(P2)* Battery announcements at power-on and at 80/60/40/20/5 %; announce and
       shut down cleanly at 2 %

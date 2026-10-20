@@ -1,0 +1,28 @@
+Poetry, 2026-10-19 20:07:16, 9e36a81 + working tree
+........................................................................ [  5%]
+.........s.............................................................. [ 11%]
+........................................................................ [ 16%]
+....sssssssssssssssssss..........................sssssssssssssssssssssss [ 22%]
+ssssssssssssssssssssss.................................................. [ 27%]
+......sss............................................................... [ 33%]
+........................................................................ [ 39%]
+........................................................................ [ 44%]
+........................................................................ [ 50%]
+........................................................................ [ 55%]
+.........................................sssssssssssssssssssssssss...... [ 61%]
+...............s.....s.................................................. [ 67%]
+........................................................................ [ 72%]
+........................................................................ [ 78%]
+......ssssssssssssssss.................................................. [ 83%]
+....
+[tester-virtual] cut: 60 runs x 330 virtual s, forced loss events 3282, alert utterances cut 5042, dropped by switch 0, head-turn mute windows 0, alert utterances 7281, runs with a lost/doubled/cut alert: 0
+.
+[tester-virtual] drain: 60 runs x 330 virtual s, forced loss events 25486, alert utterances cut 1224, dropped by switch 0, head-turn mute windows 28697, alert utterances 3458, runs with a lost/doubled/cut alert: 0
+.
+[tester-virtual] tie: 60 runs x 330 virtual s, forced loss events 1170, alert utterances cut 1436, dropped by switch 0, head-turn mute windows 3463, alert utterances 3903, runs with a lost/doubled/cut alert: 0
+.
+[tester-virtual] off: 60 runs x 330 virtual s, forced loss events 2978, alert utterances cut 1041, dropped by switch 1777, head-turn mute windows 0, alert utterances 2909, runs with a lost/doubled/cut alert: 0
+....s............ss.......ssss...................sssss.s......... [ 89%]
+............................................ssssssssssssssssssssssssssss [ 95%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss         [100%]
+1072 passed, 217 skipped in 303.06s (0:05:03)

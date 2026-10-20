@@ -1,0 +1,4 @@
+#!/bin/sh
+# Tester fake grim: no screenshot of the user's desktop.
+echo "$(date +%T) grim $*" >> "${FAKE_SUDO_LOG:-/dev/null}"
+exit 1

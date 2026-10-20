@@ -1,0 +1,3 @@
+#!/bin/sh
+# Tester stand-in for espeak-ng: "speaks" for 2 s. Makes no sound, touches no audio device.
+sleep "${STUB_SPEAK_SECONDS:-2}"

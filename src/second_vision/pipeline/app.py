@@ -229,21 +229,29 @@ START_STOPPED = "stopped"     # shutdown began during the start; nothing more is
 # glasses board holds its last command, so silence is not "off".
 MOTORS_OFF = {"left": 0, "center": 0, "right": 0, "hazard": False, "hazard_severity": 0}
 
-# The team's custom-trained detector (14 classes, NMS on-chip, hailo8). Absolute,
-# built from this file's location, because resolve_hef_path() resolves a
-# relative path against the CWD — fine under run.sh, wrong anywhere else.
-# hef_deploy is the runtime build; hef_eval is the same network compiled with a
-# 0.001 NMS score threshold for mAP evaluation. At runtime the difference is
-# moot: hailonet's nms-score-threshold (thresholds_str below) overrides the
-# threshold baked into either HEF.
+# The team's custom-trained detector (NMS on-chip, hailo8). Absolute, built
+# from this file's location, because resolve_hef_path() resolves a relative path
+# against the CWD — fine under run.sh, wrong anywhere else.
+# DET_MODEL_VERSION names the folder under models/ that is in use: hef_v2 had 14
+# classes, hef_v3 (2026-10-20) has 13 (no "Pole"; every class after Motorcycle
+# moved down one index). hef_deploy is the runtime build; hef_eval is the same
+# network compiled with a lower NMS score threshold for mAP evaluation. At
+# runtime the difference is moot: hailonet's nms-score-threshold
+# (thresholds_str below) overrides the threshold baked into either HEF.
+# To switch models: change DET_MODEL_VERSION and make sure the new folder has a
+# labels.json (see DET_LABELS_SIDECAR); tests/test_detection_classes.py checks it.
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DET_HEF_PATH = REPO_ROOT / "models" / "hef_deploy" / "best.hef"
+DET_MODEL_VERSION = "hef_v3"
+DEFAULT_DET_HEF_PATH = REPO_ROOT / "models" / DET_MODEL_VERSION / "hef_deploy" / "best.hef"
 
 # Sidecar label file looked for next to the detection HEF. The yolo_hailortpp
 # postprocess falls back to the 80 COCO names when it gets no labels JSON, which
-# for a custom HEF means class 1 ("Vehicle") is emitted as "bicycle", class 3
-# ("Pole") as "motorcycle", and so on — and get_hef_labels_json() only knows
-# hailo's own HEF names (barcode, visdrone, 4_classes), not "best.hef".
+# for a custom HEF means every class is named after a different COCO class (class
+# 1, "Vehicle", is emitted as "bicycle"), and detection goes silent because the
+# class map matches nothing — and get_hef_labels_json() only knows hailo's own HEF
+# names (barcode, visdrone, 4_classes), not "best.hef". A model delivered without
+# one (hef_v3 was) needs it written from its metadata.yaml: "unlabeled", then the
+# names in class-index order.
 DET_LABELS_SIDECAR = "labels.json"
 
 
@@ -343,7 +351,7 @@ class SecondVisionApp(GStreamerApp):
             "--det-hef-path",
             default=str(DEFAULT_DET_HEF_PATH),
             help="Specific HEF model to use for detection "
-                 "(default: models/hef_deploy/best.hef, the custom 14-class model)",
+                 f"(default: models/{DET_MODEL_VERSION}/hef_deploy/best.hef, the custom model)",
         )
 
         # DEBUG ONLY — temporary. Cycles pipeline_mode on a timer so mode switching can be

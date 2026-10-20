@@ -1,0 +1,4 @@
+#!/bin/sh
+# Tester fake sudo: NEVER runs anything; logs the attempt. (The Tester may not use sudo.)
+echo "$(date +%T) sudo $*" >> "${FAKE_SUDO_LOG:-/dev/null}"
+exit 1

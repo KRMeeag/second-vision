@@ -1,0 +1,26 @@
+perf_sample t17
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 300.0 --live --sudo-vcgencmd --label t17 --out /tmp/claude-1000/-home-sv-rpi5-Projects-Second-Vision-worktrees-kenth/47f56bb9-ab4d-4e1b-b930-ade37f0ee6e1/scratchpad/runs/e2e-rundown-volts/out --app-log /tmp/claude-1000/-home-sv-rpi5-Projects-Second-Vision-worktrees-kenth/47f56bb9-ab4d-4e1b-b930-ade37f0ee6e1/scratchpad/runs/e2e-rundown-volts/out/perf-t17-app.log --stop-at-volts 3.5
+samples: 4 every 10 s; app found: NO
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: unavailable
+ended at the battery threshold: 3.450 V (3.0 % by the gauge) after 0.01 h on this load (--stop-at-volts 3.5 --stop-at-battery None)
+
+temperature: min 55.6, mean 56.3, max 56.8 C
+CPU clock: min 1500.0, mean 1500.0, max 1500.0 MHz
+system memory used: min 2979.7, mean 2981.1, max 2982.1 MB
+app CPU: no data
+app resident memory: no data
+busiest core: min 0.6, mean 1.2, max 2.1 %
+CPU clock below its maximum in 4 of 4 samples (lowest 1500 MHz, at 56 to 57 C): short dips; thermal throttling is judged by the flags below
+throttle flags seen (vcgencmd get_throttled): unavailable (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+FPS and delay: no app log lines read (pass --app-log)
+battery (X1202 gauge): 50.0 % -> 3.0 %, 3.900 V -> 3.450 V over 1 min (4 readings; the percentage drifts, the voltage is the measure)
+power source (the HAT's power-loss line): on battery in 4 of 4 samples
+battery drain by the gauge's percentage: 5621.3 % per hour; at that rate 100 % to 5 % takes about 0.0 h (rough: the percentage drifts and a Li-ion cell does not drain evenly; a rundown to the stop voltage is the measurement)
+stability (REQ-DTA-09): not judged, the run is shorter than 7 minutes
+
+stop: exited 0 0.0 s after Ctrl+C
+stand-in glasses received 0 packets
+after: , 
+screenshots: {'end': 'failed: '}

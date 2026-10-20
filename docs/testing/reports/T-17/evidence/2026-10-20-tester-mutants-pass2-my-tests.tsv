@@ -1,0 +1,27 @@
+D01	CAUGHT-BY-MY-TESTS	line exactly at `within` no longer counts	1s	FAILED test_t17_watch.py::test_a_line_exactly_at_within_counts_and_one_millisecond_after_does_not | 1 failed, 3 passed in 0.07s
+D04	CAUGHT-BY-MY-TESTS	an absent expectation is settled at once (does not wait its window)	5s	FAILED test_t17_watch.py::test_absent_alone_waits_exactly_its_window_then_passes | 1 failed, 13 passed in 4.79s
+D05	CAUGHT-BY-MY-TESTS	the watch ends at the SHORTEST window	3s	FAILED test_t17_watch.py::test_a_missed_expectation_keeps_the_step_open_to_its_longest_window_by_design | 1 failed, 11 passed in 1.78s
+D18	CAUGHT-BY-MY-TESTS	panel and lens steps swapped (order of the sequence)	7s	FAILED test_t17_watch.py::test_the_sequence_is_in_the_order_the_requirement_gives | 1 failed, 18 passed in 6.80s
+D19	CAUGHT-BY-MY-TESTS	step 1's 'object announced' also matches 'Everything is connected'	7s	FAILED test_t17_watch.py::test_step_one_object_pattern_matches_an_object_and_none_of_the_programs_failsafe_sentences | 1 failed, 20 passed in 6.91s
+D06	CAUGHT-BY-MY-TESTS	lines from before the prompt (earlier actions of the step) count	11s	FAILED test_t17_real_emitters.py::test_lens_run_where_the_flash_is_never_taken_away_misses_exactly_the_last_line | 1 failed in 10.71s
+D08	STILL-SURVIVES	no SIGKILL when the program ignores SIGINT	26s	1 passed in 25.52s
+D14	CAUGHT-BY-MY-TESTS	the presenter's words are filed under step 1	1s	FAILED test_t17_routes2.py::test_the_presenters_words_are_filed_under_the_right_step | 1 failed in 0.37s
+D15	CAUGHT-BY-MY-TESTS	EOF of stdin not handled as a finish	1s	FAILED test_t17_routes.py::test_route_eof_on_stdin - assert ('Finishing early... | 1 failed in 0.47s
+D21	CAUGHT-BY-MY-TESTS	two runs in the same second share a folder	1s	FAILED test_t17_routes2.py::test_two_runs_in_the_same_second_do_not_overwrite | 1 failed in 0.14s
+D22	CAUGHT-BY-MY-TESTS	SIGINT to the leader only, not the process group	7s	FAILED test_t17_routes2.py::test_a_normal_child_in_the_programs_group_is_stopped_too | 1 failed in 6.24s
+D23	CAUGHT-BY-MY-TESTS	stderr dropped instead of merged	1s	FAILED test_t17_routes.py::test_stderr_is_merged_and_kept - assert '[STDERR] ... | 1 failed in 0.49s
+D24	CAUGHT-BY-MY-TESTS	session.log closed before the reader has drained	2s	FAILED test_t17_routes2.py::test_lines_the_program_prints_while_it_is_stopping_are_all_kept | 1 failed in 1.34s
+P02	CAUGHT-BY-MY-TESTS	line requested with an output value (would drive it)	1s	FAILED test_t17_perf.py::test_ac_power_requests_gpio6_as_input_only_and_closes_the_line | 1 failed, 51 passed in 0.93s
+P09	CAUGHT-BY-MY-TESTS	a charger-in sample no longer resets the streak (design variant)	1s	FAILED test_t17_perf.py::test_charger_in_sample_between_two_low_ones_RESETS_the_count | 1 failed, 21 passed in 0.47s
+P14	CAUGHT-BY-MY-TESTS	ROSE message shown even when ac_power was recorded	1s	FAILED test_t17_perf.py::test_ROSE_is_not_said_when_the_power_source_was_recorded | 1 failed, 36 passed in 0.91s
+P18	CAUGHT-BY-MY-TESTS	(unknown kwarg: request fails -> '' )	1s	FAILED test_t17_perf.py::test_ac_power_requests_gpio6_as_input_only_and_closes_the_line | 1 failed, 51 passed in 0.93s
+R05	CAUGHT-BY-MY-TESTS	default wait limit is 60 s, not 2 h	1s	FAILED test_t17_perf.py::test_wait_default_limit_is_two_hours - assert 60 == ... | 1 failed, 43 passed in 0.92s
+R07	CAUGHT-BY-MY-TESTS	unreadable line does not wait (starts at once)	121s	FAILED test_t17_perf.py::test_wait_mode_with_an_unreadable_line_still_waits | 1 failed, 48 passed in 120.99s (0:02:00)
+R08	CAUGHT-BY-MY-TESTS	wait timeout exits 0	1s	FAILED test_t17_perf.py::test_wait_that_times_out_returns_1_with_a_message_and_starts_nothing | 1 failed, 46 passed in 0.93s
+R06	CAUGHT-BY-MY-TESTS	--stop-at-volts not passed to the sampler	1s	FAILED test_t17_perf_e2e.py::test_rundown_by_voltage_stops_the_sampler_then_the_app_and_draws_the_chart | 1 failed in 0.09s
+R10	CAUGHT-BY-MY-TESTS	--stop-at-battery not passed to the sampler	1s	FAILED test_t17_perf_e2e.py::test_rundown_by_percentage_also_stops - IndexErr... | 1 failed in 0.09s
+R09	CAUGHT-BY-MY-TESTS	app is only stopped after the full duration (rundown ends later)	1s	FAILED test_t17_perf_e2e.py::test_charger_in_during_the_run_never_stops_it_and_the_summary_says_so | 1 failed in 0.09s
+D08	CAUGHT-BY-MY-TESTS	no SIGKILL when the program ignores SIGINT	26s	FAILED test_t17_routes.py::test_ignoring_program_is_killed_after_20_s_not_before_and_nothing_is_left[q] | 1 failed in 25.52s
+R06	CAUGHT-BY-MY-TESTS	--stop-at-volts not passed to the sampler	302s	FAILED test_t17_perf_e2e.py::test_rundown_by_voltage_stops_the_sampler_then_the_app_and_draws_the_chart | 1 failed in 301.62s (0:05:01)
+R10	CAUGHT-BY-MY-TESTS	--stop-at-battery not passed to the sampler	302s	FAILED test_t17_perf_e2e.py::test_rundown_by_percentage_also_stops - Assertio... | 1 failed in 301.59s (0:05:01)
+R09	CAUGHT-BY-MY-TESTS	app is only stopped after the full duration (rundown ends later)	47s	FAILED test_t17_perf_e2e.py::test_charger_in_during_the_run_never_stops_it_and_the_summary_says_so | 1 failed in 46.62s

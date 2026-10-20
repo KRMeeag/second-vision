@@ -12,8 +12,9 @@ No ESP32. Two layers:
     switch off, the strength knob low, a lost board, a hazard during a pattern, and shutdown.
 
 Decision D41 (DISAGREEMENTS.md D-15): a failsafe pattern plays even with the vibration switch off,
-at max(motor_strength, 0.30) by plain multiply (the user's choice, 2026-10-18), and never changes a
-setting.
+at max(motor_strength, 0.30), mapped onto the range the motors are felt in (felt_duty: an on step is
+never under PWM_FLOOR; the user chose this on 2026-10-19 after finding the earphones pattern weak at a low
+knob, replacing plain duty x level of 2026-10-18), and never changes a setting.
 """
 
 import queue
@@ -38,7 +39,9 @@ from second_vision.core.haptic_patterns import (
     STRONG_DUTY,
     WEAK_DUTY,
     PatternPlayer,
+    felt_duty,
 )
+from second_vision.core.haptics import PWM_FLOOR
 
 MOTOR = 0x01
 HAZARD = 0x04
@@ -74,6 +77,52 @@ def test_camera_is_two_pulses_longer_than_the_reconnect_ones():
 def test_earphones_is_strong_weak_three_times():
     assert duties(PATTERN_EARPHONES) == [STRONG_DUTY, WEAK_DUTY, 0] * 3
     assert 0 < WEAK_DUTY < STRONG_DUTY
+
+
+# ============================================================
+# felt_duty: the strength knob maps onto the range the motors are felt in (2026-10-19)
+# ============================================================
+LEVELS = [FAILSAFE_MIN_LEVEL, 0.5, 0.75, 1.0]
+
+
+@pytest.mark.parametrize("level", LEVELS)
+def test_an_on_step_is_never_under_the_motors_start_duty_at_any_level(level):
+    for name, steps in PATTERNS.items():
+        for _, duty in steps:
+            if duty > 0:
+                assert felt_duty(duty, level) >= PWM_FLOOR, (name, duty, level)
+
+
+@pytest.mark.parametrize("level", LEVELS)
+def test_an_off_step_stays_off_at_any_level(level):
+    assert felt_duty(0, level) == 0
+
+
+def test_at_full_strength_a_pattern_is_exactly_its_own_duties():
+    assert [felt_duty(d, 1.0) for d in duties(PATTERN_EARPHONES)] == duties(PATTERN_EARPHONES)
+    assert felt_duty(STRONG_DUTY, 1.0) == 255 and felt_duty(WEAK_DUTY, 1.0) == WEAK_DUTY
+
+
+@pytest.mark.parametrize("level", LEVELS)
+def test_strong_is_always_felt_stronger_than_weak(level):
+    assert felt_duty(STRONG_DUTY, level) > felt_duty(WEAK_DUTY, level)
+
+
+def test_a_higher_level_is_never_weaker():
+    for d in (WEAK_DUTY, STRONG_DUTY):
+        got = [felt_duty(d, lv) for lv in (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)]
+        assert got == sorted(got) and got[0] < got[-1], got
+
+
+def test_the_numbers_at_the_floor_and_half_knob_that_the_user_found_weak():
+    """Before: plain multiply gave strong 76 / weak 45 at the 30 % floor and weak 75 at half, under the start duty 90."""
+    assert (felt_duty(STRONG_DUTY, 0.30), felt_duty(WEAK_DUTY, 0.30)) == (139, 120)
+    assert felt_duty(WEAK_DUTY, 0.5) == 140 and felt_duty(STRONG_DUTY, 0.5) == 172
+
+
+def test_a_step_at_or_under_the_floor_is_sent_as_it_is_and_the_result_never_exceeds_a_byte():
+    assert felt_duty(PWM_FLOOR, 0.3) == PWM_FLOOR and felt_duty(40, 0.3) == 40
+    assert felt_duty(400, 1.0) == 255
 
 
 def test_no_pattern_holds_the_depth_stream_long():
@@ -375,7 +424,7 @@ def test_strength_knob_scales_the_pattern_but_never_under_30_percent(monkeypatch
     r.stop()
     assert r.config.snapshot() == before, "a setting was changed"
     level = max(knob, 0.30)
-    want = [min(255, int(d * level)) for d in duties(PATTERN_EARPHONES)]
+    want = [felt_duty(d, level) for d in duties(PATTERN_EARPHONES)]
     depth_duty = min(255, int(100 * knob))
     got = [d for _, d in r.board.motors(since=t_play)]
     start = first_index(got, lambda d: d == want[0] and d != depth_duty)

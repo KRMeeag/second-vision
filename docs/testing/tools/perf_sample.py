@@ -20,9 +20,13 @@ With --app-log it also reads the app's own "[DEPTH] ... depth X FPS / det Y FPS 
 
 The battery: the X1202 UPS HAT's gauge (I2C bus 1, address 0x36, the registers its vendor script
 ~/x120x/bat.py reads) gives the charge in % and the cell voltage; two register reads per sample, no root.
-It cannot tell whether the charger is plugged in, so the summary flags a run whose charge rose. With
---stop-at-battery PCT the sampling ends once the charge is at or under PCT: the rundown stops while the Pi
-still has power, instead of at the cut-off.
+Whether the charger is in comes from the HAT's own power-loss line (GPIO6, read as an input, the way its vendor
+script ~/x120x/pld-trixie.py does): `ac_power` is 1 with the adapter in, 0 on battery. The summary says how many
+samples were on battery; a run with the charger in says nothing about battery life. The gauge's PERCENTAGE drifts
+(2026-10-19: 85 % at a full-cell 4.185 V), and the vendor script shuts down on VOLTAGE (3.20 V), so the rundown stops
+on voltage: --stop-at-volts V ends the sampling after two readings in a row at or under V, while the Pi still has
+power (the cut-off is near 3.2 V, and nothing here shuts the Pi down cleanly). --stop-at-battery PCT does the same on
+the percentage, for what it is worth.
 
 It writes <out>/perf-<label>.csv and a .txt summary. The summary applies the stability
 rule of REQ-DTA-09 (docs/testing/REQUIREMENTS.md) when the run is long enough: ignoring the first
@@ -120,9 +124,27 @@ def battery() -> tuple:
         return "", ""
 
 
-def battery_stop(row: dict, threshold) -> bool:
-    """True when --stop-at-battery is set and this sample's charge is at or under it (an unread charge never stops)."""
-    return threshold is not None and row.get("battery_pct", "") != "" and row["battery_pct"] <= threshold
+def ac_power() -> str:
+    """The HAT's power-loss line: "1" with the adapter in, "0" on battery, "" when it cannot be read. Read-only."""
+    try:
+        import gpiod
+        with gpiod.request_lines("/dev/gpiochip0", consumer="sv-perf-sample",
+                                 config={6: gpiod.LineSettings(direction=gpiod.line.Direction.INPUT)}) as req:
+            return "1" if req.get_values()[0] == gpiod.line.Value.ACTIVE else "0"
+    except Exception:                       # no gpiod, no HAT, the line busy: the run goes on without it
+        return ""
+
+
+def battery_stop(row: dict, threshold, volts=None) -> bool:
+    """
+    True when this sample is at or under --stop-at-battery (percent) or --stop-at-volts (cell voltage). An unread
+    value never stops. A sample with the charger in never stops either: the cell voltage is high then.
+    """
+    if row.get("ac_power") == "1":
+        return False
+    if threshold is not None and row.get("battery_pct", "") != "" and row["battery_pct"] <= threshold:
+        return True
+    return volts is not None and row.get("battery_v", "") != "" and row["battery_v"] <= volts
 
 
 def battery_lines(rows: list[dict]) -> list[str]:
@@ -133,13 +155,22 @@ def battery_lines(rows: list[dict]) -> list[str]:
     (t0, p0, v0), (t1, p1, v1) = pts[0], pts[-1]
     hours = (t1 - t0) / 3600
     out = [f"battery (X1202 gauge): {p0:.1f} % -> {p1:.1f} %, {v0:.3f} V -> {v1:.3f} V over {hours * 60:.0f} min "
-           f"({len(pts)} readings)"]
-    if p1 > p0 + 0.5:
+           f"({len(pts)} readings; the percentage drifts, the voltage is the measure)"]
+    source = [r.get("ac_power", "") for r in rows if r.get("ac_power", "") in ("0", "1")]
+    if source:
+        on_battery = source.count("0")
+        out.append(f"power source (the HAT's power-loss line): on battery in {on_battery} of {len(source)} samples"
+                   + ("" if on_battery == len(source) else
+                      "; THE CHARGER WAS IN for the rest: this is not a clean battery run"))
+        if on_battery == 0:
+            return out + ["battery: on the charger throughout: this run says nothing about battery life"]
+    if not source and p1 > p0 + 0.5:
         out.append("battery: the charge ROSE, so the charger was connected: this run says nothing about battery life")
     elif p0 - p1 >= 1.0 and hours > 0:
         rate = (p0 - p1) / hours
-        out.append(f"battery drain: {rate:.1f} % per hour; at that rate 100 % to 5 % takes about {95 / rate:.1f} h "
-                   "(a straight-line estimate: a Li-ion cell does not drain evenly, so a rundown is the measurement)")
+        out.append(f"battery drain by the gauge's percentage: {rate:.1f} % per hour; at that rate 100 % to 5 % takes about "
+                   f"{95 / rate:.1f} h (rough: the percentage drifts and a Li-ion cell does not drain evenly; a rundown to "
+                   "the stop voltage is the measurement)")
     else:
         out.append("battery drain: under 1 % over the run, too little to estimate a rate from")
     return out
@@ -274,6 +305,7 @@ def sample(proc: psutil.Process | None, started: float, use_sudo: bool = False) 
            "mem_used_mb": (mem.total - mem.available) / 2**20,
            "app_cpu_pct": "", "app_rss_mb": "", "throttled": throttled_flags(use_sudo)}
     row["battery_pct"], row["battery_v"] = battery()
+    row["ac_power"] = ac_power()
     if proc is not None:
         procs, cpu, rss = tree(proc), 0.0, 0.0
         for p in procs:
@@ -318,6 +350,16 @@ def self_check() -> int:
     assert battery_lines([dict(drain[0], battery_pct="")]) == ["battery (X1202 gauge): no readings"]
     assert battery_stop({"battery_pct": 5.0}, 5) and not battery_stop({"battery_pct": 5.1}, 5)
     assert not battery_stop({"battery_pct": ""}, 5) and not battery_stop({"battery_pct": 1.0}, None)
+    assert battery_stop({"battery_v": 3.45, "ac_power": "0"}, None, 3.5) and not battery_stop({"battery_v": 3.55}, None, 3.5)
+    assert battery_stop({"battery_v": 3.5}, None, 3.5), "at the threshold counts"
+    assert not battery_stop({"battery_v": 3.4, "ac_power": "1"}, None, 3.5), "never stop on the charger"
+    assert not battery_stop({"battery_v": ""}, None, 3.5) and not battery_stop({"battery_v": 3.0}, None, None)
+    mixed = [dict(r, ac_power="1" if i < 100 else "0") for i, r in enumerate(drain)]
+    assert "on battery in 261 of 361" in "\n".join(battery_lines(mixed)) and "CHARGER WAS IN" in "\n".join(battery_lines(mixed))
+    clean = [dict(r, ac_power="0") for r in drain]
+    assert "on battery in 361 of 361" in "\n".join(battery_lines(clean)) and "CHARGER" not in "\n".join(battery_lines(clean))
+    plugged = [dict(r, ac_power="1") for r in drain]
+    assert "says nothing about battery life" in "\n".join(battery_lines(plugged))
     print("self-check ok")
     return 0
 
@@ -355,7 +397,10 @@ def main() -> int:
     ap.add_argument("--sudo-vcgencmd", action="store_true",
                     help="read `vcgencmd get_throttled` with `sudo -n` (read-only; needs passwordless sudo)")
     ap.add_argument("--stop-at-battery", type=float, metavar="PCT",
-                    help="end the sampling once the battery charge is at or under PCT (a rundown that stops in time)")
+                    help="end the sampling once the gauge's percentage is at or under PCT (it drifts: prefer --stop-at-volts)")
+    ap.add_argument("--stop-at-volts", type=float, metavar="V",
+                    help="end the sampling after two readings in a row at or under V cell volts, on battery (a rundown "
+                         "that stops in time; the vendor script's own shutdown is 3.20 V)")
     ap.add_argument("--self-check", action="store_true", help="test the script's own parsing and exit")
     args = ap.parse_args()
     if args.self_check:
@@ -371,7 +416,7 @@ def main() -> int:
     psutil.cpu_percent(percpu=True)                       # first call only primes the counters
     run_start = time.monotonic()
     t_end = run_start + args.duration
-    ended = ""
+    ended, low_streak = "", 0
     try:
         while time.monotonic() < t_end:
             if proc is None or not proc.is_running():
@@ -388,11 +433,15 @@ def main() -> int:
                       f"app cpu {row['app_cpu_pct'] if row['app_cpu_pct'] == '' else format(row['app_cpu_pct'], '5.0f')}%  "
                       f"app rss {row['app_rss_mb'] if row['app_rss_mb'] == '' else format(row['app_rss_mb'], '5.0f')} MB  "
                       f"throttled {row['throttled']}  "
-                      f"battery {row['battery_pct'] if row['battery_pct'] == '' else format(row['battery_pct'], '5.1f')} %",
+                      f"battery {row['battery_pct'] if row['battery_pct'] == '' else format(row['battery_pct'], '5.1f')} % "
+                      f"{row['battery_v'] if row['battery_v'] == '' else format(row['battery_v'], '.3f')} V "
+                      f"{ {'1': 'CHARGER IN', '0': 'on battery', '': '?'}[row['ac_power']] }",
                       flush=True)
-            if battery_stop(row, args.stop_at_battery):
-                ended = (f"ended at the battery threshold: {row['battery_pct']:.1f} % after "
-                         f"{row['elapsed_s'] / 3600:.2f} h (--stop-at-battery {args.stop_at_battery:g})")
+            low_streak = low_streak + 1 if battery_stop(row, args.stop_at_battery, args.stop_at_volts) else 0
+            if low_streak >= 2:                         # two in a row: one noisy reading must not end a run
+                ended = (f"ended at the battery threshold: {row['battery_v']:.3f} V ({row['battery_pct']:.1f} % by the "
+                         f"gauge) after {row['elapsed_s'] / 3600:.2f} h on this load "
+                         f"(--stop-at-volts {args.stop_at_volts} --stop-at-battery {args.stop_at_battery})")
                 print(ended, flush=True)
                 break
     except KeyboardInterrupt:

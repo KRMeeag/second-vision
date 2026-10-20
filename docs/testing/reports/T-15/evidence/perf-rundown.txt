@@ -1,0 +1,30 @@
+perf_sample rundown
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 36000.0 --live --sudo-vcgencmd --label rundown --out /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/reports/T-15/evidence --app-log /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/reports/T-15/evidence/perf-rundown-app.log --stop-at-volts 3.5
+samples: 1307 every 10 s; app found: yes
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: 0x0
+ended at the battery threshold: 3.499 V (2.0 % by the gauge) after 3.64 h on this load (--stop-at-volts 3.5 --stop-at-battery None)
+
+temperature: min 55.1, mean 63.9, max 67.8 C
+CPU clock: min 1700.0, mean 2364.9, max 2400.0 MHz
+system memory used: min 3257.9, mean 3388.5, max 3516.2 MB
+app CPU: min 37.1, mean 74.7, max 78.8 % of one core
+app resident memory: min 178.0, mean 221.0, max 244.0 MB
+busiest core: min 16.6, mean 28.7, max 39.9 %
+CPU clock below its maximum in 85 of 1307 samples (lowest 1700 MHz, at 59 to 66 C): short dips; thermal throttling is judged by the flags below
+throttle flags seen (vcgencmd get_throttled): 0x0 (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+depth FPS, the app's own counter (an average since start, so it hides dips): median 29.6, min 15.7
+detection FPS, the app's own counter (same): median 54.5, min 28.7
+camera-to-callback delay: median 104 ms, p95 127 ms, p99 132 ms, max 154 ms (25741 lines)
+frame rate per 15-frame window (after the first minute, 25738 windows): median 30.0, 5th percentile 28.5, 1st percentile 20.1, min 18.9 FPS; longest window 0.79 s (15 frames take 0.50 s at 30 FPS); windows over 1 s: 0
+battery (X1202 gauge): 90.2 % -> 2.0 %, 4.049 V -> 3.499 V over 218 min (1307 readings; the percentage drifts, the voltage is the measure)
+power source (the HAT's power-loss line): on battery in 1307 of 1307 samples
+battery drain by the gauge's percentage: 24.2 % per hour; at that rate 100 % to 5 % takes about 3.9 h (rough: the percentage drifts and a Li-ion cell does not drain evenly; a rundown to the stop voltage is the measurement)
+stability (REQ-DTA-09): memory 197 -> 240 MB (+21.8 %, limit +5 %): FAIL
+stability (REQ-DTA-09): app CPU first 3 min 72 %, last 3 min 75 % (limit 10 points apart): PASS
+
+stop: exited 0 0.6 s after Ctrl+C
+stand-in glasses received 387963 packets
+after: temp=63.7'C, throttled=0x0
+screenshots: {'end': 'ok'}

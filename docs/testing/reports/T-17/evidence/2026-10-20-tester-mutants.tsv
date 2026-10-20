@@ -1,0 +1,55 @@
+CTRL	SURVIVED	control: no change	5s	33 passed in 3.72s
+D01	SURVIVED	line exactly at `within` no longer counts	4s	21 passed in 3.44s
+D02	CAUGHT	negative delays (reaction before the Enter) discarded	1s	FAILED tests/test_demo_run.py::test_a_line_before_the_enter_counts_and_one_after_the_window_does_not | 1 failed, 6 passed in 0.10s
+D03	CAUGHT	count=2 is satisfied by one line	1s	FAILED tests/test_demo_run.py::test_a_repeat_needs_both_lines - assert not True | 1 failed, 4 passed in 0.10s
+D04	SURVIVED	an absent expectation is settled at once (does not wait its window)	4s	21 passed in 3.43s
+D05	SURVIVED	the watch ends at the SHORTEST window	4s	21 passed in 3.44s
+D06	SURVIVED	lines from before the prompt (earlier actions of the step) count	4s	21 passed in 3.45s
+D07	CAUGHT	program stopped with SIGTERM instead of SIGINT	2s	FAILED tests/test_demo_run.py::test_a_whole_step_against_the_stand_in_program | 1 failed, 12 passed in 1.16s
+D08	SURVIVED	no SIGKILL when the program ignores SIGINT	4s	21 passed in 3.43s
+D09	CAUGHT	waits no time for the program to exit	2s	FAILED tests/test_demo_run.py::test_a_whole_step_against_the_stand_in_program | 1 failed, 12 passed in 1.14s
+D10	CAUGHT	exit code is 0 even when a line was missed	4s	FAILED tests/test_demo_run.py::test_a_missed_line_is_reported_and_the_run_fails | 1 failed, 14 passed in 3.41s
+D11	CAUGHT	a step skipped for a missing part is recorded as ok	4s	FAILED tests/test_demo_run.py::test_a_step_whose_part_is_missing_is_skipped_and_says_why | 1 failed, 16 passed in 3.46s
+D12	CAUGHT	the summary always says 0 missed	4s	FAILED tests/test_demo_run.py::test_a_missed_line_is_reported_and_the_run_fails | 1 failed, 14 passed in 3.40s
+D13	CAUGHT	session.log keeps only the 'live' lines	2s	FAILED tests/test_demo_run.py::test_a_whole_step_against_the_stand_in_program | 1 failed, 12 passed in 1.16s
+D14	SURVIVED	the presenter's words are filed under step 1	4s	21 passed in 3.44s
+D15	SURVIVED	EOF of stdin not handled as a finish	4s	21 passed in 3.46s
+D16	CAUGHT	preflight ignores an active boot service	4s	FAILED tests/test_demo_run.py::test_it_refuses_while_the_boot_service_runs - ... | 1 failed, 17 passed in 3.49s
+D17	CAUGHT	preflight does not require a camera	4s	FAILED tests/test_demo_run.py::test_it_refuses_while_another_copy_runs_and_without_a_camera | 1 failed, 18 passed in 3.46s
+D18	SURVIVED	panel and lens steps swapped (order of the sequence)	4s	21 passed in 3.44s
+D19	SURVIVED	step 1's 'object announced' also matches 'Everything is connected'	4s	21 passed in 3.49s
+D20	CAUGHT	camera NOT CONNECTED window shrunk to 10 ms	27s	FAILED tests/test_demo_run.py::test_a_whole_step_against_the_stand_in_program | 1 failed, 12 passed in 25.94s
+D21	SURVIVED	two runs in the same second share a folder	4s	21 passed in 3.45s
+D22	SURVIVED	SIGINT to the leader only, not the process group	4s	21 passed in 3.46s
+D23	SURVIVED	stderr dropped instead of merged	4s	21 passed in 3.46s
+D24	SURVIVED	session.log closed before the reader has drained	4s	21 passed in 3.43s
+D25	CAUGHT	steps whose part is missing are not skipped	59s	FAILED tests/test_demo_run.py::test_a_step_whose_part_is_missing_is_skipped_and_says_why | 1 failed, 16 passed in 58.57s
+D26	CAUGHT	'q' no longer finishes	37s	FAILED tests/test_demo_run.py::test_the_presenter_can_skip_a_step_or_finish_early_and_the_program_is_still_stopped | 1 failed, 15 passed in 35.68s
+D27	CAUGHT	preflight ignores another running copy	4s	FAILED tests/test_demo_run.py::test_it_refuses_while_another_copy_runs_and_without_a_camera | 1 failed, 18 passed in 3.46s
+P01	CAUGHT	charger line inverted	1s	FAILED tests/test_perf_tools.py::test_the_charger_line_is_one_with_the_adapter_in_zero_on_battery_and_empty_when_unreadable | 1 failed, 4 passed in 0.08s
+P02	SURVIVED	line requested with an output value (would drive it)	1s	12 passed in 0.30s
+P03	CAUGHT	unreadable charger line reported as 'on battery'	1s	FAILED tests/test_perf_tools.py::test_an_unreadable_battery_gauge_leaves_the_columns_empty_and_never_stops_the_run | 1 failed, 2 passed in 0.08s
+P04	CAUGHT	charger-in samples can stop the run	1s	FAILED tests/test_perf_tools.py::test_perf_sample_self_check_passes - Asserti... | 1 failed in 0.09s
+P05	CAUGHT	voltage boundary: exactly V no longer stops	1s	FAILED tests/test_perf_tools.py::test_perf_sample_self_check_passes - Asserti... | 1 failed in 0.10s
+P06	CAUGHT	percentage boundary: exactly PCT no longer stops	1s	FAILED tests/test_perf_tools.py::test_perf_sample_self_check_passes - Asserti... | 1 failed in 0.10s
+P07	CAUGHT	one low reading ends the run	1s	FAILED tests/test_perf_tools.py::test_the_rundown_ends_after_two_low_readings_in_a_row_not_one | 1 failed, 10 passed in 0.18s
+P08	CAUGHT	low readings need not be consecutive	1s	FAILED tests/test_perf_tools.py::test_the_rundown_ends_after_two_low_readings_in_a_row_not_one | 1 failed, 10 passed in 0.22s
+P09	SURVIVED	a charger-in sample no longer resets the streak (design variant)	1s	12 passed in 0.30s
+P10	CAUGHT	wrong voltage scale	1s	FAILED tests/test_perf_tools.py::test_the_gauge_is_read_at_its_address_and_registers | 1 failed, 3 passed in 0.08s
+P11	CAUGHT	register bytes not swapped	1s	FAILED tests/test_perf_tools.py::test_perf_sample_self_check_passes - Asserti... | 1 failed in 0.09s
+P12	CAUGHT	on-battery count is the charger-in count	1s	FAILED tests/test_perf_tools.py::test_perf_sample_self_check_passes - Asserti... | 1 failed in 0.10s
+P13	CAUGHT	'on the charger throughout' branch removed	1s	FAILED tests/test_perf_tools.py::test_perf_sample_self_check_passes - Asserti... | 1 failed in 0.10s
+P14	SURVIVED	ROSE message shown even when ac_power was recorded	1s	12 passed in 0.30s
+P15	CAUGHT	--stop-at-volts ignored by the sampler	1s	FAILED tests/test_perf_tools.py::test_the_rundown_ends_after_two_low_readings_in_a_row_not_one | 1 failed, 10 passed in 0.28s
+P17	CAUGHT	the partial-charger warning removed	1s	FAILED tests/test_perf_tools.py::test_perf_sample_self_check_passes - Asserti... | 1 failed in 0.10s
+P18	SURVIVED	(unknown kwarg: request fails -> '' )	1s	12 passed in 0.30s
+R01	CAUGHT	rundown not refused with the charger in	1s	FAILED tests/test_perf_tools.py::test_a_rundown_is_refused_with_the_charger_in | 1 failed, 8 passed in 0.25s
+R02	CAUGHT	--wait-for-battery without a rundown flag accepted	61s	FAILED tests/test_perf_tools.py::test_wait_for_battery_without_a_stop_condition_is_refused | 1 failed, 9 passed in 60.14s (0:01:00)
+R03	CAUGHT	unreadable line counts as 'charger out'	1s	FAILED tests/test_perf_tools.py::test_an_unreadable_charger_line_never_counts_as_unplugged | 1 failed, 7 passed in 0.09s
+R04	CAUGHT	the wait never gives up	61s	FAILED tests/test_perf_tools.py::test_the_wait_gives_up_after_its_limit_with_the_charger_still_in | 1 failed, 6 passed in 60.10s (0:01:00)
+R05	SURVIVED	default wait limit is 60 s, not 2 h	1s	12 passed in 0.29s
+R06	SURVIVED	--stop-at-volts not passed to the sampler	1s	12 passed in 0.30s
+R07	SURVIVED	unreadable line does not wait (starts at once)	1s	12 passed in 0.31s
+R08	SURVIVED	wait timeout exits 0	1s	12 passed in 0.29s
+R09	SURVIVED	app is only stopped after the full duration (rundown ends later)	1s	12 passed in 0.30s
+R10	SURVIVED	--stop-at-battery not passed to the sampler	1s	12 passed in 0.30s

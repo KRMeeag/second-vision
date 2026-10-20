@@ -1,0 +1,40 @@
+description: Ultralytics best model trained on /workspace/v3p/data.yaml
+author: Ultralytics
+date: '2026-10-20T00:42:04.323794+00:00'
+version: 8.4.118
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+head: Detect
+batch: 1
+imgsz:
+- 640
+- 640
+names:
+  0: Person
+  1: Vehicle
+  2: Motorcycle
+  3: Animals
+  4: Doors
+  5: Chairs
+  6: Tables
+  7: Tricycle
+  8: Potholes
+  9: Trash Bins
+  10: Bicycle
+  11: Stairs
+  12: Bench
+args:
+  data: data.yaml
+  name: hailo8
+  fraction: 1.0
+  conf: 0.001
+  iou: 0.7
+  quantize: 8
+  simplify: true
+channels: 3
+end2end: false
+hailo_arch: hailo8
+nms: true
+semantic_baked: false
