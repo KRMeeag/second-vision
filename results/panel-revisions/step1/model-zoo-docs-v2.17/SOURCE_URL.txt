@@ -1,0 +1,5 @@
+https://raw.githubusercontent.com/hailo-ai/hailo_model_zoo/1bde1102a7706e43688c863330a93acbc0f4db90/docs/public_models/HAILO8/HAILO8_object_detection.rst
+tag v2.17 -> commit 1bde1102a7706e43688c863330a93acbc0f4db90
+2026-11-09T09:48:39Z
+https://raw.githubusercontent.com/hailo-ai/hailo_model_zoo/1bde1102a7706e43688c863330a93acbc0f4db90/docs/PUBLIC_MODELS.rst
+https://raw.githubusercontent.com/hailo-ai/hailo_model_zoo/1bde1102a7706e43688c863330a93acbc0f4db90/docs/BENCHMARKS.rst

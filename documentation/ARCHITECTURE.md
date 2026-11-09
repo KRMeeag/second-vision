@@ -29,7 +29,7 @@
 │  │              GStreamer Pipeline (Hailo-8 NPU)             │   │
 │  │                                                          │   │
 │  │  Camera → tee ──→ SCDepthV3 ──→ depth_callback           │   │
-│  │               └──→ YOLOv8n ──→ tracker ──→ det_callback  │   │
+│  │               └──→ YOLOv8s ──→ tracker ──→ det_callback  │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │           │                              │                      │
 │     serial_queue                   tts_queue                    │

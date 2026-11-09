@@ -64,7 +64,7 @@ The device is used **without a white cane** (team decision, Sept 2026 — earlie
 | Layer | Technology |
 |---|---|
 | Inference Runtime | HailoRT + GStreamer pipeline |
-| Detection Model | YOLOv8n (compiled to HEF for Hailo-8) |
+| Detection Model | YOLOv8s (compiled to HEF for Hailo-8) |
 | Depth Model | SC-DepthV3 (compiled to HEF for Hailo-8) |
 | Framework | `hailo_apps` (pip-installed library) |
 | Application | `second_vision` Python package |
@@ -81,7 +81,7 @@ Camera → GStreamer Pipeline → Hailo-8 NPU
                                  │
                     ┌────────────┴────────────┐
                     ▼                         ▼
-              YOLOv8n                   SC-DepthV3
+              YOLOv8s                   SC-DepthV3
            (detection)               (depth estimation)
                     │                         │
                     ▼                         ▼

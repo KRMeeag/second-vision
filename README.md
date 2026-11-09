@@ -34,7 +34,7 @@ Object detection identifies *known* objects (people, cars, obstacles). Depth est
 
 | Layer | Technology |
 |---|---|
-| Detection Model | YOLOv8n (Hailo HEF) |
+| Detection Model | YOLOv8s (Hailo HEF) |
 | Depth Model | SC-DepthV3 (Hailo HEF) |
 | Inference Runtime | HailoRT + GStreamer |
 | Framework | [`hailo_apps`](https://github.com/hailo-ai/hailo-apps) (pip-installed library) |
@@ -91,7 +91,7 @@ source my_hailo_env/bin/activate
 ## Architecture
 
 ```
-Camera → Hailo-8 NPU ─┬─→ YOLOv8n (detection) → TTS → Speaker
+Camera → Hailo-8 NPU ─┬─→ YOLOv8s (detection) → TTS → Speaker
                        └─→ SC-DepthV3 (depth)  → ESP32 → 3× Motors
 
 Arduino Control Panel → RPi5 → Runtime configuration

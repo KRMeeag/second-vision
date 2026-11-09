@@ -11,7 +11,7 @@
 
 ## Project Context
 
-Second Vision is an assistive device for visually impaired users. It runs real-time object detection (YOLOv8n) and depth estimation (SC-DepthV3) on a head-mounted camera, providing:
+Second Vision is an assistive device for visually impaired users. It runs real-time object detection (YOLOv8s) and depth estimation (SC-DepthV3) on a head-mounted camera, providing:
 
 - **Audio feedback** via TTS (espeak-ng) — announces detected objects with spatial zones ("person left", "car center")
 - **Haptic feedback** via 3 vibration motors (L/C/R on headband) — proportional to obstacle proximity from depth estimation

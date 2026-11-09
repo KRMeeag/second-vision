@@ -1,0 +1,440 @@
+# Step 1 code inventory, captured 2026-11-09 17:59:25 PST; worktree feat/test-and-robustness @ 80a5c92
+
+### Speech worker: engine (workers/tts_worker.py)
+55:_ESPEAK_SPEED = 160
+56:_POLL_SECONDS = 0.05    # how often to check for a preempting item while speaking
+81:_AMPLITUDE_MAX = 100
+82:_AMPLITUDE_FLOOR = 10
+128:TURN_MUTE_SECONDS = 1.0
+173:def tts_worker(user_data, config):
+214:def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX, amplitude_for=None):
+252:                proc.terminate()
+256:                proc.terminate()
+278:def _cuts(pending, current, alerts, speaking_alert: bool) -> bool:
+298:def _pace(mailbox, user_data):
+313:def _text_for(item) -> str:
+323:def _start_espeak(text: str, amplitude: int = _AMPLITUDE_MAX):
+328:            ["espeak-ng", "-s", str(_ESPEAK_SPEED), "-a", str(amplitude), text],
+335:def _speak_blocking(text: str, amplitude: int = _AMPLITUDE_MAX) -> None:
+339:        import pyttsx3
+
+### Speech pacing and priority constants (core/priority.py)
+27:TIER_NORMAL = "normal"
+28:TIER_URGENT = "urgent"
+36:W_CONF = 1.0
+37:W_AREA = 1.0
+38:W_ZONE = 1.0
+39:W_CLASS = 1.0
+40:W_APPROACH = 0.0   # Reserved hook: approach-velocity (bbox-area growth). Wire later
+46:ZONE_WEIGHT_DEFAULT = 0.5
+47:ZONE_WEIGHTS = {
+58:CLASS_WEIGHT_DEFAULT = 0.5
+59:CLASS_WEIGHTS = {
+68:RECENCY_PENALTY_MAX = 1.0
+69:RECENCY_DECAY_SECONDS = 8.0
+76:URGENT_CLASSES = {"vehicle", "motorcycle"}
+78:URGENT_ABS_THRESHOLD = 3.2
+86:PREEMPT_MARGIN = 0.75
+89:PREEMPT_USE_TIER = True
+93:MIN_UTTERANCE_GAP = 0.5
+96:DEFAULT_PRIORITY = 1.0
+
+### Every place that queues speech
+-- direct offers to the mailbox:
+src/second_vision/pipeline/callbacks.py:659:    user_data.tts_queue.offer(payload)
+src/second_vision/workers/config_reader.py:109:                    user_data.tts_queue.offer({"announce": f"{new_mode} mode"})
+src/second_vision/mock/mode_cycler.py:63:            user_data.tts_queue.offer({"announce": f"{new_mode} mode"})
+src/second_vision/mock/data_generator.py:43:            user_data.tts_queue.offer(det)
+-- alerts raised through the AlertScheduler (spoken unless speak=False):
+src/second_vision/pipeline/app.py:1324:            alerts.raise_alert(CAMERA_ALERT_MISSING, CAMERA_MISSING_TEXT,
+src/second_vision/pipeline/app.py:1371:            alerts.raise_alert(CAMERA_ALERT_BACK, CAMERA_BACK_TEXT)
+src/second_vision/core/camera_view.py:202:            self._alerts.raise_alert(name, text, interval=VIEW_ALERT_SECONDS)
+src/second_vision/core/camera_view.py:204:            self._alerts.raise_alert(VIEW_BACK_ALERT, VIEW_BACK_TEXT)
+src/second_vision/core/connections.py:105:    alerts.raise_alert(GLASSES_MISSING, GLASSES_MISSING_TEXT, interval=GLASSES_MISSING_SECONDS,
+src/second_vision/core/connections.py:117:    alerts.raise_alert(GLASSES_BACK, reconnect_text(alerts, GLASSES_BACK_TEXT))
+src/second_vision/core/connections.py:127:    alerts.raise_alert(PANEL_MISSING, PANEL_MISSING_TEXT, interval=PANEL_MISSING_SECONDS)
+src/second_vision/core/connections.py:136:    alerts.raise_alert(PANEL_BACK, reconnect_text(alerts, PANEL_BACK_TEXT))
+src/second_vision/core/connections.py:168:    alerts.raise_alert(EARPHONES_MISSING, EARPHONES_MISSING_TEXT, speak=False)
+src/second_vision/core/connections.py:181:    alerts.raise_alert(EARPHONES_BACK, reconnect_text(alerts, EARPHONES_BACK_TEXT))
+-- detection phrases built in pipeline/callbacks.py:
+src/second_vision/pipeline/callbacks.py:554:                        phrase = f"{label} leaving to {zone}"
+src/second_vision/pipeline/callbacks.py:565:                phrase = f"{label} still {zone}"
+src/second_vision/pipeline/callbacks.py:588:        display_text = display_phrase if showing_event_phrase else f"{label} {zone}"
+src/second_vision/pipeline/callbacks.py:653:        payload["phrase"] = f"multiple {phrase or f'{label} {zone}'}"
+src/second_vision/workers/tts_worker.py:320:    return f"{item.get('label', 'unknown')} {item.get('zone', 'center')}"
+-- fixed sentences (*_TEXT constants):
+src/second_vision/pipeline/app.py:202:CAMERA_MISSING_TEXT = "Critical Error: Camera cannot be reached"
+src/second_vision/pipeline/app.py:205:CAMERA_BACK_TEXT = "Camera has been reconnected"
+src/second_vision/core/camera_view.py:63:VIEW_DARK_TEXT = "Camera is blocked or it is too dark. Obstacle warnings may be missing."
+src/second_vision/core/camera_view.py:65:VIEW_BRIGHT_TEXT = "Camera is facing very bright light. Obstacle warnings may be missing."
+src/second_vision/core/camera_view.py:67:VIEW_BACK_TEXT = "Camera view is back."
+src/second_vision/core/connections.py:45:EVERYTHING_CONNECTED_TEXT = "Everything is connected"
+src/second_vision/core/connections.py:54:GLASSES_MISSING_TEXT = "Vibration is not working"
+src/second_vision/core/connections.py:57:GLASSES_BACK_TEXT = "Vibration is working again"
+src/second_vision/core/connections.py:59:EARPHONES_MISSING_TEXT = "Earphones missing"     # describes the silent alert; never spoken
+src/second_vision/core/connections.py:62:EARPHONES_BACK_TEXT = "Earphones connected"
+src/second_vision/core/connections.py:63:PANEL_MISSING_TEXT = "Controller board cannot be reached. Using the current settings."
+src/second_vision/core/connections.py:66:PANEL_BACK_TEXT = "Controller board connected"
+-- reconnect sentence builder:
+45:EVERYTHING_CONNECTED_TEXT = "Everything is connected"
+89:def reconnect_text(alerts, part_text: str) -> str:
+91:    The sentence for a part that has just returned (D-17): EVERYTHING_CONNECTED_TEXT if no
+95:    return part_text if still_missing else EVERYTHING_CONNECTED_TEXT
+-- labels the speech uses for each model class (callbacks.DETECTION_CLASS_MAP):
+DETECTION_CLASS_MAP = {
+    "Person": "person",
+    "Vehicle": "vehicle",
+    "Bicycle": "vehicle",
+    "Tricycle": "vehicle",
+    "Motorcycle": "motorcycle",
+    "Animals": "animal",
+    "Chairs": "chair",
+    "Tables": "table",
+    "Bench": "bench",
+    "Pole": "pole",
+    "Doors": "door",
+    "Potholes": "pothole",
+    "Stairs": "stairs",
+    "Trash Bins": "trash bin",
+}
+-- sentences the brief lists that are NOT in the code (battery, startup, shutdown), all branches:
+checkout:src/second_vision/main.py:119:    print("[MAIN] Shutting down...")
+chore/project-initialization:src/second-vision/main.py:101:    print("[MAIN] Shutting down...")
+deploy/v2:src/second_vision/core/alerts.py:21:    alerts.raise_alert("battery-low", "Battery low", interval=300.0)   # every 5 minutes
+deploy/v2:src/second_vision/core/alerts.py:4:connected", "battery low") and keep saying while the condition lasts. Several tasks raise
+deploy/v2:src/second_vision/main.py:244:        print("[MAIN] Shutting down...")
+depth-pipeline:src/second-vision/main.py:101:    print("[MAIN] Shutting down...")
+docs/documentation:src/second_vision/main.py:119:    print("[MAIN] Shutting down...")
+feat/control-panel:src/second_vision/main.py:119:    print("[MAIN] Shutting down...")
+feat/depth-callback:src/second_vision/main.py:165:    print("[MAIN] Shutting down...")
+feat/detection-callback:src/second_vision/main.py:119:    print("[MAIN] Shutting down...")
+feat/esp32-glasses:src/second_vision/main.py:145:    print("[MAIN] Shutting down...")
+feat/serial-worker:src/second_vision/main.py:141:    print("[MAIN] Shutting down...")
+feat/startup-run:src/second_vision/main.py:173:        print("[MAIN] Shutting down...")
+feat/test-and-robustness:src/second_vision/core/alerts.py:21:    alerts.raise_alert("battery-low", "Battery low", interval=300.0)   # every 5 minutes
+feat/test-and-robustness:src/second_vision/core/alerts.py:4:connected", "battery low") and keep saying while the condition lasts. Several tasks raise
+feat/test-and-robustness:src/second_vision/main.py:244:        print("[MAIN] Shutting down...")
+feat/tui-debug:src/second_vision/main.py:116:    print("[MAIN] Shutting down...")
+feat/vision-pipeline:src/second-vision/main.py:101:    print("[MAIN] Shutting down...")
+main:src/second_vision/main.py:116:    print("[MAIN] Shutting down...")
+origin/chore/project-initialization:src/second-vision/main.py:101:    print("[MAIN] Shutting down...")
+origin/chore/resolve-merge-conflicts:src/second_vision/main.py:143:    print("[MAIN] Shutting down...")
+origin/deploy/v2:src/second_vision/main.py:173:        print("[MAIN] Shutting down...")
+origin/docs/documentation:src/second_vision/main.py:119:    print("[MAIN] Shutting down...")
+origin/feat/control-panel:src/second_vision/main.py:119:    print("[MAIN] Shutting down...")
+origin/feat/depth-callback:src/second_vision/main.py:165:    print("[MAIN] Shutting down...")
+origin/feat/depth-pipeline:src/second-vision/main.py:101:    print("[MAIN] Shutting down...")
+origin/feat/detection-callback:src/second_vision/main.py:119:    print("[MAIN] Shutting down...")
+origin/feat/esp32-glasses:src/second_vision/main.py:165:    print("[MAIN] Shutting down...")
+origin/feat/serial-worker:src/second_vision/main.py:141:    print("[MAIN] Shutting down...")
+origin/feat/test-and-robustness:src/second_vision/core/alerts.py:21:    alerts.raise_alert("battery-low", "Battery low", interval=300.0)   # every 5 minutes
+origin/feat/test-and-robustness:src/second_vision/core/alerts.py:4:connected", "battery low") and keep saying while the condition lasts. Several tasks raise
+origin/feat/test-and-robustness:src/second_vision/main.py:244:        print("[MAIN] Shutting down...")
+origin/feat/tts-worker:src/second-vision/main.py:101:    print("[MAIN] Shutting down...")
+origin/feature/haptics-pwm:src/second_vision/main.py:119:    print("[MAIN] Shutting down...")
+origin/feat/vision-pipeline:src/second-vision/main.py:101:    print("[MAIN] Shutting down...")
+origin/main:src/second_vision/main.py:119:    print("[MAIN] Shutting down...")
+(end)
+
+### Control panel: Pi side (workers/config_reader.py)
+92:            if prefix == "S" and len(parts) == 3:
+102:            elif prefix == "M" and len(parts) == 2:
+115:            elif prefix == "B" and len(parts) == 2:
+116:                if parts[1] == "alive":
+124:                    print(f"[CONFIG] Button: {parts[1]}")
+126:            elif prefix == "V" and len(parts) == 3 and parts[1] == "panel":
+166:    bool_keys = {"tts_enabled", "vibration_enabled",
+168:    float_keys = {"motor_strength", "tts_volume", "cooldown_seconds"}
+170:    if key in bool_keys:
+172:    elif key in float_keys:
+
+### Control panel firmware in THIS checkout (firmware/control-panel/src/control_panel.cpp)
+98:Input statBtn = { 22,  true,  HIGH, HIGH, 0 };   // tactile button
+124:const uint8_t PIN_KNOB = 34;                     // B10K wiper
+228:  pinMode(statBtn.pin, INPUT_PULLUP);
+242:  lastRaw = analogRead(PIN_KNOB);
+264:  if (settled(statBtn) && isOn(statBtn))
+265:    emit("B:status\n");            // Pi speaks the full config aloud
+272:  int raw = analogRead(PIN_KNOB);                // 0..4095
+
+### Control panel firmware with the volume knob (commit 73eab9b, only on feat/depth-callback)
+73eab9b 2026-10-07 Kenzhu-A feat(control-panel): add a volume knob on GPIO33 and keep every strength-knob position felt
+branches containing 73eab9b: +feat/depth-callback remotes/origin/feat/depth-callback 
+25: * There is no STATUS button any more: the volume knob took its place on the
+26: * panel (2026-10), and GPIO22 is free.
+112: *   HAVE_VOLUME_POT=0  omits the VOLUME pot   — no reads, no S:tts_volume
+161:const uint8_t PIN_VOLUME = 33;                   // VOLUME wiper
+266:  emit("S:tts_volume:%.2f\n",      lastVolumeRaw / 4095.0f);
+305:  lastVolumeRaw = analogRead(PIN_VOLUME);
+334:  if (knobMoved(PIN_VOLUME, lastVolumeRaw))
+335:    emit("S:tts_volume:%.2f\n", lastVolumeRaw / 4095.0f);
+82:| `B:status` | **no longer sent** — see below |
+84:The STATUS button was removed in October 2026: the volume knob took its place
+86:`B:status` when the button is pressed, so receivers must keep tolerating it.
+87:The Pi never acted on it beyond logging `[CONFIG] Button: status`.
+224:- **The `B:status` spoken payload** — Pi-side policy, not protocol.
+
+### Glasses link: ACK format (serial_worker.py, firmware)
+31:# The firmware's acknowledgement, 0xAA 0xFF <byte>. Only the two-byte prefix is
+34:ACK_PREFIX = bytes([0xAA, 0xFF])
+101:ACK_TIMEOUT_SECONDS = 2.5
+747:    An ACK is 0xAA 0xFF <byte>. Rather than reading a fixed 3 bytes, this drains
+748:    whatever has arrived and SCANS it for the 0xAA 0xFF pair, because a fixed
+38:// so its checksum is just 0xFE). The board answers every *valid* packet with
+41:const uint8_t ACK_TYPE = 0xFF;
+124:void sendAck(uint8_t msgType) {
+
+### 18 Oct real-time run and battery run: tools (docs/testing/tools/)
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  7524 Oct 19 06:56 docs/testing/tools/perf_npu.py
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  6533 Oct 19 11:47 docs/testing/tools/perf_plot.py
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5 15700 Oct 20 11:36 docs/testing/tools/perf_run.py
+-rwxrwxr-x 1 sv-rpi5 sv-rpi5 26299 Oct 19 21:00 docs/testing/tools/perf_sample.py
+last commit touching perf tools: 80a5c92 2026-10-20 fix: additional bug fixes before demo
+
+### 18 Oct real-time run and battery run: evidence (docs/testing/reports/T-15/)
+docs/testing/reports/T-15/:
+total 40
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5 11320 Oct 20 02:05 BATTERY-RESULTS.md
+drwxrwxr-x 2 sv-rpi5 sv-rpi5  4096 Oct 20 02:04 evidence
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  5252 Oct 18 14:00 measurement-1.md
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  6558 Oct 19 07:08 measurement-2.md
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  6138 Oct 20 01:53 measurement-3.md
+
+docs/testing/reports/T-15/evidence/:
+total 16244
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5       0 Oct 19 06:55 hailort.log
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  401595 Oct 18 05:45 perf-both-20min-app.log
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    9574 Oct 18 10:54 perf-both-20min.csv
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  394093 Oct 18 14:08 perf-both-20min.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5 1306961 Oct 18 05:45 perf-both-20min-screen-end.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5 1367896 Oct 18 05:35 perf-both-20min-screen-mid.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5     863 Oct 18 10:54 perf-both-20min-system.txt
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    1924 Oct 18 10:54 perf-both-20min.txt
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  404361 Oct 19 07:06 perf-npu-20min-app.log
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    9784 Oct 19 07:06 perf-npu-20min.csv
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    1407 Oct 19 07:06 perf-npu-20min-npu.csv
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    4929 Oct 19 07:06 perf-npu-20min-npu-raw.log
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  422532 Oct 19 07:06 perf-npu-20min.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  228250 Oct 19 07:06 perf-npu-20min-screen-end.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  127031 Oct 19 07:02 perf-npu-20min-screen-hailortcli-monitor.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  272436 Oct 19 06:56 perf-npu-20min-screen-mid.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    1955 Oct 19 07:05 perf-npu-20min-side-npu.csv
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  553763 Oct 19 07:05 perf-npu-20min-side-npu-raw.log
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5     757 Oct 19 06:46 perf-npu-20min-system.txt
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    1978 Oct 19 07:06 perf-npu-20min.txt
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  482245 Oct 19 07:06 perf-npu-20min-with-npu.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5   65453 Oct 18 05:50 perf-npu-app.log
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    1533 Oct 18 10:54 perf-npu.csv
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5   10233 Oct 18 10:54 perf-npu-hailortcli-monitor.txt
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  370840 Oct 18 10:55 perf-npu.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5 1276567 Oct 18 05:50 perf-npu-screen-end.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5 1276764 Oct 18 05:49 perf-npu-screen-mid.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5     854 Oct 18 10:54 perf-npu-system.txt
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    1799 Oct 18 10:54 perf-npu.txt
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5 4296373 Oct 20 00:47 perf-rundown-app.log
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  124884 Oct 20 00:47 perf-rundown.csv
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  304427 Oct 20 01:51 perf-rundown-paper-figure.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    3550 Oct 20 01:51 perf-rundown-paper-figure.py
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  650168 Oct 20 00:47 perf-rundown.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5 1891662 Oct 20 00:47 perf-rundown-screen-end.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5     824 Oct 19 21:09 perf-rundown-system.txt
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    2501 Oct 20 00:47 perf-rundown.txt
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  227537 Oct 20 02:04 perf-rundown-voltage-figure.png
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    6152 Oct 20 02:04 perf-rundown-voltage-figure.py
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5   20124 Oct 20 02:04 perf-rundown-voltage-figure.svg
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5    1699 Oct 19 21:02 rundown-tool-mutations.txt
+-- tracked by git:
+  docs/testing/reports/T-15/BATTERY-RESULTS.md
+  docs/testing/reports/T-15/evidence/perf-both-20min-screen-end.png
+  docs/testing/reports/T-15/evidence/perf-both-20min-screen-mid.png
+  docs/testing/reports/T-15/evidence/perf-both-20min-system.txt
+  docs/testing/reports/T-15/evidence/perf-both-20min.csv
+  docs/testing/reports/T-15/evidence/perf-both-20min.png
+  docs/testing/reports/T-15/evidence/perf-both-20min.txt
+  docs/testing/reports/T-15/evidence/perf-npu-20min-npu.csv
+  docs/testing/reports/T-15/evidence/perf-npu-20min-screen-end.png
+  docs/testing/reports/T-15/evidence/perf-npu-20min-screen-hailortcli-monitor.png
+  docs/testing/reports/T-15/evidence/perf-npu-20min-screen-mid.png
+  docs/testing/reports/T-15/evidence/perf-npu-20min-side-npu.csv
+  docs/testing/reports/T-15/evidence/perf-npu-20min-system.txt
+  docs/testing/reports/T-15/evidence/perf-npu-20min-with-npu.png
+  docs/testing/reports/T-15/evidence/perf-npu-20min.csv
+  docs/testing/reports/T-15/evidence/perf-npu-20min.png
+  docs/testing/reports/T-15/evidence/perf-npu-20min.txt
+  docs/testing/reports/T-15/evidence/perf-npu-hailortcli-monitor.txt
+  docs/testing/reports/T-15/evidence/perf-npu-screen-end.png
+  docs/testing/reports/T-15/evidence/perf-npu-screen-mid.png
+  docs/testing/reports/T-15/evidence/perf-npu-system.txt
+  docs/testing/reports/T-15/evidence/perf-npu.csv
+  docs/testing/reports/T-15/evidence/perf-npu.png
+  docs/testing/reports/T-15/evidence/perf-npu.txt
+  docs/testing/reports/T-15/evidence/perf-rundown-paper-figure.png
+  docs/testing/reports/T-15/evidence/perf-rundown-paper-figure.py
+  docs/testing/reports/T-15/evidence/perf-rundown-screen-end.png
+  docs/testing/reports/T-15/evidence/perf-rundown-system.txt
+  docs/testing/reports/T-15/evidence/perf-rundown-voltage-figure.png
+  docs/testing/reports/T-15/evidence/perf-rundown-voltage-figure.py
+  docs/testing/reports/T-15/evidence/perf-rundown-voltage-figure.svg
+  docs/testing/reports/T-15/evidence/perf-rundown.csv
+  docs/testing/reports/T-15/evidence/perf-rundown.png
+  docs/testing/reports/T-15/evidence/perf-rundown.txt
+  docs/testing/reports/T-15/evidence/rundown-tool-mutations.txt
+  docs/testing/reports/T-15/measurement-1.md
+  docs/testing/reports/T-15/measurement-2.md
+  docs/testing/reports/T-15/measurement-3.md
+-- present but NOT tracked (raw app logs etc.):
+  docs/testing/reports/T-15/evidence/hailort.log
+  docs/testing/reports/T-15/evidence/perf-both-20min-app.log
+  docs/testing/reports/T-15/evidence/perf-npu-20min-app.log
+  docs/testing/reports/T-15/evidence/perf-npu-20min-npu-raw.log
+  docs/testing/reports/T-15/evidence/perf-npu-20min-side-npu-raw.log
+  docs/testing/reports/T-15/evidence/perf-npu-app.log
+  docs/testing/reports/T-15/evidence/perf-rundown-app.log
+
+### 18 Oct run: system file and summary
+perf_run both-20min
+kernel: Linux 6.12.62+rpt-rpi-2712 aarch64
+HailoRT: HailoRT-CLI version 4.23.0
+code: the development tree; files changed in src/scripts and not committed:
+M scripts/second-vision.service
+ M scripts/sv-main.sh
+ M src/second_vision/main.py
+ M src/second_vision/pipeline/app.py
+ M src/second_vision/workers/tts_worker.py
+?? scripts/uat_evidence.py
+?? src/second_vision/core/alerts.py
+?? src/second_vision/workers/alert_worker.py
+model file: -rw-rw-r-- 1 sv-rpi5 sv-rpi5 9681398 Oct 11 08:42 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_deploy/best.hef
+holders of /dev/hailo0 (sudo -n fuser -v, read-only): 
+before: temp=57.1'C, throttled=0x0 (0x0 = never throttled since boot)
+run: 1200 s, headless like the boot service, HAILO_MONITOR off; boards: stand-in glasses on a pty (ACKs every packet), no control panel, so mode both
+perf_sample both-20min
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 1200.0 --live --sudo-vcgencmd --label both-20min --out /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/reports/T-15/evidence --app-log /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/reports/T-15/evidence/perf-both-20min-app.log
+samples: 120 every 10 s; app found: yes
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: 0x0
+
+temperature: min 58.4, mean 63.1, max 65.5 C
+CPU clock: min 1800.0, mean 2370.8, max 2400.0 MHz
+system memory used: min 2982.0, mean 2999.6, max 3056.3 MB
+app CPU: min 56.2, mean 73.3, max 75.8 % of one core
+app resident memory: min 194.8, mean 198.1, max 199.9 MB
+busiest core: min 22.3, mean 28.3, max 38.4 %
+CPU clock below its maximum in 6 of 120 samples (lowest 1800 MHz, at 59 to 65 C): short dips; thermal throttling is judged by the flags below
+throttle flags seen (vcgencmd get_throttled): 0x0 (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+depth FPS, the app's own counter (an average since start, so it hides dips): median 29.6, min 29.2
+detection FPS, the app's own counter (same): median 29.6, min 29.2
+camera-to-callback delay: median 104 ms, p95 127 ms, p99 132 ms, max 147 ms (2251 lines)
+frame rate per 15-frame window (after the first minute, 2250 windows): median 30.0, 5th percentile 28.5, 1st percentile 20.2, min 18.9 FPS; longest window 0.79 s (15 frames take 0.50 s at 30 FPS); windows over 1 s: 0
+stability (REQ-DTA-09): memory 195 -> 199 MB (+2.2 %, limit +5 %): PASS
+stability (REQ-DTA-09): app CPU first 3 min 72 %, last 3 min 75 % (limit 10 points apart): PASS
+
+stop: exited 0 0.5 s after Ctrl+C
+stand-in glasses received 35578 packets
+after: temp=64.2'C, throttled=0x0
+screenshots: {'mid': 'ok', 'end': 'ok'}
+
+### Battery run: system file
+perf_run rundown
+kernel: Linux 6.12.62+rpt-rpi-2712 aarch64
+HailoRT: HailoRT-CLI version 4.23.0
+code: the development tree; files changed in src/scripts and not committed:
+M src/second_vision/core/haptic_patterns.py
+ M src/second_vision/workers/serial_worker.py
+model file: -rw-rw-r-- 1 sv-rpi5 sv-rpi5 9681398 Oct 11 08:42 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_deploy/best.hef
+holders of /dev/hailo0 (sudo -n fuser -v, read-only): 
+before: temp=52.1'C, throttled=0x0 (0x0 = never throttled since boot)
+run: 36000 s, headless like the boot service, NPU monitor sampling off; hailort_service has HAILO_MONITOR=0; boards: stand-in glasses on a pty (ACKs every packet), no control panel, so mode both
+battery at the start (X1202 gauge): 90.2 % by the gauge, 4.086 V, on battery; the run ends at 3.5 V
+
+### Commit named in the brief (cb0b20e) and the commits around 18 Oct
+cb0b20e 2026-10-16 04:48:26 +0800 docs: add additional guard rails
+9e36a81 2026-10-19 12:08:22 +0800 patches before the lead
+b0d8d2b 2026-10-19 06:49:19 +0800 fix: adjust brightness and darkness threshold
+0df4bb2 2026-10-19 04:57:03 +0800 feat: add camera validation and tests
+51e9137 2026-10-18 18:35:53 +0800 snapshot: before fast track
+cb0b20e 2026-10-16 04:48:26 +0800 docs: add additional guard rails
+ac29366 2026-10-16 04:12:52 +0800 docs: adjust agent model config
+846685a 2026-10-15 20:34:48 +0800 docs: prepared final docs for agents
+
+### Object-detection unit cases in the tracker (uat-snapshot.yaml, generated from the workbook)
+4735414e3098169936868083b3e7aba7564c652d2db38e63cf177b67ec5e384f  tests/Group2-SV_Test-Tracker.xlsx
+  file: tests/Group2-SV_Test-Tracker.xlsx
+  sha256: 4735414e3098169936868083b3e7aba7564c652d2db38e63cf177b67ec5e384f
+  extracted_at: '2026-10-11'
+  case_count: 110
+columns of a case: ['module', 'scenario', 'scenario_title', 'steps', 'input', 'expected', 'actual', 'status', 'comments', 'date_tested', 'cell', 'text_hash']
+
+TC-001-001 [TC-001 Per-class Coverage] status=Passed date=2026-08-03 cell=Test Cases!A16:G16
+  steps: 1. Open second-vision repo / 2. run ./scripts/setup_env.sh / 3. run ./tests/obj_det_unit/class_coverage.py
+  input: Load the 13-image batch (one image per trained class, single centered object, clear conditions) and run each through the object detection callback.
+  expected: All 13 images return the correct class label with confidence > 0.5
+
+TC-001-002 [TC-001 Per-class Coverage] status=Passed date=2026-08-03 cell=Test Cases!A17:G17
+  steps: 1. Open second-vision repo / 2. run ./scripts/setup_env.sh / 3. run ./tests/obj_det_unit/class_coverage.py
+  input: Load the confusion-pair test images and run each through the callback
+  expected: Each image returns its own correct label — no cross-labeling between classes like Motorcycle/Bicycle
+
+TC-001-003 [TC-001 Per-class Coverage] status=Passed date=2026-08-03 cell=Test Cases!A18:G18
+  steps: 1. Open second-vision repo / 2. run ./scripts/setup_env.sh / 3. run ./tests/obj_det_unit/class_coverage.py
+  input: Load test images for the thinnest-sourced classes and run each through the callback
+  expected: System displays error "Password must be at least 8 characters"; account is not created.
+
+TC-002-001 [TC-002 Detection Behavior] status=Passed date=2026-08-03 cell=Test Cases!A23:G23
+  steps: 1. Open second-vision repo / 2. run ./scripts/setup_env.sh / 3. run ./tests/obj_det_unit/det_behavior.py
+  input: Load the test image into the callback and check which detections is returned as top/priority for different classes. An example image would be something that contains a person (high priority) and a trash bin (low priority).
+  expected: System prioritizes the more important class (person) as the output for that image
+
+TC-002-002 [TC-002 Detection Behavior] status=None date=2026-08-03 cell=Test Cases!A24:G24
+  steps: 1. Open second-vision repo / 2. run ./scripts/setup_env.sh / 3. run ./tests/obj_det_unit/det_behavior.py
+  input: Load the test image into the callback and check which instance of the same class is prioritized by the system. Image with two people, one nearer to the camera while another farther yet still recognizable by the camera.
+  expected: System prioritizes the instance closest to te camera
+
+TC-002-003 [TC-002 Detection Behavior] status=Passed date=2026-08-03 cell=Test Cases!A25:G25
+  steps: 1. Open second-vision repo / 2. run ./scripts/setup_env.sh / 3. run ./tests/obj_det_unit/det_behavior.py
+  input: Load the three zone test images and check the assigned zone label for each.
+  expected: System must be able to correctly flag each instance with their respective directions
+
+TC-002-004 [TC-002 Detection Behavior] status=None date=2026-08-03 cell=Test Cases!A26:G26
+  steps: 1. Open second-vision repo / 2. run ./scripts/setup_env.sh / 3. run ./tests/obj_det_unit/det_behavior.py
+  input: Load test image with class that falls between the hysterisis detection zones
+  expected: System must not flag any classes within this zone
+
+TC-002-005 [TC-002 Detection Behavior] status=Failed date=2026-08-03 cell=Test Cases!A27:G27
+  steps: 1. Open second-vision repo / 2. run ./scripts/setup_env.sh / 3. run ./tests/obj_det_unit/det_behavior.py
+  input: Load the empty-scene test image into the callback
+  expected: Confirms no false positives on frames with no trained-class object
+
+TC-003-001 [TC-003 Environmental Robustness] status=Passed date=2026-08-03 cell=Test Cases!A32:G32
+  steps: 1. Open second-vision repo / 2. run ./scripts/setup_env.sh / 3. run ./tests/obj_det_unit/physical_env_robustness.py
+  input: Load the low-light test image into the callback.
+  expected: System still manages to detect the expected classes despite the lighting condition, although with lower confidence
+
+TC-003-002 [TC-003 Environmental Robustness] status=Passed date=2026-08-03 cell=Test Cases!A33:G33
+  steps: 1. Open second-vision repo / 2. run ./scripts/setup_env.sh / 3. run ./tests/obj_det_unit/physical_env_robustness.py
+  input: Load the motion-blur test image into the callback.
+  expected: System still manages to correctly identify the class contained within the motion blur test iamge
+
+TC-003-003 [TC-003 Environmental Robustness] status=None date=2026-08-03 cell=Test Cases!A34:G34
+  steps: 1. Open second-vision repo / 2. run ./scripts/setup_env.sh / 3. run ./tests/obj_det_unit/physical_env_robustness.py
+  input: Load an image with a high amount of instance of a certain class
+  expected: System manages to identify at least 70% of the number of instances of that particular class in the image
+
+TC-003-004 [TC-003 Environmental Robustness] status=Passed date=2026-08-03 cell=Test Cases!A35:G35
+  steps: 1. Open second-vision repo / 2. run ./scripts/setup_env.sh / 3. run ./tests/obj_det_unit/physical_env_robustness.py
+  input: Load the partial-occlusion test image into the callback.
+  expected: System still manages to identify classes even if they are partially blocked by other instances or classes
+
+### Scripts the tracker's steps name, searched on every branch and on disk
+(end of search)
+
+### Detection-related unit tests in tests/
+tests/test_detection_classes.py:13
+tests/test_priority.py:26
+
+### Labelled test split on the Pi (candidate source of B1 images; not the tracker's images)
+/home/sv-rpi5/v3p_eval/test
+images
+labels
+6158

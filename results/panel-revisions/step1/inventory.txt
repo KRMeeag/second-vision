@@ -1,0 +1,300 @@
+# Step 1 inventory, captured 2026-11-09 17:58:22 PST on sv-rpi5
+
+### Device, OS, kernel
+Raspberry Pi 5 Model B Rev 1.1
+PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+VERSION_ID="13"
+debian_version 13.6
+Linux sv-rpi5 6.12.62+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.62-1+rpt1 (2025-12-18) aarch64 GNU/Linux
+
+### uptime -p
+up 45 minutes
+
+### free -m
+               total        used        free      shared  buff/cache   available
+Mem:            8062        3383         884         180        4063        4679
+Swap:           2047           0        2047
+
+### df -h /
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/mmcblk0p2  117G   38G   74G  34% /
+
+### HailoRT
+HailoRT-CLI version 4.23.0
+Executing on device: 0001:01:00.0
+Identifying board
+Control Protocol Version: 2
+Firmware Version: 4.23.0 (release,app,extended context switch buffer)
+Logger Version: 0
+Board Name: Hailo-8
+Device Architecture: HAILO8
+
+hailo-all 5.1.1
+hailo-tappas-core 5.1.0
+hailort 4.23.0
+hailort-pcie-driver 4.23.0
+python3-hailort 4.23.0-1
+
+### systemctl is-active hailort.service
+active
+
+### /etc/default/hailort_service (HAILO_MONITOR line)
+HAILO_MONITOR=0
+
+### Python and the project venv
+system python3: Python 3.13.5
+my_hailo_env in worktree: /home/sv-rpi5/Projects/Second-Vision/second-vision-repo/my_hailo_env
+venv python: Python 3.13.5 -> /usr/bin/python3.13
+include-system-site-packages = true
+version = 3.13.5
+Name: hailo-apps
+Version: 26.3.0
+Name: pytest
+Version: 9.1.1
+venv import psutil: 7.0.0
+venv import cv2: 4.10.0
+venv import numpy: 2.2.4
+venv import smbus2: 0.4.3
+venv import gpiod: 2.2.0
+venv import serial: 3.5
+venv import pyttsx3: MISSING (ModuleNotFoundError)
+venv import yaml: 6.0.2
+venv import pytest: 9.1.1
+poetry env: /home/sv-rpi5/.cache/pypoetry/virtualenvs/second-vision-repo-wwT_Rtha-py3.13/bin/python -> pytest 9.1.1 cv2 4.10.0 numpy 2.5.1
+
+### Boot service
+enabled
+active
+MainPID=1167
+ExecStart={ path=/home/sv-rpi5/Projects/Second-Vision/second-vision-repo/scripts/sv-main.sh ; argv[]=/home/sv-rpi5/Projects/Second-Vision/second-vision-repo/scripts/sv-main.sh ; ignore_errors=no ; start_time=[Mon 2026-11-09 05:00:51 PST] ; stop_time=[n/a] ; pid=1167 ; code=(null) ; status=0/0 }
+Environment=SV_SERVICE=1 XDG_RUNTIME_DIR=/run/user/1000 PYTHONUNBUFFERED=1
+WorkingDirectory=/home/sv-rpi5/Projects/Second-Vision/second-vision-repo
+User=sv-rpi5
+FragmentPath=/etc/systemd/system/second-vision.service
+ActiveEnterTimestamp=Mon 2026-11-09 05:00:51 PST
+
+### Checkout the service runs (base repo)
+branch: deploy/v2  HEAD: 80a5c92 2026-10-20 12:22:00 +0800 fix: additional bug fixes before demo
+uncommitted/untracked in base (git status --short, full):
+(end)
+
+### This worktree
+branch: feat/test-and-robustness  HEAD: 80a5c92 2026-10-20 12:22:00 +0800 fix: additional bug fixes before demo
+ M AGENTS.md
+ M README.md
+ M documentation/ARCHITECTURE.md
+ M documentation/PROJECT.md
+ M src/second_vision/pipeline/app.py
+?? results/
+(end)
+/home/sv-rpi5/Projects/Second-Vision/second-vision-repo/src/second_vision/pipeline/app.py:244:DET_MODEL_VERSION = "hef_v3"
+/home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/src/second_vision/pipeline/app.py:247:DET_MODEL_VERSION = "hef_v3"
+
+### HEF paths the running service loaded (journal of this boot)
+Nov 09 05:00:55 sv-rpi5 second-vision[1167]: INFO | common.core | Found HEF in resources: /usr/local/hailo/resources/models/hailo8/scdepthv3.hef
+Nov 09 05:00:56 sv-rpi5 second-vision[1167]: INFO | common.core | Using HEF from path: /home/sv-rpi5/Projects/Second-Vision/second-vision-repo/models/hef_v3/hef_deploy/best.hef
+Nov 09 05:00:56 sv-rpi5 second-vision[1167]: INFO | pipeline.app | Using labels JSON beside the HEF: /home/sv-rpi5/Projects/Second-Vision/second-vision-repo/models/hef_v3/hef_deploy/labels.json
+
+### Deployed model files, sha256
+648ddb167080c93f4651a015f3c5688eae9f63585d51dc58350ef35298a79d90  /home/sv-rpi5/Projects/Second-Vision/second-vision-repo/models/hef_v3/hef_deploy/best.hef
+648ddb167080c93f4651a015f3c5688eae9f63585d51dc58350ef35298a79d90  /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef
+b808648d2ea4c7a4e872fd996049f4321454d3a2b15a2c0e7d5ee81c97bbbccb  /home/sv-rpi5/Projects/Second-Vision/second-vision-repo/models/hef_v3/hef_eval/best.hef
+c6e4ec9830cb629293c09410bd39247cd32b6b1295d5adb5f8e4d2ab75bf2f78  /home/sv-rpi5/Projects/Second-Vision/second-vision-repo/models/hef_v2/hef_deploy/best.hef
+5b88f3b8975bf5869d86f2c2d1c21cfbc24e548eaf14d945ec08531bbe445cae  /usr/local/hailo/resources/models/hailo8/scdepthv3.hef
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  9745854 Oct 20 12:23 /home/sv-rpi5/Projects/Second-Vision/second-vision-repo/models/hef_v3/hef_deploy/best.hef
+-rw------- 1 sv-rpi5 sv-rpi5 13595791 Jun 12 00:52 /usr/local/hailo/resources/models/hailo8/scdepthv3.hef
+
+### parse-hef: deployed detection HEF (hef_v3/hef_deploy)
+Architecture HEF was compiled for: HAILO8
+Network group name: best, Single Context
+    Network name: best/best
+        VStream infos:
+            Input  best/input_layer1 UINT8, NHWC(640x640x3)
+            Output best/yolov8_nms_postprocess FLOAT32, HAILO NMS BY CLASS(number of classes: 13, maximum bounding boxes per class: 100, maximum frame size: 26052)
+            Operation:
+                Op YOLOV8
+                Name: YOLOV8-Post-Process
+                Score threshold: 0.010
+                IoU threshold: 0.70
+                Classes: 13
+                Max bboxes per class: 100
+                Image height: 640
+                Image width: 640
+
+### parse-hef: hef_v2/hef_deploy (the 14-class model of the 18 Oct runs), class lines only
+            Output best/yolov8_nms_postprocess FLOAT32, HAILO NMS BY CLASS(number of classes: 14, maximum bounding boxes per class: 100, maximum frame size: 28056)
+                Classes: 14
+
+### parse-hef: scdepthv3.hef
+Architecture HEF was compiled for: HAILO8
+Network group name: scdepthv3, Single Context
+    Network name: scdepthv3/scdepthv3
+        VStream infos:
+            Input  scdepthv3/input_layer1 UINT8, NHWC(256x320x3)
+            Output scdepthv3/conv31 UINT16, NHWC(256x320x1)
+
+### labels.json beside the deployed HEF
+{
+    "labels": [
+        "unlabeled",
+        "Person",
+        "Vehicle",
+        "Motorcycle",
+        "Animals",
+        "Doors",
+        "Chairs",
+        "Tables",
+        "Tricycle",
+        "Potholes",
+        "Trash Bins",
+        "Bicycle",
+        "Stairs",
+        "Bench"
+    ]
+}
+
+
+### nms_config.json classes
+  "classes": 13,
+
+### The app's class map (callbacks.DETECTION_CLASS_MAP keys)
+DETECTION_CLASS_MAP = {
+    "Person": "person",
+    "Vehicle": "vehicle",
+    "Bicycle": "vehicle",
+    "Tricycle": "vehicle",
+    "Motorcycle": "motorcycle",
+    "Animals": "animal",
+    "Chairs": "chair",
+    "Tables": "table",
+    "Bench": "bench",
+    "Pole": "pole",
+    "Doors": "door",
+    "Potholes": "pothole",
+    "Stairs": "stairs",
+    "Trash Bins": "trash bin",
+}
+
+### Model Zoo v2.17.0 HEFs (downloaded), sha256
+502cdbf514790c78288db621ce745b103bb429968b224138292cdcfc20494dec  yolov8l.hef
+9481dbff7798d90302e170958943578d444b61c9833c67fef36075fe129efe7f  yolov8m.hef
+e893b0f9dcae366fe1bc9ebce25e32ad889acf2bc58cfe1f73a572f78f7ec055  yolov8n.hef
+1ac4c540b422a0df437904534eb6051d7b4bdff7930dfc06bd299d40c4a07a70  yolov8s.hef
+73eadabc9454270f5cbeaad2ba232a1e65f585c9e7e96495600a603c65d7ce83  yolov8x.hef
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5 44001728 Nov  9 17:47 yolov8l.hef
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5 31157775 Nov  9 17:45 yolov8m.hef
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5  5100979 Nov  9 17:44 yolov8n.hef
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5 11283950 Nov  9 17:44 yolov8s.hef
+-rw-rw-r-- 1 sv-rpi5 sv-rpi5 55096837 Nov  9 17:48 yolov8x.hef
+
+### Model Zoo HEFs: S3 ETag vs local md5
+yolov8n md5=4ff193d70530e02daabcb545b0598ea9 etag=4ff193d70530e02daabcb545b0598ea9 MATCH
+yolov8s md5=983e8097f1520590b3d7ac4bd64b69ad etag=983e8097f1520590b3d7ac4bd64b69ad MATCH
+yolov8m md5=bb1bbd74eababe019b7ff893274be232 etag=bb1bbd74eababe019b7ff893274be232 MATCH
+yolov8l md5=b210782a8cf3522b09ea678085ff269c etag=b210782a8cf3522b09ea678085ff269c MATCH
+yolov8x md5=47b3471c6fba5bd003dc98aaab9afc29 etag=47b3471c6fba5bd003dc98aaab9afc29 MATCH
+
+### Model Zoo HEFs: parse-hef summary
+yolov8n: Architecture HEF was compiled for: HAILO8 Network group name: yolov8n, Single Context Output yolov8n/yolov8_nms_postprocess FLOAT32, HAILO NMS BY CLASS(number of classes: 80, maximum bounding boxes per class: 100, maximum frame size: 160320) 
+yolov8s: Architecture HEF was compiled for: HAILO8 Network group name: yolov8s, Single Context Output yolov8s/yolov8_nms_postprocess FLOAT32, HAILO NMS BY CLASS(number of classes: 80, maximum bounding boxes per class: 100, maximum frame size: 160320) 
+yolov8m: Architecture HEF was compiled for: HAILO8 Network group name: yolov8m, Multi Context - Number of contexts: 3 Output yolov8m/yolov8_nms_postprocess FLOAT32, HAILO NMS BY CLASS(number of classes: 80, maximum bounding boxes per class: 100, maximum frame size: 160320) 
+yolov8l: Architecture HEF was compiled for: HAILO8 Network group name: yolov8l, Multi Context - Number of contexts: 4 Output yolov8l/yolov8_nms_postprocess FLOAT32, HAILO NMS BY CLASS(number of classes: 80, maximum bounding boxes per class: 100, maximum frame size: 160320) 
+yolov8x: Architecture HEF was compiled for: HAILO8 Network group name: yolov8x, Multi Context - Number of contexts: 5 Output yolov8x/yolov8_nms_postprocess FLOAT32, HAILO NMS BY CLASS(number of classes: 80, maximum bounding boxes per class: 100, maximum frame size: 160320) 
+
+### Copies already installed by hailo-apps, sha256
+e893b0f9dcae366fe1bc9ebce25e32ad889acf2bc58cfe1f73a572f78f7ec055  /usr/local/hailo/resources/models/hailo8/yolov8n.hef
+1ac4c540b422a0df437904534eb6051d7b4bdff7930dfc06bd299d40c4a07a70  /usr/local/hailo/resources/models/hailo8/yolov8s.hef
+9481dbff7798d90302e170958943578d444b61c9833c67fef36075fe129efe7f  /usr/local/hailo/resources/models/hailo8/yolov8m.hef
+
+### hailo-apps' Model Zoo version for hailo8
+62:#   - H8/H8L: Always v2.17.0
+108:VALID_H8_MODEL_ZOO_VERSION = ["v2.17.0"]
+
+### Thermals and throttling (read-only)
+thermal_zone0: 57850
+temp=58.2'C
+throttled=0x0
+fan rpm: 2938
+/usr/bin/grim
+/usr/bin/vcgencmd
+
+### Audio: packages
+alsa-utils 1.2.14-1+rpt1 install ok installed
+espeak-ng 1.52.0+dfsg-5 install ok installed
+ffmpeg 8:7.1.5-0+deb13u1+rpt1 install ok installed
+libsox-fmt-alsa 14.4.2+git20190427-5+b3 install ok installed
+libsox-fmt-base 14.4.2+git20190427-5+b3 install ok installed
+libsox3 14.4.2+git20190427-5+b3 install ok installed
+pipewire 1.4.2-1+rpt3 install ok installed
+pipewire-bin 1.4.2-1+rpt3 install ok installed
+pipewire-pulse 1.4.2-1+rpt3 install ok installed
+sox 14.4.2+git20190427-5+b3 install ok installed
+wireplumber 0.5.8-2 install ok installed
+dpkg-query: no packages found matching pipewire-alsa
+pulseaudio-utils unknown ok not-installed
+eSpeak NG text-to-speech: 1.52.0  Data at: /usr/lib/aarch64-linux-gnu/espeak-ng-data
+espeak-ng voices matching fil|tl|tagalog|filipino:
+(none)
+sox:      SoX v14.4.2
+ffmpeg version 7.1.5-0+deb13u1+rpt1 Copyright (c) 2000-2026 the FFmpeg developers
+ ... aresample         A->A       Resample audio data.
+ ... loudnorm          A->A       EBU R128 loudness normalization
+ T.C silenceremove     A->A       Remove silence.
+ffmpeg decoders: aac alac amrnb amrwb flac mp3 opus vorbis 
+
+### Audio: where sound goes
+ 0 [vc4hdmi0       ]: vc4-hdmi - vc4-hdmi-0
+                      vc4-hdmi-0
+ 1 [vc4hdmi1       ]: vc4-hdmi - vc4-hdmi-1
+                      vc4-hdmi-1
+ 2 [Audio          ]: USB-Audio - USB Audio
+                      SPACETOUCH USB Audio at usb-xhci-hcd.1-1, full speed
+ 3 [Light          ]: USB-Audio - Arducam 1080P Low Light
+                      Arducam Technology Co., Ltd. Arducam 1080P Low Light at usb-xhci-hcd.0-1, high 
+ALSA config files: ls: cannot access '/etc/asound.conf': No such file or directory ls: cannot access '/home/sv-rpi5/.asoundrc': No such file or directory 
+ALSA devices (names only):
+null
+default
+sysdefault
+default:CARD=vc4hdmi0
+sysdefault:CARD=vc4hdmi0
+default:CARD=vc4hdmi1
+sysdefault:CARD=vc4hdmi1
+default:CARD=Audio
+sysdefault:CARD=Audio
+PipeWire sinks (* = default):
+ │  *   59. USB Audio Analog Stereo             [vol: 0.78]
+update: id:0 key:'clock.rate' value:'48000' type:''
+update: id:0 key:'clock.allowed-rates' value:'[ 48000 ]' type:''
+
+### Earphones (card 2) playback formats
+Playback:
+  Status: Stop
+  Interface 2
+    Altset 1
+    Format: S16_LE
+    Channels: 2
+    Endpoint: 0x02 (2 OUT) (ADAPTIVE)
+    Rates: 44100, 48000
+    Bits: 16
+    Channel map: FL FR
+  Interface 2
+    Altset 2
+    Format: S24_3LE
+    Channels: 2
+    Endpoint: 0x02 (2 OUT) (ADAPTIVE)
+    Rates: 44100, 48000
+    Bits: 24
+    Channel map: FL FR
+
+Capture:
+pw-play options: --target                          Set node target serial or name (default auto) --volume                          Stream volume 0-1.0 (default 1.000) 
+
+### Control panel: what the running device receives (journal of this boot, [CONFIG] keys only)
+      1 [CONFIG] Connected to control panel on /dev/ttyAMA3
+      1 [CONFIG] Mode
+     17 [CONFIG] Updated motor_strength
+      1 [CONFIG] Updated tts_enabled
+      1 [CONFIG] Updated tts_volume
+      1 [CONFIG] Updated vibration_enabled
+B:status lines logged this boot: 0

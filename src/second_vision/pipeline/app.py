@@ -229,15 +229,18 @@ START_STOPPED = "stopped"     # shutdown began during the start; nothing more is
 # glasses board holds its last command, so silence is not "off".
 MOTORS_OFF = {"left": 0, "center": 0, "right": 0, "hazard": False, "hazard_severity": 0}
 
-# The team's custom-trained detector (NMS on-chip, hailo8). Absolute, built
-# from this file's location, because resolve_hef_path() resolves a relative path
-# against the CWD — fine under run.sh, wrong anywhere else.
+# The team's custom-trained detector (hailo8). The chip outputs raw tensors and
+# HailoRT runs the NMS on the Pi's CPU. Absolute, built from this file's location,
+# because resolve_hef_path() resolves a relative path against the CWD — fine under
+# run.sh, wrong anywhere else.
 # DET_MODEL_VERSION names the folder under models/ that is in use: hef_v2 had 14
 # classes, hef_v3 (2026-10-20) has 13 (no "Pole"; every class after Motorcycle
-# moved down one index). hef_deploy is the runtime build; hef_eval is the same
-# network compiled with a lower NMS score threshold for mAP evaluation. At
-# runtime the difference is moot: hailonet's nms-score-threshold
-# (thresholds_str below) overrides the threshold baked into either HEF.
+# moved down one index). hef_deploy is the runtime build; hef_eval is a separate
+# build of the model with a lower NMS score threshold for mAP evaluation, so its
+# quantization differs slightly and a score on one does not strictly describe the
+# other. For the threshold alone, the difference is moot at runtime: hailonet's
+# nms-score-threshold (thresholds_str below) overrides the threshold baked into
+# either HEF.
 # To switch models: change DET_MODEL_VERSION and make sure the new folder has a
 # labels.json (see DET_LABELS_SIDECAR); tests/test_detection_classes.py checks it.
 REPO_ROOT = Path(__file__).resolve().parents[3]
