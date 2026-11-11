@@ -1,0 +1,24 @@
+# app runs start 2026-11-11T21:14:56+08:00; idle Pi 52.4 C, idle Hailo 51.8 C; long 1800s, short 300s
+21:17:56 app-deployed-13class-30min: cooled 180s, Pi 51.2 C, Hailo 51.1 C (idle 52.4 / 51.8)
+21:48:00 app-deployed-13class-30min: perf_run exit 0
+21:56:21 app-yolov8m-30min: cooled 495s, Pi 54.0 C, Hailo 53.7 C (idle 52.4 / 51.8)
+22:26:26 app-yolov8m-30min: perf_run exit 0
+22:37:49 app-yolov8n-5min: cooled 675s, Pi 55.1 C, Hailo 53.5 C (idle 52.4 / 51.8)
+22:42:54 app-yolov8n-5min: perf_run exit 0
+22:46:24 app-yolov8s-5min: cooled 210s, Pi 53.5 C, Hailo 53.5 C (idle 52.4 / 51.8)
+22:51:29 app-yolov8s-5min: perf_run exit 0
+22:55:00 app-yolov8l-5min: cooled 210s, Pi 54.5 C, Hailo 53.7 C (idle 52.4 / 51.8)
+23:00:05 app-yolov8l-5min: perf_run exit 0
+23:06:38 app-yolov8x-5min: cooled 390s, Pi 54.5 C, Hailo 53.8 C (idle 52.4 / 51.8)
+23:11:43 app-yolov8x-5min: perf_run exit 0
+# batch-size check (HW-only, direct access, 5s per mode) 2026-11-11T23:11:43+08:00
+yolov8n batch 1: FPS (hw_only) = 431.08  (streaming) = 430.898 Latency (hw) = 3.35434 ms 
+yolov8n batch 2: FPS (hw_only) = 431.081  (streaming) = 431.113 Latency (hw) = 3.79541 ms 
+yolov8n batch 4: FPS (hw_only) = 431.077  (streaming) = 431.109 Latency (hw) = 4.01583 ms 
+yolov8n batch 8: FPS (hw_only) = 431.071  (streaming) = 430.879 Latency (hw) = 4.12509 ms 
+yolov8s batch 1: FPS (hw_only) = 490.621  (streaming) = 490.41 Latency (hw) = 5.83008 ms 
+yolov8s batch 2: FPS (hw_only) = 490.622  (streaming) = 490.437 Latency (hw) = 6.04299 ms 
+yolov8s batch 4: FPS (hw_only) = 490.618  (streaming) = 490.409 Latency (hw) = 6.24219 ms 
+yolov8s batch 8: FPS (hw_only) = 490.621  (streaming) = 490.433 Latency (hw) = 6.38406 ms 
+# app runs done 2026-11-11T23:15:07+08:00
+runner exit=0

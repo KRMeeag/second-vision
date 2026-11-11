@@ -1,0 +1,63 @@
+# hailortcli parse-hef --parse-streams: what each file moves over PCIe per frame (raw streams, as used by benchmark HW-only)
+
+## results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8n.hef
+            Input  yolov8n/input_layer1 UINT8, NHCW(640x640x3)
+            Output yolov8n/conv42_97 UINT8, NHCW(80x80x80)
+            Output yolov8n/conv41_97 UINT8, NHCW(80x80x64)
+            Output yolov8n/conv53_97 UINT8, NHCW(40x40x80)
+            Output yolov8n/conv52_97 UINT8, NHCW(40x40x64)
+            Output yolov8n/conv63_97 UINT8, NHCW(20x24x80)
+            Output yolov8n/conv62_97 UINT8, NHCW(20x24x64)
+
+## results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8s.hef
+            Input  yolov8s/input_layer1 UINT8, NHCW(640x640x3)
+            Output yolov8s/conv41_97 UINT8, NHCW(80x80x64)
+            Output yolov8s/conv53_97 UINT8, NHCW(40x40x80)
+            Output yolov8s/conv63_97 UINT8, NHCW(20x24x80)
+            Output yolov8s/conv52_97 UINT8, NHCW(40x40x64)
+            Output yolov8s/conv62_97 UINT8, NHCW(20x24x64)
+            Output yolov8s/conv42_97 UINT8, NHCW(80x80x80)
+
+## results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8m.hef
+            Input  yolov8m/input_layer1 UINT8, NHCW(640x640x3)
+            Output yolov8m/conv58_123 UINT8, NHCW(80x80x80)
+            Output yolov8m/conv57_123 UINT8, NHCW(80x80x64)
+            Output yolov8m/conv83_123 UINT8, NHCW(20x24x80)
+            Output yolov8m/conv82_123 UINT8, NHCW(20x24x64)
+            Output yolov8m/conv71_123 UINT8, NHCW(40x40x80)
+            Output yolov8m/conv70_123 UINT8, NHCW(40x40x64)
+
+## results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8l.hef
+            Input  yolov8l/input_layer1 UINT8, NHCW(640x640x3)
+            Output yolov8l/conv74_149 UINT8, NHCW(80x80x80)
+            Output yolov8l/conv73_149 UINT8, NHCW(80x80x64)
+            Output yolov8l/conv89_149 UINT8, NHCW(40x40x80)
+            Output yolov8l/conv88_149 UINT8, NHCW(40x40x64)
+            Output yolov8l/conv100_149 UINT8, NHCW(20x24x64)
+            Output yolov8l/conv103_149 UINT8, NHCW(20x24x80)
+
+## results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8x.hef
+            Input  yolov8x/input_layer1 UINT8, NHCW(640x640x3)
+            Output yolov8x/conv74_149 UINT8, NHCW(80x80x80)
+            Output yolov8x/conv73_149 UINT8, NHCW(80x80x64)
+            Output yolov8x/conv88_149 UINT8, NHCW(40x40x64)
+            Output yolov8x/conv100_149 UINT8, NHCW(20x24x64)
+            Output yolov8x/conv103_149 UINT8, NHCW(20x24x80)
+            Output yolov8x/conv89_149 UINT8, NHCW(40x40x80)
+
+## models/hef_v3/hef_deploy/best.hef
+            Input  best/input_layer1 UINT8, NHCW(640x640x3)
+            Output best/conv42_97 UINT8, NHCW(80x80x13)
+            Output best/conv41_97 UINT8, NHCW(80x80x64)
+            Output best/conv53_97 UINT8, NHCW(40x40x13)
+            Output best/conv52_97 UINT8, NHCW(40x40x64)
+            Output best/conv63_97 UINT8, NHCW(20x24x13)
+            Output best/conv62_97 UINT8, NHCW(20x24x64)
+
+# bytes per frame = product of each stream's dimensions (all UINT8)
+hailo8/yolov8n.hef: input 1,228,800 B, outputs 1,221,120 B, total 2,449,920 B per frame
+hailo8/yolov8s.hef: input 1,228,800 B, outputs 1,221,120 B, total 2,449,920 B per frame
+hailo8/yolov8m.hef: input 1,228,800 B, outputs 1,221,120 B, total 2,449,920 B per frame
+hailo8/yolov8l.hef: input 1,228,800 B, outputs 1,221,120 B, total 2,449,920 B per frame
+hailo8/yolov8x.hef: input 1,228,800 B, outputs 1,221,120 B, total 2,449,920 B per frame
+hef_deploy/best.hef: input 1,228,800 B, outputs 652,960 B, total 1,881,760 B per frame

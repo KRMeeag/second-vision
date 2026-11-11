@@ -1,0 +1,28 @@
+perf_sample app-yolov8n-5min
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 300.0 --live --sudo-vcgencmd --label app-yolov8n-5min --out /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs --app-log /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/perf-app-yolov8n-5min-app.log
+samples: 30 every 10 s; app found: yes
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: 0x0
+
+temperature: min 56.8, mean 59.9, max 61.7 C
+CPU clock: min 1800.0, mean 2363.3, max 2400.0 MHz
+system memory used: min 4363.7, mean 4392.2, max 4440.8 MB
+app CPU: min 63.2, mean 81.1, max 84.1 % of one core
+app resident memory: min 197.5, mean 201.1, max 203.1 MB
+busiest core: min 21.6, mean 30.5, max 37.4 %
+CPU clock below its maximum in 2 of 30 samples (lowest 1800 MHz, at 60 to 60 C): short dips; thermal throttling is judged by the flags below
+throttle flags seen (vcgencmd get_throttled): 0x0 (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+depth FPS, the app's own counter (an average since start, so it hides dips): median 29.2, min 28.6
+detection FPS, the app's own counter (same): median 29.2, min 28.7
+camera-to-callback delay: median 102 ms, p95 120 ms, p99 123 ms, max 136 ms (469 lines)
+frame rate per 15-frame window (after the first minute, 468 windows): median 30.0, 5th percentile 24.4, 1st percentile 19.5, min 19.3 FPS; longest window 0.78 s (15 frames take 0.50 s at 30 FPS); windows over 1 s: 0
+battery (X1202 gauge): 98.1 % -> 98.1 %, 4.171 V -> 4.171 V over 5 min (30 readings; the percentage drifts, the voltage is the measure)
+power source (the HAT's power-loss line): on battery in 0 of 30 samples; THE CHARGER WAS IN for the rest: this is not a clean battery run
+battery: on the charger throughout: this run says nothing about battery life
+stability (REQ-DTA-09): not judged, the run is shorter than 7 minutes
+
+stop: exited 0 0.5 s after Ctrl+C
+stand-in glasses received 8847 packets
+after: temp=59.3'C, throttled=0x0
+screenshots: {'mid': 'not taken (--no-screenshots)', 'end': 'not taken (--no-screenshots)'}

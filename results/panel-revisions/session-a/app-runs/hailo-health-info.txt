@@ -1,0 +1,20 @@
+# Hailo-8 health information (firmware control read, read-only), 2026-11-11 23:17:19 PST
+# source: Control._get_health_information() -> hailo_health_info_t (/usr/include/hailo/hailort.h)
+chip temperature now: ts0 58.1 C, ts1 57.8 C (device idle, service stopped)
+current_overcurrent_zone: 0
+current_temperature_throttling_level: -1
+current_temperature_zone: 0
+orange_hysteresis_temperature_threshold: 99
+orange_temperature_threshold: 104
+overcurrent_protection_active: False
+overcurrent_throttling_active: False
+red_hysteresis_temperature_threshold: 116
+red_overcurrent_threshold: 0.0
+red_temperature_threshold: 120
+requested_overcurrent_clock_freq: 400000000
+requested_temperature_clock_freq: 400000000
+temperature_throttling_active: True
+temperature_throttling_levels[0]: hysteresis_temperature_threshold=99.0, level_number=0, temperature_threshold=104.0, throttling_nn_clock_freq=350000000
+temperature_throttling_levels[1]: hysteresis_temperature_threshold=106.0, level_number=1, temperature_threshold=108.0, throttling_nn_clock_freq=300000000
+temperature_throttling_levels[2]: hysteresis_temperature_threshold=110.0, level_number=2, temperature_threshold=112.0, throttling_nn_clock_freq=250000000
+temperature_throttling_levels[3]: hysteresis_temperature_threshold=114.0, level_number=3, temperature_threshold=116.0, throttling_nn_clock_freq=200000000

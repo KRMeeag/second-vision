@@ -1,0 +1,28 @@
+perf_run app-deployed-13class-30min
+kernel: Linux 6.12.62+rpt-rpi-2712 aarch64
+HailoRT: HailoRT-CLI version 4.23.0
+code: the development tree; files changed in src/scripts and not committed:
+M src/second_vision/pipeline/callbacks.py
+model file: -rw-rw-r-- 1 sv-rpi5 sv-rpi5 9745854 Oct 19 19:26 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef
+holders of /dev/hailo0 (sudo -n fuser -v, read-only): 
+before: temp=56.5'C, throttled=0x0 (0x0 = never throttled since boot)
+run: 1800 s, headless like the boot service, NPU monitor sampling off; hailort_service has HAILO_MONITOR=0; boards: stand-in glasses on a pty (ACKs every packet), no control panel, so mode both
+battery at the start (X1202 gauge): 98.3 % by the gauge, 4.173 V, the charger is IN
+app running (pid 15242); sampling for 1800 s
+    10 s   60.6 C    2400/2400 MHz  cores 40 40 40 38      mem   4594 MB  app cpu    80%  app rss   205 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+    20 s   58.4 C    2400/2400 MHz  cores 36 44 36 41      mem   4592 MB  app cpu    79%  app rss   206 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+    30 s   58.4 C    2400/2400 MHz  cores 31 35 37 31      mem   4559 MB  app cpu    78%  app rss   207 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+    40 s   55.6 C    2400/2400 MHz  cores 21 24 24 22      mem   4403 MB  app cpu    57%  app rss     0 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+Traceback (most recent call last):
+  File "/home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_plot.py", line 135, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_plot.py", line 74, in main
+    rows = list(csv.DictReader(open(f"{stem}.csv")))
+                               ~~~~^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/perf-app-deployed-13class-30min.csv'
+
+stop: exited 0 0.0 s after Ctrl+C
+stand-in glasses received 1138 packets
+after: temp=57.6'C, throttled=0x0
+screenshots: {'end': 'ok'}

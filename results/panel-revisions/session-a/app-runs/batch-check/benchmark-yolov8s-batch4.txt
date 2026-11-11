@@ -1,0 +1,31 @@
+# before: Pi 58.4 C, throttled=0x0
+Starting Measurements...
+Measuring FPS in HW-only mode
+Network yolov8s/yolov8s: 20% | 490 | FPS: 489.53 | ETA: 00:00:04
+[F[2KNetwork yolov8s/yolov8s: 40% | 982 | FPS: 490.46 | ETA: 00:00:03
+[F[2KNetwork yolov8s/yolov8s: 60% | 1474 | FPS: 490.78 | ETA: 00:00:02
+[F[2KNetwork yolov8s/yolov8s: 80% | 1967 | FPS: 491.16 | ETA: 00:00:01
+[F[2KNetwork yolov8s/yolov8s: 100% | 2456 | FPS: 490.71 | ETA: 00:00:00
+[F[2KNetwork yolov8s/yolov8s: 100% | 2456 | FPS: 490.60 | ETA: 00:00:00
+Measuring FPS (and Power on supported platforms) in streaming mode
+Network yolov8s/yolov8s: 20% | 488 | FPS: 487.52 | ETA: 00:00:04
+[F[2KNetwork yolov8s/yolov8s: 40% | 980 | FPS: 489.42 | ETA: 00:00:03
+[F[2KNetwork yolov8s/yolov8s: 60% | 1472 | FPS: 490.17 | ETA: 00:00:02
+[F[2KNetwork yolov8s/yolov8s: 80% | 1964 | FPS: 490.52 | ETA: 00:00:01
+[F[2KNetwork yolov8s/yolov8s: 100% | 2455 | FPS: 490.48 | ETA: 00:00:00
+[F[2KNetwork yolov8s/yolov8s: 100% | 2455 | FPS: 490.40 | ETA: 00:00:00
+Measuring HW Latency
+Network yolov8s/yolov8s: 20% | 268 | HW Latency: 6.24 ms | ETA: 00:00:04
+[F[2KNetwork yolov8s/yolov8s: 40% | 535 | HW Latency: 6.24 ms | ETA: 00:00:03
+[F[2KNetwork yolov8s/yolov8s: 60% | 802 | HW Latency: 6.24 ms | ETA: 00:00:02
+[F[2KNetwork yolov8s/yolov8s: 80% | 1070 | HW Latency: 6.24 ms | ETA: 00:00:01
+[F[2KNetwork yolov8s/yolov8s: 100% | 1336 | HW Latency: 6.24 ms | ETA: 00:00:00
+[F[2KNetwork yolov8s/yolov8s: 100% | 1336 | HW Latency: 6.24 ms | ETA: 00:00:00
+
+=======
+Summary
+=======
+FPS     (hw_only)                 = 490.618
+        (streaming)               = 490.409
+Latency (hw)                      = 6.24219 ms
+# exit 0 after: Pi 61.7 C, throttled=0x0

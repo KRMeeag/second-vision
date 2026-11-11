@@ -1,0 +1,10 @@
+perf_run app-deployed-13class-30min
+kernel: Linux 6.12.62+rpt-rpi-2712 aarch64
+HailoRT: HailoRT-CLI version 4.23.0
+code: the development tree; files changed in src/scripts and not committed:
+M src/second_vision/pipeline/callbacks.py
+model file: -rw-rw-r-- 1 sv-rpi5 sv-rpi5 9745854 Oct 19 19:26 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef
+holders of /dev/hailo0 (sudo -n fuser -v, read-only): 
+before: temp=53.2'C, throttled=0x0 (0x0 = never throttled since boot)
+run: 1800 s, headless like the boot service, NPU monitor sampling off; hailort_service has HAILO_MONITOR=0; boards: stand-in glasses on a pty (ACKs every packet), no control panel, so mode both
+battery at the start (X1202 gauge): 98.3 % by the gauge, 4.173 V, the charger is IN

@@ -115,6 +115,15 @@ short once the camera, GStreamer and Python are added. A model that fails here c
     compiler version and settings are not recorded on the Pi.
   - **So this session does not establish why the deployed build is slower.** Comparing the Zoo yolov8s
     row to the deployed row compares builds as well as model sizes.
+- **The data moved over PCIe per frame does not explain the FPS order** (`hef-streams.txt`, from
+  `parse-hef --parse-streams`):
+  - All five Model Zoo files move exactly the same data per frame: 1,228,800 B in and 1,221,120 B out,
+    yet yolov8s (491.3 FPS) ran faster than yolov8n (431.6).
+  - The deployed file moves less (652,960 B out, since it has 13 classes) and ran slower than both.
+  - yolov8n is faster than yolov8s **per frame** (HW latency 3.35 vs 5.83 ms). It is only the sustained
+    rate where s leads.
+  - Why the n file sustains less than the s file on this Pi is not established. In the Model Zoo's own
+    figures, n is faster (1036 vs 491).
 - **yolov8m, l and x are multi-context builds** (3, 4 and 5 contexts; `../step1/inventory.txt`). n, s and
   the deployed model are single-context.
 
@@ -176,6 +185,12 @@ added to that file.** The wording states the measurements; the decision itself i
 > - Between the two that pass, the Model Zoo lists yolov8s at 44.6 COCO mAP (float) against 37.0 for
 >   yolov8n.
 > - The deployed 13-class build kept both networks at 89.1 FPS.
+> - Inside the app, with depth on, for 30 minutes (Part 2, 2026-11-11), yolov8m against the deployed
+>   model:
+>   - the depth branch (the haptics) below 29.5 FPS in 86 % of 15-frame windows, against 30 %;
+>   - median detection delay 176 against 92 ms;
+>   - the Hailo chip about 10 °C hotter (peak 76.2 against 64.9 °C).
+>   Neither throttled: the chip's first throttling step is 104 °C, and the Pi's flags stayed 0x0.
 >
 > **Cost**:
 > - These are accelerator-only figures: the app's camera, GStreamer and Python cost is measured
@@ -183,3 +198,145 @@ added to that file.** The wording states the measurements; the decision itself i
 > - The deployed build ran slower than the Model Zoo's yolov8s (185.7 vs 491.3 FPS alone), for a reason
 >   not established here.
 > - The COCO figures are the Model Zoo's, for its 80-class builds, not for the team's 13-class model.
+
+---
+
+# Part 2: each model inside the app, with depth on (2026-11-11)
+
+**Why this part was added.** Kenth asked for it on 2026-11-11. His reason for not choosing yolov8m was a
+concern that, over long use, it could **thermally throttle** the device and **jitter in the real
+pipeline**. Part 1 measured the chip alone. This part runs every model in the real app, the way the boot
+service starts it.
+
+## Method
+
+- **App.** `scripts/sv-main.sh` started by `docs/testing/tools/perf_run.py`: headless, as on 18 Oct, with
+  the stand-in glasses board on a pseudo-terminal that acknowledges every packet. There was no control
+  panel, so the mode stayed "both".
+- **Model swap.** `SV_RUN_SH=app-runs/run_with_model.sh` adds `--det-hef-path <model>` to the service's
+  own arguments, with no change to the app's code. The model each run actually loaded is the
+  "Using HEF from path" line in its app log (`app-runs/*-analysis.txt`, line 2).
+- **New detection measurement** (`SV_LATENCY_LOG=1`, off by default). The app's existing log line times
+  only the depth branch. Its "det FPS" is an average since start, so dips on the detection side were
+  invisible.
+  - With the flag set, `pipeline/callbacks.py` also prints `[DET] Frame N | lat X ms` every 15
+    detection frames. X is the frame's age from camera capture to the detection callback, on the same
+    clock as the depth figure.
+  - Test: `tests/test_det_latency_log.py`, 6 tests, all passing. Two of them fail with the call removed.
+- **Heat.**
+  - The Pi is sampled every 10 s by `perf_sample.py`: temperature, clock and throttle flags.
+  - The Hailo chip is sampled every 10 s by `app-runs/hailo_temp_sampler.py`, a firmware-control read of
+    both on-die sensors.
+  - The chip's own throttling thresholds were read once, after the runs (`app-runs/hailo-health-info.txt`).
+- **Order and cool-down.**
+  - Order: the deployed 13-class model for 30 min, then yolov8m for 30 min, then yolov8n, s, l and x for
+    5 min each.
+  - Before each run: at least 180 s idle, then until the Pi and the chip were within 2 °C of their idle
+    readings (52.4 °C and 51.8 °C), for at most 900 s (`app-runs/run-console.txt`).
+- **Analysis.** `app-runs/analyse_app_run.py` uses `perf_sample.py`'s own window method for depth, the
+  18 Oct method, and the same method for detection. The first 60 s are left out. Figures below **exclude
+  windows that overlap a camera drop**; the same figures with every window are in each `*-analysis.txt`.
+- **Scene.** A lit room, with the camera pointed at Kenth, as he described it.
+  - **No image of the scene was kept**, at his request for privacy, and `perf_run.py` now has
+    `--no-screenshots`.
+  - Whether he stayed in view throughout is not recorded. Room temperature was not measured.
+- **Run times.** 21:14 to 23:15. Every run exited 0.
+
+## Results
+
+| Run | Det FPS median / p5 / p1 | Det windows <25 FPS | Det delay median / p95 / max (ms) | Depth FPS median / p5 / p1 | Depth windows <25 FPS | Depth delay median / p95 / max (ms) | Hailo chip start → max (°C) | Pi max (°C) | Throttle flags | Camera drops | Speech lines |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| deployed 13-class, 30 min | 30.0 / 28.5 / 20.8 | 62 of 3305 (1.9 %) | 92 / 114 / 143 | 30.0 / 28.6 / 20.4 | 62 of 3300 (1.9 %) | 104 / 126 / 157 | 54.6 → 64.9 | 65.5 | 0x0 | 9 | 452 |
+| yolov8m, 30 min | 29.8 / 27.8 / 20.4 | 85 of 3422 (2.5 %) | 176 / 245 / 279 | 28.0 / 25.0 / 20.1 | 169 of 3168 (5.3 %) | 127 / 156 / 171 | 61.3 → 76.2 | 67.8 | 0x0 | 1 | 2 |
+| yolov8n, 5 min | 29.9 / 23.5 / 19.6 | 24 of 467 (5.1 %) | 91 / 118 / 127 | 30.0 / 24.4 / 19.5 | 25 of 468 (5.3 %) | 102 / 120 / 136 | 55.4 → 57.7 | 61.7 | 0x0 | 0 | 6 |
+| yolov8s, 5 min | 30.0 / 23.7 / 19.5 | 25 of 467 (5.4 %) | 93 / 119 / 127 | 30.0 / 22.1 / 19.7 | 25 of 468 (5.3 %) | 101 / 122 / 136 | 57.1 → 61.0 | 61.7 | 0x0 | 0 | 10 |
+| yolov8l, 5 min | 21.7 / 20.8 / 20.5 | 355 of 355 (100 %) | 1309 / 1344 / 1360 | 21.4 / 20.8 / 19.2 | 352 of 352 (100 %) | 133 / 173 / 189 | 64.4 → 81.0 | 63.4 | 0x0 | 0 | 10 |
+| yolov8x, 5 min | 15.8 / 14.0 / 13.9 | 239 of 239 (100 %) | 1880 / 1907 / 1932 | 15.3 / 14.1 / 14.0 | 239 of 239 (100 %) | 154 / 213 / 220 | 65.0 → 81.1 | 61.1 | 0x0 | 0 | 10 |
+
+Hailo chip temperature over the two 30-minute runs, as 5-minute means (hotter sensor):
+
+| Minutes | 0–5 | 5–10 | 10–15 | 15–20 | 20–25 | 25–30 | Trend over the last 10 min |
+|---|---|---|---|---|---|---|---|
+| deployed 13-class | 58.3 | 60.1 | 61.4 | 62.2 | 63.7 | 64.1 | +1.13 °C per 10 min |
+| yolov8m | 68.9 | 73.3 | 75.0 | 74.5 | 73.2 | 75.1 | +2.89 °C per 10 min |
+
+**The chip's own throttling thresholds**, read from the chip after the runs
+(`hailo_health_info_t`; `app-runs/hailo-health-info.txt`):
+- the first throttling step at **104 °C** (neural-network clock 400 → 350 MHz), then 108, 112 and
+  116 °C;
+- the orange zone at 104 °C and the red zone at 120 °C;
+- current throttling level -1 when read.
+
+The Pi's throttle flags stayed `0x0` in every 10-second sample of every run.
+
+## What the numbers show, for yolov8m against the deployed model
+
+**Heat.**
+- Neither the Pi nor the Hailo chip throttled in 30 minutes, in this room.
+- yolov8m ran the chip about **10 °C hotter** throughout: a peak of 76.2 against 64.9 °C. From minute 10
+  it held at 73–75 °C (5-minute means), 28 °C below the chip's first throttling step.
+- The Pi peaked at 67.8 °C against 65.5 °C. Its CPU clock was below maximum in 12 of 180 samples
+  against 7.
+- 30 minutes cannot show what happens over longer use, in a hotter room, or inside an enclosure on a
+  head. The yolov8m run also started about 2.6 °C warmer on the chip (53.7 against 51.1 °C at the end
+  of the cool-down).
+
+**Jitter in the real pipeline.**
+- yolov8m saturates the chip, and the **depth branch pays for it**. Depth (the haptics) ran below
+  29.5 FPS in 2725 of 3168 windows (86 %), against 996 of 3300 (30 %) for the deployed model. Its
+  median was 28.0 FPS and its 5th percentile 25.0.
+- **Detection delay roughly doubled:** median 176 against 92 ms, p95 245 against 114 ms. Detection
+  frame rate varied more: standard deviation 2.32 against 1.50 FPS.
+- The **yolov8m run did less work downstream than a real 13-class yolov8m would.** Hailo's model names
+  its boxes in COCO terms, which the app's class map does not recognise. So nothing went on to tracking
+  or speech: 2 speech lines, both system alerts, against 452 with the deployed model. Its CPU (80.6 %
+  against 73.8 % of one core) therefore leaves out the speech work. Its 80-class NMS, meanwhile, is
+  more host work than a 13-class model's.
+
+**The other sizes.**
+- yolov8n and yolov8s behave like the deployed model in the app: about 30 FPS on both branches and
+  about 92 ms detection delay. The 30 FPS camera cap makes them indistinguishable here, as expected.
+- yolov8l and yolov8x **cannot hold 25 FPS** in the app: 21.7 and 15.8 FPS for detection. Detection
+  delay was 1.3 s and 1.9 s, as frames queue up. The chip reached 81 °C within 5 minutes and was still
+  rising.
+
+**The periodic dips** to about 20 FPS seen on 18 Oct appear with every model, and they set the p1
+column. The 5-minute runs of n and s each caught one, which is why their p5 is lower. They are not
+investigated here.
+
+## Other observations (not about model size)
+
+- **Camera drops without unplugging.** The app logged a camera loss 9 times in the deployed run and
+  once in the yolov8m run ("Could not read from resource ... poll error 1: Invalid argument"). Each
+  time it rebuilt the pipeline and came back within a few seconds: 48.8 s without vision in total in
+  the deployed run. The kernel logged **no USB disconnect** at those times. The two runs differed in
+  speech activity (452 against 2 lines), but this test cannot say whether that matters.
+- **Memory steps up after camera drops**, not steadily with time. Between drops, the app's memory
+  (including the speech processes it starts) stayed flat. Median memory 90 s before each group of drops
+  against 30–120 s after:
+  - deployed run: the drops at 373/377 s, −5 MB; at 1000/1005 s, +20; at 1222 s, +16; at
+    1602–1621 s (4 drops), +38. Overall 212 → 279 MB;
+  - yolov8m run: its one drop at 1414 s, +37 MB. Overall 223 → 270 MB.
+
+  Whether this is a leak in the rebuild is not established here.
+- **Batch check** (`app-runs/batch-check/`, 5 s per mode). yolov8n stays at 431 FPS HW-only at batch
+  sizes 1, 2, 4 and 8, and yolov8s at 490.6. Queuing more frames does not speed n up. Why n is slower
+  than s on this Pi remains unexplained.
+- **Two Claude sessions drove these runs at once** that evening. One stopped the other's run, which was
+  then relaunched. Both aborted attempts are kept in `app-runs/aborted-2026-11-11-2110/` and are not
+  used. Two camera frames of the lit scene were saved by those attempts, at 21:06:33 and 21:11:07. Both
+  were **deleted without being viewed**, as was every desktop screenshot. The runs above saved no images.
+
+## Files (`app-runs/`)
+
+| File | What it is |
+|---|---|
+| `run_app_runs.sh` | The runner: order, cool-down, model swap, samplers |
+| `run_with_model.sh` | Adds `--det-hef-path` to the boot service's own arguments |
+| `hailo_temp_sampler.py` | The chip temperature, every 10 s |
+| `analyse_app_run.py` | Per-run figures |
+| `summary.csv` | All runs, one row each |
+| `run-console.txt` | The runner's console |
+| `perf-app-<model>-<n>min.*` | Per run: app log (timestamped; `.log` is not committed), 10 s samples (`.csv`), summary (`.txt`), analysis, chip temperatures, the model file and its sha256, and a chart drawn from the logs (`.png`, no camera content) |
+| `hailo-health-info.txt` | The chip's thermal thresholds |
+| `quick/` | The 90 s check that ran first; not used |

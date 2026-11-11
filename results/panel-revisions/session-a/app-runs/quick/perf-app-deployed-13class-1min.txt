@@ -1,0 +1,28 @@
+perf_sample app-deployed-13class-1min
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 90.0 --live --sudo-vcgencmd --label app-deployed-13class-1min --out /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/quick --app-log /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/quick/perf-app-deployed-13class-1min-app.log
+samples: 9 every 10 s; app found: yes
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: 0x0
+
+temperature: min 54.5, mean 57.1, max 59.0 C
+CPU clock: min 1900.0, mean 2344.4, max 2400.0 MHz
+system memory used: min 3006.8, mean 3039.3, max 3199.8 MB
+app CPU: min 73.1, mean 73.7, max 74.8 % of one core
+app resident memory: min 195.8, mean 197.6, max 198.8 MB
+busiest core: min 26.4, mean 30.3, max 38.6 %
+CPU clock below its maximum in 1 of 9 samples (lowest 1900 MHz, at 55 to 55 C): short dips; thermal throttling is judged by the flags below
+throttle flags seen (vcgencmd get_throttled): 0x0 (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+depth FPS, the app's own counter (an average since start, so it hides dips): median 29.6, min 29.5
+detection FPS, the app's own counter (same): median 29.6, min 29.5
+camera-to-callback delay: median 101 ms, p95 119 ms, p99 120 ms, max 120 ms (61 lines)
+frame rate per 15-frame window (after the first minute, 60 windows): median 30.0, 5th percentile 28.7, 1st percentile 28.5, min 28.5 FPS; longest window 0.53 s (15 frames take 0.50 s at 30 FPS); windows over 1 s: 0
+battery (X1202 gauge): 98.3 % -> 98.3 %, 4.173 V -> 4.173 V over 1 min (9 readings; the percentage drifts, the voltage is the measure)
+power source (the HAT's power-loss line): on battery in 0 of 9 samples; THE CHARGER WAS IN for the rest: this is not a clean battery run
+battery: on the charger throughout: this run says nothing about battery life
+stability (REQ-DTA-09): not judged, the run is shorter than 7 minutes
+
+stop: exited 0 0.5 s after Ctrl+C
+stand-in glasses received 2718 packets
+after: temp=59.3'C, throttled=0x0
+screenshots: {'mid': 'ok', 'end': 'ok'}

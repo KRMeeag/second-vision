@@ -1,0 +1,14 @@
+run: perf-app-yolov8m-1min
+detection model (from the app's log): /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8m.hef
+app's own averages at the last [DEPTH] line (since start, hide dips): depth 27.6 / det 29.6 FPS
+
+DETECTION branch, frame rate per 15 frames (after the first 60 s): 60 windows: median 30.1, p5 27.9, p1 26.6, min 26.6 FPS, stdev 1.95; windows under 29.5 FPS: 30, under 25: 0; longest window 0.56 s (15 frames at 30 FPS take 0.50 s)
+DETECTION branch, camera-to-detection-callback delay: median 206 ms, p95 239, p99 241, max 241 (60 readings)
+DEPTH branch, frame rate per 15 frames (after the first 60 s): 55 windows: median 28.0, p5 25.1, p1 24.2, min 24.2 FPS, stdev 1.52; windows under 29.5 FPS: 51, under 25: 1; longest window 0.62 s (15 frames at 30 FPS take 0.50 s)
+DEPTH branch, camera-to-depth-callback delay: median 112 ms, p95 138, p99 140, max 140 (56 readings)
+
+Pi SoC temperature (every 10 s): start 56.8, max 59.5, end 59.0 C; trend over the last 10 min n/a (run under 15 min)
+Pi throttle flags seen: 0x0; CPU clock below its maximum in 1 of 9 samples
+app CPU: mean 77.8 % of one core (min 76.9, max 78.5); app memory 220 -> 224 MB
+Hailo-8 chip temperature (hotter of its 2 sensors, every 10 s): start 60.4, max 65.4, end 65.4 C; trend over the last 10 min n/a (run under 15 min) (8 readings)
+Hailo sampler notes: thermal protection enabled: True

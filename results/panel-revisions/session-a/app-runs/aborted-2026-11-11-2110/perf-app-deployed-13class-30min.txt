@@ -1,0 +1,5 @@
+
+stop: exited 0 0.0 s after Ctrl+C
+stand-in glasses received 1138 packets
+after: temp=57.6'C, throttled=0x0
+screenshots: {'end': 'ok'}

@@ -1,0 +1,72 @@
+perf_run app-yolov8x-5min
+kernel: Linux 6.12.62+rpt-rpi-2712 aarch64
+HailoRT: HailoRT-CLI version 4.23.0
+code: the development tree; files changed in src/scripts and not committed:
+M src/second_vision/pipeline/callbacks.py
+model file: -rw-rw-r-- 1 sv-rpi5 sv-rpi5 9745854 Oct 19 19:26 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef
+holders of /dev/hailo0 (sudo -n fuser -v, read-only): 
+before: temp=56.5'C, throttled=0x0 (0x0 = never throttled since boot)
+run: 300 s, headless like the boot service, NPU monitor sampling off; hailort_service has HAILO_MONITOR=0; boards: stand-in glasses on a pty (ACKs every packet), no control panel, so mode both
+battery at the start (X1202 gauge): 98.1 % by the gauge, 4.171 V, the charger is IN
+app running (pid 244668); sampling for 300 s
+    10 s   56.2 C    2400/2400 MHz  cores 28 26 25 25      mem   4501 MB  app cpu    57%  app rss   245 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+    20 s   56.8 C    1800/2400 MHz  cores 29 22 22 20      mem   4460 MB  app cpu    61%  app rss   246 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+    30 s   56.8 C    1900/2400 MHz  cores 22 20 20 20      mem   4455 MB  app cpu    63%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+    40 s   57.9 C    2400/2400 MHz  cores 16 22 18 19      mem   4438 MB  app cpu    55%  app rss   246 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+    50 s   57.9 C    2400/2400 MHz  cores 20 18 23 18      mem   4443 MB  app cpu    60%  app rss   246 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+    60 s   58.4 C    2400/2400 MHz  cores 18 20 18 19      mem   4433 MB  app cpu    56%  app rss   246 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+    70 s   59.0 C    2400/2400 MHz  cores 18 20 19 18      mem   4446 MB  app cpu    54%  app rss   246 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+    80 s   58.4 C    1800/2400 MHz  cores 21 20 21 21      mem   4442 MB  app cpu    54%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+    90 s   56.8 C    1900/2400 MHz  cores 30 23 24 23      mem   4440 MB  app cpu    60%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   100 s   59.0 C    1800/2400 MHz  cores 23 20 18 19      mem   4447 MB  app cpu    56%  app rss   246 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   110 s   59.0 C    1700/2400 MHz  cores 19 23 19 20      mem   4449 MB  app cpu    63%  app rss   246 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   120 s   60.0 C    1700/2400 MHz  cores 20 20 20 21      mem   4445 MB  app cpu    63%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   130 s   57.9 C    1700/2400 MHz  cores 17 20 22 18      mem   4453 MB  app cpu    58%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   140 s   58.4 C    1800/2400 MHz  cores 21 22 21 22      mem   4449 MB  app cpu    63%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   150 s   57.9 C    1800/2400 MHz  cores 21 22 21 23      mem   4449 MB  app cpu    63%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   160 s   57.9 C    1700/2400 MHz  cores 28 27 26 26      mem   4460 MB  app cpu    63%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   170 s   60.0 C    2400/2400 MHz  cores 34 24 23 23      mem   4453 MB  app cpu    60%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   180 s   59.5 C    2400/2400 MHz  cores 16 19 22 21      mem   4464 MB  app cpu    57%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   190 s   59.0 C    2400/2400 MHz  cores 19 19 19 22      mem   4461 MB  app cpu    57%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   200 s   60.0 C    1900/2400 MHz  cores 18 20 19 19      mem   4465 MB  app cpu    56%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   211 s   60.0 C    2400/2400 MHz  cores 20 18 20 20      mem   4467 MB  app cpu    60%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   221 s   61.1 C    2400/2400 MHz  cores 21 19 18 20      mem   4466 MB  app cpu    56%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   231 s   61.1 C    2400/2400 MHz  cores 21 19 17 20      mem   4467 MB  app cpu    54%  app rss   247 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   241 s   60.6 C    2400/2400 MHz  cores 26 24 25 24      mem   4468 MB  app cpu    60%  app rss   248 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   251 s   60.6 C    2400/2400 MHz  cores 29 20 21 19      mem   4469 MB  app cpu    54%  app rss   248 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   261 s   60.0 C    1800/2400 MHz  cores 18 20 17 20      mem   4477 MB  app cpu    56%  app rss   248 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   271 s   60.0 C    2400/2400 MHz  cores 20 17 19 20      mem   4473 MB  app cpu    58%  app rss   248 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   281 s   60.6 C    1700/2400 MHz  cores 19 22 20 20      mem   4473 MB  app cpu    57%  app rss   248 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   291 s   61.1 C    1700/2400 MHz  cores 19 20 20 19      mem   4472 MB  app cpu    58%  app rss   248 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+   300 s   60.0 C    1800/2400 MHz  cores 21 21 21 22      mem   4473 MB  app cpu    63%  app rss   248 MB  throttled 0x0  battery  98.1 % 4.171 V CHARGER IN
+perf_sample app-yolov8x-5min
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 300.0 --live --sudo-vcgencmd --label app-yolov8x-5min --out /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs --app-log /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/perf-app-yolov8x-5min-app.log
+samples: 30 every 10 s; app found: yes
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: 0x0
+
+temperature: min 56.2, mean 59.1, max 61.1 C
+CPU clock: min 1700.0, mean 2070.0, max 2400.0 MHz
+system memory used: min 4432.9, mean 4458.6, max 4501.3 MB
+app CPU: min 53.9, mean 58.6, max 63.4 % of one core
+app resident memory: min 245.4, mean 247.0, max 248.1 MB
+busiest core: min 19.5, mean 23.1, max 33.5 %
+CPU clock below its maximum in 16 of 30 samples (lowest 1700 MHz, at 57 to 61 C): short dips; thermal throttling is judged by the flags below
+throttle flags seen (vcgencmd get_throttled): 0x0 (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+depth FPS, the app's own counter (an average since start, so it hides dips): median 14.9, min 14.8
+detection FPS, the app's own counter (same): median 14.9, min 14.7
+camera-to-callback delay: median 154 ms, p95 213 ms, p99 219 ms, max 220 ms (240 lines)
+frame rate per 15-frame window (after the first minute, 239 windows): median 15.3, 5th percentile 14.1, 1st percentile 14.0, min 14.0 FPS; longest window 1.08 s (15 frames take 0.50 s at 30 FPS); windows over 1 s: 119
+battery (X1202 gauge): 98.1 % -> 98.1 %, 4.171 V -> 4.171 V over 5 min (30 readings; the percentage drifts, the voltage is the measure)
+power source (the HAT's power-loss line): on battery in 0 of 30 samples; THE CHARGER WAS IN for the rest: this is not a clean battery run
+battery: on the charger throughout: this run says nothing about battery life
+stability (REQ-DTA-09): not judged, the run is shorter than 7 minutes
+
+written: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/perf-app-yolov8x-5min.csv, /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/perf-app-yolov8x-5min.txt
+written: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/perf-app-yolov8x-5min.png
+
+stop: exited 0 0.6 s after Ctrl+C
+stand-in glasses received 4515 packets
+after: temp=60.4'C, throttled=0x0
+screenshots: {'mid': 'not taken (--no-screenshots)', 'end': 'not taken (--no-screenshots)'}

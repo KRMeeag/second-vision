@@ -1,0 +1,6 @@
+model: yolov8s
+hef: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8s.hef
+1ac4c540b422a0df437904534eb6051d7b4bdff7930dfc06bd299d40c4a07a70  /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8s.hef
+duration_s: 300
+cooled_s: 210; at start: Pi 55.1 C, Hailo 53.5 C; idle reference Pi 52.4 C, Hailo 51.8 C
+launch: SV_RUN_SH=run_with_model.sh SV_DET_HEF=<hef> SV_LATENCY_LOG=1 perf_run.py --duration 300 --label app-yolov8s-5min

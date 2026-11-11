@@ -1,0 +1,21 @@
+run: perf-app-yolov8x-5min
+detection model (from the app's log): /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8x.hef
+app's own averages at the last [DEPTH] line (since start, hide dips): depth 14.9 / det 14.9 FPS
+
+DETECTION branch, frame rate per 15 frames (after the first 60 s): 239 windows: median 15.8, p5 14.0, p1 13.9, min 13.7 FPS, stdev 0.95; windows under 29.5 FPS: 239, under 25: 239; longest window 1.09 s (15 frames at 30 FPS take 0.50 s)
+DETECTION branch, camera-to-detection-callback delay: median 1880 ms, p95 1908, p99 1918, max 1932 (239 readings)
+DEPTH branch, frame rate per 15 frames (after the first 60 s): 239 windows: median 15.3, p5 14.1, p1 14.0, min 14.0 FPS, stdev 0.80; windows under 29.5 FPS: 239, under 25: 239; longest window 1.08 s (15 frames at 30 FPS take 0.50 s)
+DEPTH branch, camera-to-depth-callback delay: median 154 ms, p95 213, p99 219, max 220 (240 readings)
+
+camera losses ("Camera lost (error ..." to "Camera back:"): 0, 0.0 s without vision in total; speech lines spoken ([TTS]): 10
+EXCLUDING windows that overlap a camera loss (or start within 5 s of it ending):
+  DETECTION frame rate: 239 windows: median 15.8, p5 14.0, p1 13.9, min 13.7 FPS, stdev 0.95; windows under 29.5 FPS: 239, under 25: 239; longest window 1.09 s (15 frames at 30 FPS take 0.50 s)
+  DETECTION delay: median 1880 ms, p95 1907, p99 1918, max 1932 (240 readings)
+  DEPTH frame rate: 239 windows: median 15.3, p5 14.1, p1 14.0, min 14.0 FPS, stdev 0.80; windows under 29.5 FPS: 239, under 25: 239; longest window 1.08 s (15 frames at 30 FPS take 0.50 s)
+  DEPTH delay: median 154 ms, p95 213, p99 219, max 220 (240 readings)
+
+Pi SoC temperature (every 10 s): start 56.2, max 61.1, end 60.0 C; trend over the last 10 min n/a (run under 15 min)
+Pi throttle flags seen: 0x0; CPU clock below its maximum in 16 of 30 samples
+app CPU: mean 58.6 % of one core (min 53.9, max 63.4); app memory 245 -> 248 MB
+Hailo-8 chip temperature (hotter of its 2 sensors, every 10 s): start 65.0, max 81.1, end 81.1 C; trend over the last 10 min n/a (run under 15 min) (29 readings)
+Hailo sampler notes: thermal protection enabled: True

@@ -1,0 +1,51 @@
+perf_run app-deployed-13class-1min
+kernel: Linux 6.12.62+rpt-rpi-2712 aarch64
+HailoRT: HailoRT-CLI version 4.23.0
+code: the development tree; files changed in src/scripts and not committed:
+M src/second_vision/pipeline/callbacks.py
+model file: -rw-rw-r-- 1 sv-rpi5 sv-rpi5 9745854 Oct 19 19:26 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef
+holders of /dev/hailo0 (sudo -n fuser -v, read-only): 
+before: temp=54.9'C, throttled=0x0 (0x0 = never throttled since boot)
+run: 90 s, headless like the boot service, NPU monitor sampling off; hailort_service has HAILO_MONITOR=0; boards: stand-in glasses on a pty (ACKs every packet), no control panel, so mode both
+battery at the start (X1202 gauge): 98.3 % by the gauge, 4.173 V, the charger is IN
+app running (pid 4123); sampling for 90 s
+    10 s   56.2 C    2400/2400 MHz  cores 26 27 30 31      mem   3200 MB  app cpu    74%  app rss   196 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+    20 s   57.3 C    2400/2400 MHz  cores 39 26 31 34      mem   3035 MB  app cpu    74%  app rss   197 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+    30 s   55.6 C    2400/2400 MHz  cores 20 22 27 26      mem   3010 MB  app cpu    73%  app rss   198 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+    40 s   54.5 C    1900/2400 MHz  cores 22 29 25 25      mem   3008 MB  app cpu    75%  app rss   198 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+    50 s   56.8 C    2400/2400 MHz  cores 23 31 26 38      mem   3050 MB  app cpu    74%  app rss   198 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+    60 s   56.8 C    2400/2400 MHz  cores 21 26 26 22      mem   3015 MB  app cpu    73%  app rss   198 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+    70 s   59.0 C    2400/2400 MHz  cores 25 28 28 24      mem   3015 MB  app cpu    74%  app rss   198 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+    80 s   58.4 C    2400/2400 MHz  cores 24 25 28 24      mem   3014 MB  app cpu    74%  app rss   198 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+    90 s   59.0 C    2400/2400 MHz  cores 24 27 27 28      mem   3007 MB  app cpu    73%  app rss   199 MB  throttled 0x0  battery  98.3 % 4.173 V CHARGER IN
+perf_sample app-deployed-13class-1min
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 90.0 --live --sudo-vcgencmd --label app-deployed-13class-1min --out /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/quick --app-log /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/quick/perf-app-deployed-13class-1min-app.log
+samples: 9 every 10 s; app found: yes
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: 0x0
+
+temperature: min 54.5, mean 57.1, max 59.0 C
+CPU clock: min 1900.0, mean 2344.4, max 2400.0 MHz
+system memory used: min 3006.8, mean 3039.3, max 3199.8 MB
+app CPU: min 73.1, mean 73.7, max 74.8 % of one core
+app resident memory: min 195.8, mean 197.6, max 198.8 MB
+busiest core: min 26.4, mean 30.3, max 38.6 %
+CPU clock below its maximum in 1 of 9 samples (lowest 1900 MHz, at 55 to 55 C): short dips; thermal throttling is judged by the flags below
+throttle flags seen (vcgencmd get_throttled): 0x0 (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+depth FPS, the app's own counter (an average since start, so it hides dips): median 29.6, min 29.5
+detection FPS, the app's own counter (same): median 29.6, min 29.5
+camera-to-callback delay: median 101 ms, p95 119 ms, p99 120 ms, max 120 ms (61 lines)
+frame rate per 15-frame window (after the first minute, 60 windows): median 30.0, 5th percentile 28.7, 1st percentile 28.5, min 28.5 FPS; longest window 0.53 s (15 frames take 0.50 s at 30 FPS); windows over 1 s: 0
+battery (X1202 gauge): 98.3 % -> 98.3 %, 4.173 V -> 4.173 V over 1 min (9 readings; the percentage drifts, the voltage is the measure)
+power source (the HAT's power-loss line): on battery in 0 of 9 samples; THE CHARGER WAS IN for the rest: this is not a clean battery run
+battery: on the charger throughout: this run says nothing about battery life
+stability (REQ-DTA-09): not judged, the run is shorter than 7 minutes
+
+written: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/quick/perf-app-deployed-13class-1min.csv, /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/quick/perf-app-deployed-13class-1min.txt
+written: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/quick/perf-app-deployed-13class-1min.png
+
+stop: exited 0 0.5 s after Ctrl+C
+stand-in glasses received 2718 packets
+after: temp=59.3'C, throttled=0x0
+screenshots: {'mid': 'ok', 'end': 'ok'}

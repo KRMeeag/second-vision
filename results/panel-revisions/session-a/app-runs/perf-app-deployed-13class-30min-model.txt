@@ -1,0 +1,6 @@
+model: deployed-13class
+hef: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef
+648ddb167080c93f4651a015f3c5688eae9f63585d51dc58350ef35298a79d90  /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef
+duration_s: 1800
+cooled_s: 180; at start: Pi 52.4 C, Hailo 51.1 C; idle reference Pi 52.4 C, Hailo 51.8 C
+launch: SV_RUN_SH=run_with_model.sh SV_DET_HEF=<hef> SV_LATENCY_LOG=1 perf_run.py --duration 1800 --label app-deployed-13class-30min

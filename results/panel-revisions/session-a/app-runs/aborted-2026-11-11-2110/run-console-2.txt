@@ -1,0 +1,8 @@
+# resume 2026-11-11T21:10:47+08:00: waiting for perf_run.py (pid 15219) to finish the deployed-model run
+21:10:47 deployed run finished; console tail:
+stand-in glasses received 1138 packets
+after: temp=57.6'C, throttled=0x0
+screenshots: {'end': 'ok'}
+analysis FAILED for /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/perf-app-deployed-13class-30min
+# app runs start 2026-11-11T21:11:07+08:00; idle Pi 54.0 C, idle Hailo 52.5 C; long 1800s, short 300s
+scene snapshot: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/scene-before.jpg

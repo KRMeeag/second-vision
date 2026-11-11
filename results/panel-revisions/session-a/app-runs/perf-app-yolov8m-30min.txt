@@ -1,0 +1,29 @@
+perf_sample app-yolov8m-30min
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 1800.0 --live --sudo-vcgencmd --label app-yolov8m-30min --out /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs --app-log /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/app-runs/perf-app-yolov8m-30min-app.log
+samples: 180 every 10 s; app found: yes
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: 0x0
+
+temperature: min 58.4, mean 64.4, max 67.8 C
+CPU clock: min 1800.0, mean 2364.4, max 2400.0 MHz
+system memory used: min 4395.3, mean 4546.9, max 4749.7 MB
+app CPU: min 52.6, mean 80.6, max 85.3 % of one core
+app resident memory: min 222.6, mean 239.0, max 269.8 MB
+busiest core: min 22.3, mean 31.5, max 43.1 %
+CPU clock below its maximum in 12 of 180 samples (lowest 1800 MHz, at 61 to 66 C): short dips; thermal throttling is judged by the flags below
+throttle flags seen (vcgencmd get_throttled): 0x0 (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+depth FPS, the app's own counter (an average since start, so it hides dips): median 27.5, min 16.2
+detection FPS, the app's own counter (same): median 29.6, min 28.8
+camera-to-callback delay: median 127 ms, p95 156 ms, p99 160 ms, max 171 ms (3178 lines)
+frame rate per 15-frame window (after the first minute, 3176 windows): median 28.0, 5th percentile 25.0, 1st percentile 20.1, min 19.1 FPS; longest window 0.79 s (15 frames take 0.50 s at 30 FPS); windows over 1 s: 0
+battery (X1202 gauge): 98.1 % -> 98.1 %, 4.171 V -> 4.171 V over 30 min (180 readings; the percentage drifts, the voltage is the measure)
+power source (the HAT's power-loss line): on battery in 0 of 180 samples; THE CHARGER WAS IN for the rest: this is not a clean battery run
+battery: on the charger throughout: this run says nothing about battery life
+stability (REQ-DTA-09): memory 228 -> 270 MB (+18.2 %, limit +5 %): FAIL
+stability (REQ-DTA-09): app CPU first 3 min 80 %, last 3 min 80 % (limit 10 points apart): PASS
+
+stop: exited 0 0.5 s after Ctrl+C
+stand-in glasses received 49381 packets
+after: temp=65.3'C, throttled=0x0
+screenshots: {'mid': 'not taken (--no-screenshots)', 'end': 'not taken (--no-screenshots)'}
