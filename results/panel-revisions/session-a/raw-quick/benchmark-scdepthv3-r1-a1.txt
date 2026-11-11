@@ -1,0 +1,27 @@
+# benchmark-scdepthv3-r1-a1
+# command: hailortcli benchmark -t 3 /usr/local/hailo/resources/models/hailo8/scdepthv3.hef
+# before: thermal_zone0=54.5C vcgencmd=57.1C throttled=0x0 fan=3000rpm start=2026-11-09T20:30:11+08:00
+Starting Measurements...
+Measuring FPS in HW-only mode
+Network scdepthv3/scdepthv3: 33% | 463 | FPS: 462.54 | ETA: 00:00:02
+[F[2KNetwork scdepthv3/scdepthv3: 66% | 934 | FPS: 466.51 | ETA: 00:00:01
+[F[2KNetwork scdepthv3/scdepthv3: 100% | 1403 | FPS: 467.21 | ETA: 00:00:00
+[F[2KNetwork scdepthv3/scdepthv3: 100% | 1403 | FPS: 457.28 | ETA: 00:00:00
+Measuring FPS (and Power on supported platforms) in streaming mode
+Network scdepthv3/scdepthv3: 33% | 463 | FPS: 462.92 | ETA: 00:00:02
+[F[2KNetwork scdepthv3/scdepthv3: 66% | 934 | FPS: 466.70 | ETA: 00:00:01
+[F[2KNetwork scdepthv3/scdepthv3: 100% | 1403 | FPS: 467.30 | ETA: 00:00:00
+[F[2KNetwork scdepthv3/scdepthv3: 100% | 1403 | FPS: 461.97 | ETA: 00:00:00
+Measuring HW Latency
+Network scdepthv3/scdepthv3: 33% | 198 | HW Latency: 4.80 ms | ETA: 00:00:02
+[F[2KNetwork scdepthv3/scdepthv3: 66% | 401 | HW Latency: 4.78 ms | ETA: 00:00:01
+[F[2KNetwork scdepthv3/scdepthv3: 100% | 603 | HW Latency: 4.78 ms | ETA: 00:00:00
+[F[2KNetwork scdepthv3/scdepthv3: 100% | 603 | HW Latency: 4.78 ms | ETA: 00:00:00
+
+=======
+Summary
+=======
+FPS     (hw_only)                 = 457.289
+        (streaming)               = 461.989
+Latency (hw)                      = 4.77546 ms
+# after: thermal_zone0=53.5C vcgencmd=56.0C throttled=0x0 fan=2985rpm end=2026-11-09T20:30:21+08:00 exit=0 verdict=ok

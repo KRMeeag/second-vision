@@ -1,0 +1,62 @@
+# benchmark-yolov8s-r2-a1
+# command: hailortcli benchmark -t 15 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8s.hef
+# before: thermal_zone0=57.9C vcgencmd=56.5C throttled=0x0 fan=5206rpm start=2026-11-09T20:54:56+08:00
+Starting Measurements...
+Measuring FPS in HW-only mode
+Network yolov8s/yolov8s: 6% | 490 | FPS: 489.54 | ETA: 00:00:14
+[F[2KNetwork yolov8s/yolov8s: 13% | 982 | FPS: 490.49 | ETA: 00:00:13
+[F[2KNetwork yolov8s/yolov8s: 20% | 1474 | FPS: 490.80 | ETA: 00:00:12
+[F[2KNetwork yolov8s/yolov8s: 26% | 1966 | FPS: 490.96 | ETA: 00:00:11
+[F[2KNetwork yolov8s/yolov8s: 33% | 2459 | FPS: 491.23 | ETA: 00:00:10
+[F[2KNetwork yolov8s/yolov8s: 40% | 2951 | FPS: 491.27 | ETA: 00:00:09
+[F[2KNetwork yolov8s/yolov8s: 46% | 3443 | FPS: 491.30 | ETA: 00:00:08
+[F[2KNetwork yolov8s/yolov8s: 53% | 3935 | FPS: 491.32 | ETA: 00:00:07
+[F[2KNetwork yolov8s/yolov8s: 60% | 4427 | FPS: 491.34 | ETA: 00:00:06
+[F[2KNetwork yolov8s/yolov8s: 66% | 4920 | FPS: 491.45 | ETA: 00:00:05
+[F[2KNetwork yolov8s/yolov8s: 73% | 5412 | FPS: 491.45 | ETA: 00:00:04
+[F[2KNetwork yolov8s/yolov8s: 80% | 5904 | FPS: 491.46 | ETA: 00:00:03
+[F[2KNetwork yolov8s/yolov8s: 86% | 6396 | FPS: 491.46 | ETA: 00:00:02
+[F[2KNetwork yolov8s/yolov8s: 93% | 6888 | FPS: 491.46 | ETA: 00:00:01
+[F[2KNetwork yolov8s/yolov8s: 100% | 7373 | FPS: 491.32 | ETA: 00:00:00
+Measuring FPS (and Power on supported platforms) in streaming mode
+Network yolov8s/yolov8s: 6% | 488 | FPS: 487.52 | ETA: 00:00:14
+[F[2KNetwork yolov8s/yolov8s: 13% | 980 | FPS: 489.47 | ETA: 00:00:13
+[F[2KNetwork yolov8s/yolov8s: 20% | 1472 | FPS: 490.27 | ETA: 00:00:12
+[F[2KNetwork yolov8s/yolov8s: 26% | 1964 | FPS: 490.57 | ETA: 00:00:11
+[F[2KNetwork yolov8s/yolov8s: 33% | 2456 | FPS: 490.82 | ETA: 00:00:10
+[F[2KNetwork yolov8s/yolov8s: 40% | 2948 | FPS: 490.93 | ETA: 00:00:09
+[F[2KNetwork yolov8s/yolov8s: 46% | 3440 | FPS: 491.00 | ETA: 00:00:08
+[F[2KNetwork yolov8s/yolov8s: 53% | 3933 | FPS: 491.15 | ETA: 00:00:07
+[F[2KNetwork yolov8s/yolov8s: 60% | 4425 | FPS: 491.18 | ETA: 00:00:06
+[F[2KNetwork yolov8s/yolov8s: 66% | 4917 | FPS: 491.20 | ETA: 00:00:05
+[F[2KNetwork yolov8s/yolov8s: 73% | 5409 | FPS: 491.22 | ETA: 00:00:04
+[F[2KNetwork yolov8s/yolov8s: 80% | 5901 | FPS: 491.27 | ETA: 00:00:03
+[F[2KNetwork yolov8s/yolov8s: 86% | 6394 | FPS: 491.36 | ETA: 00:00:02
+[F[2KNetwork yolov8s/yolov8s: 93% | 6885 | FPS: 491.31 | ETA: 00:00:01
+[F[2K[HailoRT] [warning] Got health monitor notification - temperature reached orange zone. sensor id=0, TS00=104.03936c, TS01=103.5335c
+Network yolov8s/yolov8s: 100% | 7371 | FPS: 491.21 | ETA: 00:00:00
+Measuring HW Latency
+[HailoRT] [error] Got health monitor CPU ECC error event. memory_bitmap=4096
+Network yolov8s/yolov8s: 6% | 114 | HW Latency: 5.83 ms | ETA: 00:00:14
+[F[2KNetwork yolov8s/yolov8s: 13% | 230 | HW Latency: 5.83 ms | ETA: 00:00:13
+[F[2KNetwork yolov8s/yolov8s: 20% | 344 | HW Latency: 5.83 ms | ETA: 00:00:12
+[F[2KNetwork yolov8s/yolov8s: 26% | 459 | HW Latency: 5.83 ms | ETA: 00:00:11
+[F[2KNetwork yolov8s/yolov8s: 33% | 573 | HW Latency: 5.83 ms | ETA: 00:00:10
+[F[2KNetwork yolov8s/yolov8s: 40% | 676 | HW Latency: 5.83 ms | ETA: 00:00:09
+[F[2KNetwork yolov8s/yolov8s: 46% | 778 | HW Latency: 5.83 ms | ETA: 00:00:08
+[F[2KNetwork yolov8s/yolov8s: 53% | 881 | HW Latency: 5.83 ms | ETA: 00:00:07
+[F[2KNetwork yolov8s/yolov8s: 60% | 984 | HW Latency: 5.83 ms | ETA: 00:00:06
+[F[2KNetwork yolov8s/yolov8s: 66% | 1087 | HW Latency: 5.83 ms | ETA: 00:00:05
+[F[2KNetwork yolov8s/yolov8s: 73% | 1190 | HW Latency: 5.83 ms | ETA: 00:00:04
+[F[2KNetwork yolov8s/yolov8s: 80% | 1292 | HW Latency: 5.83 ms | ETA: 00:00:03
+[F[2KNetwork yolov8s/yolov8s: 86% | 1399 | HW Latency: 5.83 ms | ETA: 00:00:02
+[F[2KNetwork yolov8s/yolov8s: 93% | 1513 | HW Latency: 5.83 ms | ETA: 00:00:01
+[F[2KNetwork yolov8s/yolov8s: 100% | 1626 | HW Latency: 5.83 ms | ETA: 00:00:00
+
+=======
+Summary
+=======
+FPS     (hw_only)                 = 491.258
+        (streaming)               = 491.209
+Latency (hw)                      = 5.83024 ms
+# after: thermal_zone0=59.5C vcgencmd=59.3C throttled=0x0 fan=5149rpm end=2026-11-09T20:55:41+08:00 exit=0 verdict=ok

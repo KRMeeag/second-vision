@@ -1,0 +1,187 @@
+# with-depth-yolov8m-r3-a1
+# command: hailortcli run2 -t 60 --multi-process-service -j /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/raw/with-depth-yolov8m-r3-a1.json set-net /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8m.hef set-net /usr/local/hailo/resources/models/hailo8/scdepthv3.hef
+# before: thermal_zone0=55.6C vcgencmd=56.5C throttled=0x0 fan=5242rpm start=2026-11-09T21:16:49+08:00
+[>                   ]   0% 00:01:00
+yolov8m:   fps: 0.00
+scdepthv3: fps: 0.00
+[F[2K[F[2K[F[2K[>                   ]   1% 00:00:59
+yolov8m:   fps: 25.93
+scdepthv3: fps: 31.91
+[F[2K[F[2K[F[2K[>                   ]   3% 00:00:58
+yolov8m:   fps: 27.44
+scdepthv3: fps: 27.94
+[F[2K[F[2K[F[2K[>                   ]   5% 00:00:57
+yolov8m:   fps: 27.28
+scdepthv3: fps: 29.28
+[F[2K[F[2K[F[2K[>                   ]   6% 00:00:56
+yolov8m:   fps: 27.45
+scdepthv3: fps: 27.95
+[F[2K[F[2K[F[2K[>                   ]   8% 00:00:55
+yolov8m:   fps: 27.34
+scdepthv3: fps: 28.73
+[F[2K[F[2K[F[2K[=>                  ]  10% 00:00:54
+yolov8m:   fps: 27.44
+scdepthv3: fps: 27.93
+[F[2K[F[2K[F[2K[=>                  ]  11% 00:00:53
+yolov8m:   fps: 27.37
+scdepthv3: fps: 28.51
+[F[2K[F[2K[F[2K[=>                  ]  13% 00:00:52
+yolov8m:   fps: 27.44
+scdepthv3: fps: 27.94
+[F[2K[F[2K[F[2K[==>                 ]  15% 00:00:51
+yolov8m:   fps: 27.50
+scdepthv3: fps: 27.94
+[F[2K[F[2K[F[2K[==>                 ]  16% 00:00:50
+yolov8m:   fps: 27.44
+scdepthv3: fps: 27.94
+[F[2K[F[2K[F[2K[==>                 ]  18% 00:00:49
+yolov8m:   fps: 27.49
+scdepthv3: fps: 27.58
+[F[2K[F[2K[F[2K[===>                ]  20% 00:00:48
+yolov8m:   fps: 27.44
+scdepthv3: fps: 27.94
+[F[2K[F[2K[F[2K[===>                ]  21% 00:00:47
+yolov8m:   fps: 27.56
+scdepthv3: fps: 27.63
+[F[2K[F[2K[F[2K[===>                ]  23% 00:00:46
+yolov8m:   fps: 27.51
+scdepthv3: fps: 27.94
+[F[2K[F[2K[F[2K[====>               ]  25% 00:00:45
+yolov8m:   fps: 27.54
+scdepthv3: fps: 27.68
+[F[2K[F[2K[F[2K[====>               ]  26% 00:00:44
+yolov8m:   fps: 27.50
+scdepthv3: fps: 27.94
+[F[2K[F[2K[F[2K[====>               ]  28% 00:00:43
+yolov8m:   fps: 27.53
+scdepthv3: fps: 27.71
+[F[2K[F[2K[F[2K[=====>              ]  30% 00:00:42
+yolov8m:   fps: 27.50
+scdepthv3: fps: 27.94
+[F[2K[F[2K[F[2K[=====>              ]  31% 00:00:41
+yolov8m:   fps: 27.52
+scdepthv3: fps: 27.73
+[F[2K[F[2K[F[2K[=====>              ]  33% 00:00:40
+yolov8m:   fps: 27.54
+scdepthv3: fps: 27.89
+[F[2K[F[2K[F[2K[======>             ]  35% 00:00:39
+yolov8m:   fps: 27.56
+scdepthv3: fps: 27.75
+[F[2K[F[2K[F[2K[======>             ]  36% 00:00:38
+yolov8m:   fps: 27.58
+scdepthv3: fps: 27.58
+[F[2K[F[2K[F[2K[======>             ]  38% 00:00:37
+yolov8m:   fps: 27.55
+scdepthv3: fps: 27.77
+[F[2K[F[2K[F[2K[=======>            ]  40% 00:00:36
+yolov8m:   fps: 27.57
+scdepthv3: fps: 27.61
+[F[2K[F[2K[F[2K[=======>            ]  41% 00:00:35
+yolov8m:   fps: 27.55
+scdepthv3: fps: 27.78
+[F[2K[F[2K[F[2K[=======>            ]  43% 00:00:34
+yolov8m:   fps: 27.56
+scdepthv3: fps: 27.64
+[F[2K[F[2K[F[2K[========>           ]  45% 00:00:33
+yolov8m:   fps: 27.54
+scdepthv3: fps: 27.80
+[F[2K[F[2K[F[2K[========>           ]  46% 00:00:32
+yolov8m:   fps: 27.59
+scdepthv3: fps: 27.66
+[F[2K[F[2K[F[2K[========>           ]  48% 00:00:31
+yolov8m:   fps: 27.57
+scdepthv3: fps: 27.81
+[F[2K[F[2K[F[2K[=========>          ]  50% 00:00:30
+yolov8m:   fps: 27.58
+scdepthv3: fps: 27.68
+[F[2K[F[2K[F[2K[=========>          ]  51% 00:00:29
+yolov8m:   fps: 27.56
+scdepthv3: fps: 27.82
+[F[2K[F[2K[F[2K[=========>          ]  53% 00:00:28
+yolov8m:   fps: 27.57
+scdepthv3: fps: 27.70
+[F[2K[F[2K[F[2K[==========>         ]  55% 00:00:27
+yolov8m:   fps: 27.58
+scdepthv3: fps: 27.67
+[F[2K[F[2K[F[2K[==========>         ]  56% 00:00:26
+yolov8m:   fps: 27.56
+scdepthv3: fps: 27.71
+[F[2K[F[2K[F[2K[==========>         ]  58% 00:00:25
+yolov8m:   fps: 27.60
+scdepthv3: fps: 27.60
+[F[2K[F[2K[F[2K[===========>        ]  60% 00:00:24
+yolov8m:   fps: 27.59
+scdepthv3: fps: 27.72
+[F[2K[F[2K[F[2K[===========>        ]  61% 00:00:23
+yolov8m:   fps: 27.60
+scdepthv3: fps: 27.62
+[F[2K[F[2K[F[2K[===========>        ]  63% 00:00:22
+yolov8m:   fps: 27.58
+scdepthv3: fps: 27.74
+[F[2K[F[2K[F[2K[============>       ]  65% 00:00:21
+yolov8m:   fps: 27.59
+scdepthv3: fps: 27.64
+[F[2K[F[2K[F[2K[============>       ]  66% 00:00:20
+yolov8m:   fps: 27.57
+scdepthv3: fps: 27.75
+[F[2K[F[2K[F[2K[============>       ]  68% 00:00:19
+yolov8m:   fps: 27.58
+scdepthv3: fps: 27.65
+[F[2K[F[2K[F[2K[=============>      ]  70% 00:00:18
+yolov8m:   fps: 27.57
+scdepthv3: fps: 27.76
+[F[2K[F[2K[F[2K[=============>      ]  71% 00:00:17
+yolov8m:   fps: 27.57
+scdepthv3: fps: 27.67
+[F[2K[F[2K[F[2K[=============>      ]  73% 00:00:16
+yolov8m:   fps: 27.58
+scdepthv3: fps: 27.76
+[F[2K[F[2K[F[2K[==============>     ]  75% 00:00:15
+yolov8m:   fps: 27.59
+scdepthv3: fps: 27.68
+[F[2K[F[2K[F[2K[==============>     ]  76% 00:00:14
+yolov8m:   fps: 27.60
+scdepthv3: fps: 27.60
+[F[2K[F[2K[F[2K[==============>     ]  78% 00:00:13
+yolov8m:   fps: 27.59
+scdepthv3: fps: 27.69
+[F[2K[F[2K[F[2K[===============>    ]  80% 00:00:12
+yolov8m:   fps: 27.59
+scdepthv3: fps: 27.61
+[F[2K[F[2K[F[2K[===============>    ]  81% 00:00:11
+yolov8m:   fps: 27.58
+scdepthv3: fps: 27.70
+[F[2K[F[2K[F[2K[===============>    ]  83% 00:00:10
+yolov8m:   fps: 27.59
+scdepthv3: fps: 27.63
+[F[2K[F[2K[F[2K[================>   ]  85% 00:00:09
+yolov8m:   fps: 27.57
+scdepthv3: fps: 27.71
+[F[2K[F[2K[F[2K[================>   ]  86% 00:00:08
+yolov8m:   fps: 27.58
+scdepthv3: fps: 27.64
+[F[2K[F[2K[F[2K[================>   ]  88% 00:00:07
+yolov8m:   fps: 27.57
+scdepthv3: fps: 27.72
+[F[2K[F[2K[F[2K[=================>  ]  90% 00:00:06
+yolov8m:   fps: 27.59
+scdepthv3: fps: 27.65
+[F[2K[F[2K[F[2K[=================>  ]  91% 00:00:05
+yolov8m:   fps: 27.58
+scdepthv3: fps: 27.73
+[F[2K[F[2K[F[2K[=================>  ]  93% 00:00:04
+yolov8m:   fps: 27.59
+scdepthv3: fps: 27.66
+[F[2K[F[2K[F[2K[==================> ]  95% 00:00:03
+yolov8m:   fps: 27.60
+scdepthv3: fps: 27.61
+[F[2K[F[2K[F[2K[==================> ]  96% 00:00:02
+yolov8m:   fps: 27.58
+scdepthv3: fps: 27.67
+[F[2K[F[2K[F[2K[==================> ]  98% 00:00:01
+yolov8m:   fps: 27.59
+scdepthv3: fps: 27.61
+[F[2K[F[2K[F[2K[===================>] 100% 00:00:00
+yolov8m:   fps: 27.58
+scdepthv3: fps: 27.72
+# after: thermal_zone0=57.3C vcgencmd=56.5C throttled=0x0 fan=5160rpm end=2026-11-09T21:17:49+08:00 exit=0 verdict=ok

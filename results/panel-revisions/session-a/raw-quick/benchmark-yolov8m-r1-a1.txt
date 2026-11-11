@@ -1,0 +1,27 @@
+# benchmark-yolov8m-r1-a1
+# command: hailortcli benchmark -t 3 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8m.hef
+# before: thermal_zone0=56.8C vcgencmd=57.1C throttled=0x0 fan=3012rpm start=2026-11-09T20:31:15+08:00
+Starting Measurements...
+Measuring FPS in HW-only mode
+Network yolov8m/yolov8m: 33% | 32 | FPS: 31.97 | ETA: 00:00:02
+[F[2KNetwork yolov8m/yolov8m: 66% | 63 | FPS: 31.47 | ETA: 00:00:01
+[F[2KNetwork yolov8m/yolov8m: 100% | 95 | FPS: 31.63 | ETA: 00:00:00
+[F[2KNetwork yolov8m/yolov8m: 100% | 95 | FPS: 31.33 | ETA: 00:00:00
+Measuring FPS (and Power on supported platforms) in streaming mode
+Network yolov8m/yolov8m: 33% | 31 | FPS: 30.97 | ETA: 00:00:02
+[F[2KNetwork yolov8m/yolov8m: 66% | 63 | FPS: 31.47 | ETA: 00:00:01
+[F[2KNetwork yolov8m/yolov8m: 100% | 94 | FPS: 31.30 | ETA: 00:00:00
+[F[2KNetwork yolov8m/yolov8m: 100% | 94 | FPS: 31.00 | ETA: 00:00:00
+Measuring HW Latency
+Network yolov8m/yolov8m: 33% | 31 | HW Latency: 25.77 ms | ETA: 00:00:02
+[F[2KNetwork yolov8m/yolov8m: 66% | 63 | HW Latency: 25.80 ms | ETA: 00:00:01
+[F[2KNetwork yolov8m/yolov8m: 100% | 94 | HW Latency: 25.79 ms | ETA: 00:00:00
+[F[2KNetwork yolov8m/yolov8m: 100% | 94 | HW Latency: 25.79 ms | ETA: 00:00:00
+
+=======
+Summary
+=======
+FPS     (hw_only)                 = 31.0006
+        (streaming)               = 31.0025
+Latency (hw)                      = 25.7869 ms
+# after: thermal_zone0=57.3C vcgencmd=56.0C throttled=0x0 fan=2987rpm end=2026-11-09T20:31:25+08:00 exit=0 verdict=ok

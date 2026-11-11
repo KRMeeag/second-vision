@@ -1,0 +1,14 @@
+run_id,rep,attempt,kind,model,access,start_iso,end_iso,exit_code,temp_before_c,temp_after_c,vc_temp_before,vc_temp_after,throttled_before,throttled_after,throttle_verdict,fan_before,fan_after,raw_file
+benchmark-scdepthv3-r1-a1,1,1,benchmark,scdepthv3,direct,2026-11-09T20:30:11+08:00,2026-11-09T20:30:21+08:00,0,54.5,53.5,57.1,56.0,0x0,0x0,ok,3000,2985,benchmark-scdepthv3-r1-a1.txt
+benchmark-yolov8n-r1-a1,1,1,benchmark,yolov8n,direct,2026-11-09T20:30:26+08:00,2026-11-09T20:30:35+08:00,0,56.2,57.3,54.3,56.5,0x0,0x0,ok,3008,2964,benchmark-yolov8n-r1-a1.txt
+with-depth-yolov8n-r1-a1,1,1,with-depth,yolov8n,service,2026-11-09T20:30:40+08:00,2026-11-09T20:30:45+08:00,0,54.5,57.3,55.4,57.6,0x0,0x0,ok,3007,2948,with-depth-yolov8n-r1-a1.txt
+benchmark-yolov8s-r1-a1,1,1,benchmark,yolov8s,direct,2026-11-09T20:30:50+08:00,2026-11-09T20:31:00+08:00,0,56.2,57.9,56.5,57.1,0x0,0x0,ok,3001,2968,benchmark-yolov8s-r1-a1.txt
+with-depth-yolov8s-r1-a1,1,1,with-depth,yolov8s,service,2026-11-09T20:31:05+08:00,2026-11-09T20:31:10+08:00,0,55.6,58.4,56.5,59.3,0x0,0x0,ok,3013,2958,with-depth-yolov8s-r1-a1.txt
+benchmark-yolov8m-r1-a1,1,1,benchmark,yolov8m,direct,2026-11-09T20:31:15+08:00,2026-11-09T20:31:25+08:00,0,56.8,57.3,57.1,56.0,0x0,0x0,ok,3012,2987,benchmark-yolov8m-r1-a1.txt
+with-depth-yolov8m-r1-a1,1,1,with-depth,yolov8m,service,2026-11-09T20:31:30+08:00,2026-11-09T20:31:35+08:00,0,55.6,57.3,56.5,57.6,0x0,0x0,ok,3024,2992,with-depth-yolov8m-r1-a1.txt
+benchmark-yolov8l-r1-a1,1,1,benchmark,yolov8l,direct,2026-11-09T20:31:40+08:00,2026-11-09T20:31:50+08:00,0,56.8,55.6,57.1,57.1,0x0,0x0,ok,3020,3003,benchmark-yolov8l-r1-a1.txt
+with-depth-yolov8l-r1-a1,1,1,with-depth,yolov8l,service,2026-11-09T20:31:55+08:00,2026-11-09T20:32:00+08:00,0,55.1,55.6,57.6,56.0,0x0,0x0,ok,3036,3006,with-depth-yolov8l-r1-a1.txt
+benchmark-yolov8x-r1-a1,1,1,benchmark,yolov8x,direct,2026-11-09T20:32:05+08:00,2026-11-09T20:32:15+08:00,0,56.2,57.3,55.4,57.1,0x0,0x0,ok,3042,3004,benchmark-yolov8x-r1-a1.txt
+with-depth-yolov8x-r1-a1,1,1,with-depth,yolov8x,service,2026-11-09T20:32:20+08:00,2026-11-09T20:32:26+08:00,0,55.6,55.6,56.5,57.6,0x0,0x0,ok,3043,3012,with-depth-yolov8x-r1-a1.txt
+benchmark-deployed-13class-r1-a1,1,1,benchmark,deployed-13class,direct,2026-11-09T20:32:31+08:00,2026-11-09T20:32:40+08:00,0,55.1,58.4,57.1,58.2,0x0,0x0,ok,3049,3011,benchmark-deployed-13class-r1-a1.txt
+with-depth-deployed-13class-r1-a1,1,1,with-depth,deployed-13class,service,2026-11-09T20:32:45+08:00,2026-11-09T20:32:50+08:00,0,56.2,58.4,57.1,57.6,0x0,0x0,ok,3053,3012,with-depth-deployed-13class-r1-a1.txt

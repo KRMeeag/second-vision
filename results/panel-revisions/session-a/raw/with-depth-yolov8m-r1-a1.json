@@ -1,0 +1,17 @@
+{
+    "time": "Mon Nov  9 20:42:06 2026",
+    "inference_mode": "full_sync",
+    "network_groups": [
+        {
+            "name": "yolov8m",
+            "full_hef_path": "/home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8m.hef",
+            "FPS": "27.588990"
+        },
+        {
+            "name": "scdepthv3",
+            "full_hef_path": "/usr/local/hailo/resources/models/hailo8/scdepthv3.hef",
+            "FPS": "27.705393"
+        }
+    ],
+    "time_to_run": "60.00 seconds"
+}

@@ -339,3 +339,14 @@ These come before the sessions start. Each one says what the brief assumed and w
 10. **The device looks in use.** The panel's vibration knob changed at 17:27 and 17:29 today, about
     20 minutes before Step 1. Session A stops the service, so confirm first that no teammate is using
     the device.
+
+## 8. Kenth's answers (2026-11-09, after this report)
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Git writes | Allowed for these sessions: branches and commits, with **no Claude co-author line** |
+| 2 | Tutorial trigger | **Drop the status button** from the tutorial (trigger, exit and content). There is no status button: the Pi never acted on one and the flashed panel has none. The firmware source on this branch and on `deploy/v2` still has the old button; only `73eab9b` (`feat/depth-callback`) matches the board. What starts the tutorial is still open |
+| 3 | B1 images | Kenth asked what the "tracker" is and what is needed. Open |
+| 4 | B3 boards | **One run of each**: the stand-in glasses (as on 18 Oct) and the real boards |
+| 5 | New sentences (battery, startup, shutdown) | **No.** The manifest lists only what the code says |
+| 6 | Model Zoo accuracy | **Yes.** Report float and degradation as written, plus hardware = float − degradation, labelled as computed |

@@ -1,0 +1,71 @@
+Run networks
+Usage: hailortcli run2 [OPTIONS] [SUBCOMMAND]
+
+Options:
+  -h,--help                   Print this help message and exit
+  -t,--time-to-run UINT:POSITIVE [5] 
+                              Time to run (seconds)
+  -m,--mode ENUM:{full_sync,full_async,raw_sync,raw_async} [full_sync] 
+                              Inference mode
+                              Note: 'full' is deprecated, please use 'full_sync' instead.
+                              Note: 'raw' is deprecated, please use 'raw_sync' instead.
+                              
+  -j,--json TEXT              If set save statistics as json to the specified path
+  --scheduling-algorithm ENUM:{round_robin,none}
+                              Scheduling algorithm
+
+[Option Group: VDevice Options]
+  Options:
+    -s,--device-id TEXT ... Excludes: --device-count
+                                Device id, same as returned from `hailortcli scan` command. For multiple devices, use space as separator.
+    --device-count UINT:POSITIVE [1]  Excludes: --device-id
+                                VDevice device count
+    --group-id TEXT [UNIQUE]    VDevice group id
+    --multi-process-service [0] 
+                                VDevice multi process service
+[Option Group: Measurement Options]
+  Options:
+    --measure-power [0]  Excludes: --measure-current
+                                Measure power consumption
+    --measure-current [0]  Excludes: --measure-power
+                                Measure current
+    --measure-latency [0]       Measure network latency on the NN core
+    --measure-overall-latency [0] 
+                                Measure overall latency measurement
+    --measure-temp [0]          Measure chip temperature
+
+Subcommands:
+  measure-fw-actions, collect-runtime-data
+                              Collect runtime data to be used by the Profiler
+  set-net                     Set network
+
+
+Set network
+Usage: hailortcli run2 set-net [OPTIONS] [hef] [SUBCOMMAND]
+
+Positionals:
+  hef TEXT:FILE               HEF file path
+
+Options:
+  -h,--help                   Print this help message and exit
+  --name TEXT:NETWORK_GROUP Needs: hef
+                              Network group name
+
+[Option Group: Network Group Parameters]
+  Options:
+    --batch-size UINT [0]       Batch size
+                                The default value is HAILO_DEFAULT_BATCH_SIZE - which means the batch is determined by HailoRT automatically
+    --scheduler-threshold UINT [0] 
+                                Scheduler threshold
+    --scheduler-timeout UINT [0] 
+                                Scheduler timeout in milliseconds
+    --scheduler-priority UINT [16] 
+                                Scheduler priority
+[Option Group: Run Parameters]
+  Options:
+    --framerate UINT [0]        Input vStreams framerate
+
+Subcommands:
+  set-vstream                 Set vStream
+  set-stream                  Set Stream
+

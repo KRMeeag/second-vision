@@ -1,0 +1,62 @@
+# benchmark-scdepthv3-r2-a1
+# command: hailortcli benchmark -t 15 /usr/local/hailo/resources/models/hailo8/scdepthv3.hef
+# before: thermal_zone0=57.3C vcgencmd=58.7C throttled=0x0 fan=3113rpm start=2026-11-09T20:50:54+08:00
+Starting Measurements...
+Measuring FPS in HW-only mode
+Network scdepthv3/scdepthv3: 6% | 464 | FPS: 463.57 | ETA: 00:00:14
+[F[2KNetwork scdepthv3/scdepthv3: 13% | 936 | FPS: 467.52 | ETA: 00:00:13
+[F[2KNetwork scdepthv3/scdepthv3: 20% | 1407 | FPS: 468.51 | ETA: 00:00:12
+[F[2KNetwork scdepthv3/scdepthv3: 26% | 1879 | FPS: 469.25 | ETA: 00:00:11
+[F[2KNetwork scdepthv3/scdepthv3: 33% | 2350 | FPS: 469.54 | ETA: 00:00:10
+[F[2KNetwork scdepthv3/scdepthv3: 40% | 2821 | FPS: 469.70 | ETA: 00:00:09
+[F[2KNetwork scdepthv3/scdepthv3: 46% | 3293 | FPS: 469.95 | ETA: 00:00:08
+[F[2KNetwork scdepthv3/scdepthv3: 53% | 3764 | FPS: 470.02 | ETA: 00:00:07
+[F[2KNetwork scdepthv3/scdepthv3: 60% | 4236 | FPS: 470.18 | ETA: 00:00:06
+[F[2KNetwork scdepthv3/scdepthv3: 66% | 4707 | FPS: 470.22 | ETA: 00:00:05
+[F[2KNetwork scdepthv3/scdepthv3: 73% | 5179 | FPS: 470.33 | ETA: 00:00:04
+[F[2KNetwork scdepthv3/scdepthv3: 80% | 5650 | FPS: 470.34 | ETA: 00:00:03
+[F[2KNetwork scdepthv3/scdepthv3: 86% | 6122 | FPS: 470.43 | ETA: 00:00:02
+[F[2KNetwork scdepthv3/scdepthv3: 93% | 6593 | FPS: 470.46 | ETA: 00:00:01
+[F[2KNetwork scdepthv3/scdepthv3: 100% | 7057 | FPS: 470.02 | ETA: 00:00:00
+[F[2KNetwork scdepthv3/scdepthv3: 100% | 7057 | FPS: 468.34 | ETA: 00:00:00
+Measuring FPS (and Power on supported platforms) in streaming mode
+Network scdepthv3/scdepthv3: 6% | 464 | FPS: 463.55 | ETA: 00:00:14
+[F[2KNetwork scdepthv3/scdepthv3: 13% | 935 | FPS: 467.01 | ETA: 00:00:13
+[F[2KNetwork scdepthv3/scdepthv3: 20% | 1406 | FPS: 468.17 | ETA: 00:00:12
+[F[2KNetwork scdepthv3/scdepthv3: 26% | 1877 | FPS: 468.75 | ETA: 00:00:11
+[F[2KNetwork scdepthv3/scdepthv3: 33% | 2348 | FPS: 469.10 | ETA: 00:00:10
+[F[2KNetwork scdepthv3/scdepthv3: 40% | 2819 | FPS: 469.33 | ETA: 00:00:09
+[F[2KNetwork scdepthv3/scdepthv3: 46% | 3290 | FPS: 469.50 | ETA: 00:00:08
+[F[2KNetwork scdepthv3/scdepthv3: 53% | 3761 | FPS: 469.62 | ETA: 00:00:07
+[F[2KNetwork scdepthv3/scdepthv3: 60% | 4232 | FPS: 469.72 | ETA: 00:00:06
+[F[2KNetwork scdepthv3/scdepthv3: 66% | 4704 | FPS: 469.90 | ETA: 00:00:05
+[F[2KNetwork scdepthv3/scdepthv3: 73% | 5175 | FPS: 469.95 | ETA: 00:00:04
+[F[2KNetwork scdepthv3/scdepthv3: 80% | 5647 | FPS: 470.08 | ETA: 00:00:03
+[F[2KNetwork scdepthv3/scdepthv3: 86% | 6119 | FPS: 470.19 | ETA: 00:00:02
+[F[2KNetwork scdepthv3/scdepthv3: 93% | 6591 | FPS: 470.28 | ETA: 00:00:01
+[F[2KNetwork scdepthv3/scdepthv3: 100% | 7055 | FPS: 469.83 | ETA: 00:00:00
+[F[2KNetwork scdepthv3/scdepthv3: 100% | 7055 | FPS: 468.20 | ETA: 00:00:00
+Measuring HW Latency
+Network scdepthv3/scdepthv3: 6% | 201 | HW Latency: 4.80 ms | ETA: 00:00:14
+[F[2KNetwork scdepthv3/scdepthv3: 13% | 403 | HW Latency: 4.78 ms | ETA: 00:00:13
+[F[2KNetwork scdepthv3/scdepthv3: 20% | 606 | HW Latency: 4.77 ms | ETA: 00:00:12
+[F[2KNetwork scdepthv3/scdepthv3: 26% | 809 | HW Latency: 4.77 ms | ETA: 00:00:11
+[F[2KNetwork scdepthv3/scdepthv3: 33% | 1012 | HW Latency: 4.77 ms | ETA: 00:00:10
+[F[2KNetwork scdepthv3/scdepthv3: 40% | 1214 | HW Latency: 4.77 ms | ETA: 00:00:09
+[F[2KNetwork scdepthv3/scdepthv3: 46% | 1422 | HW Latency: 4.77 ms | ETA: 00:00:08
+[F[2KNetwork scdepthv3/scdepthv3: 53% | 1625 | HW Latency: 4.77 ms | ETA: 00:00:07
+[F[2KNetwork scdepthv3/scdepthv3: 60% | 1828 | HW Latency: 4.77 ms | ETA: 00:00:06
+[F[2KNetwork scdepthv3/scdepthv3: 66% | 2031 | HW Latency: 4.77 ms | ETA: 00:00:05
+[F[2KNetwork scdepthv3/scdepthv3: 73% | 2234 | HW Latency: 4.77 ms | ETA: 00:00:04
+[F[2KNetwork scdepthv3/scdepthv3: 80% | 2438 | HW Latency: 4.77 ms | ETA: 00:00:03
+[F[2KNetwork scdepthv3/scdepthv3: 86% | 2641 | HW Latency: 4.77 ms | ETA: 00:00:02
+[F[2KNetwork scdepthv3/scdepthv3: 93% | 2842 | HW Latency: 4.77 ms | ETA: 00:00:01
+[F[2KNetwork scdepthv3/scdepthv3: 100% | 3035 | HW Latency: 4.77 ms | ETA: 00:00:00
+
+=======
+Summary
+=======
+FPS     (hw_only)                 = 468.339
+        (streaming)               = 468.207
+Latency (hw)                      = 4.76617 ms
+# after: thermal_zone0=56.8C vcgencmd=57.6C throttled=0x0 fan=3081rpm end=2026-11-09T20:51:40+08:00 exit=0 verdict=ok

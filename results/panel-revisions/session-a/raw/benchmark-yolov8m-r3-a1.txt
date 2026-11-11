@@ -1,0 +1,62 @@
+# benchmark-yolov8m-r3-a1
+# command: hailortcli benchmark -t 15 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8m.hef
+# before: thermal_zone0=58.4C vcgencmd=58.2C throttled=0x0 fan=5265rpm start=2026-11-09T21:15:33+08:00
+Starting Measurements...
+Measuring FPS in HW-only mode
+Network yolov8m/yolov8m: 6% | 32 | FPS: 32.00 | ETA: 00:00:14
+[F[2KNetwork yolov8m/yolov8m: 13% | 63 | FPS: 31.48 | ETA: 00:00:13
+[F[2KNetwork yolov8m/yolov8m: 20% | 95 | FPS: 31.64 | ETA: 00:00:12
+[F[2KNetwork yolov8m/yolov8m: 26% | 126 | FPS: 31.47 | ETA: 00:00:11
+[F[2KNetwork yolov8m/yolov8m: 33% | 158 | FPS: 31.57 | ETA: 00:00:10
+[F[2KNetwork yolov8m/yolov8m: 40% | 190 | FPS: 31.64 | ETA: 00:00:09
+[F[2KNetwork yolov8m/yolov8m: 46% | 221 | FPS: 31.54 | ETA: 00:00:08
+[F[2KNetwork yolov8m/yolov8m: 53% | 253 | FPS: 31.60 | ETA: 00:00:07
+[F[2KNetwork yolov8m/yolov8m: 60% | 284 | FPS: 31.53 | ETA: 00:00:06
+[F[2KNetwork yolov8m/yolov8m: 66% | 316 | FPS: 31.57 | ETA: 00:00:05
+[F[2KNetwork yolov8m/yolov8m: 73% | 348 | FPS: 31.61 | ETA: 00:00:04
+[F[2KNetwork yolov8m/yolov8m: 80% | 379 | FPS: 31.55 | ETA: 00:00:03
+[F[2KNetwork yolov8m/yolov8m: 86% | 411 | FPS: 31.58 | ETA: 00:00:02
+[F[2KNetwork yolov8m/yolov8m: 93% | 443 | FPS: 31.61 | ETA: 00:00:01
+[F[2KNetwork yolov8m/yolov8m: 100% | 474 | FPS: 31.57 | ETA: 00:00:00
+[F[2KNetwork yolov8m/yolov8m: 100% | 474 | FPS: 31.53 | ETA: 00:00:00
+Measuring FPS (and Power on supported platforms) in streaming mode
+Network yolov8m/yolov8m: 6% | 31 | FPS: 30.97 | ETA: 00:00:14
+[F[2KNetwork yolov8m/yolov8m: 13% | 63 | FPS: 31.47 | ETA: 00:00:13
+[F[2KNetwork yolov8m/yolov8m: 20% | 94 | FPS: 31.30 | ETA: 00:00:12
+[F[2KNetwork yolov8m/yolov8m: 26% | 126 | FPS: 31.47 | ETA: 00:00:11
+[F[2KNetwork yolov8m/yolov8m: 33% | 158 | FPS: 31.57 | ETA: 00:00:10
+[F[2KNetwork yolov8m/yolov8m: 40% | 189 | FPS: 31.47 | ETA: 00:00:09
+[F[2KNetwork yolov8m/yolov8m: 46% | 221 | FPS: 31.54 | ETA: 00:00:08
+[F[2KNetwork yolov8m/yolov8m: 53% | 252 | FPS: 31.47 | ETA: 00:00:07
+[F[2KNetwork yolov8m/yolov8m: 60% | 284 | FPS: 31.52 | ETA: 00:00:06
+[F[2KNetwork yolov8m/yolov8m: 66% | 316 | FPS: 31.57 | ETA: 00:00:05
+[F[2KNetwork yolov8m/yolov8m: 73% | 347 | FPS: 31.51 | ETA: 00:00:04
+[F[2KNetwork yolov8m/yolov8m: 80% | 379 | FPS: 31.55 | ETA: 00:00:03
+[F[2KNetwork yolov8m/yolov8m: 86% | 411 | FPS: 31.58 | ETA: 00:00:02
+[F[2KNetwork yolov8m/yolov8m: 93% | 442 | FPS: 31.54 | ETA: 00:00:01
+[F[2KNetwork yolov8m/yolov8m: 100% | 473 | FPS: 31.50 | ETA: 00:00:00
+[F[2KNetwork yolov8m/yolov8m: 100% | 473 | FPS: 31.47 | ETA: 00:00:00
+Measuring HW Latency
+Network yolov8m/yolov8m: 6% | 31 | HW Latency: 25.77 ms | ETA: 00:00:14
+[F[2KNetwork yolov8m/yolov8m: 13% | 63 | HW Latency: 25.81 ms | ETA: 00:00:13
+[F[2KNetwork yolov8m/yolov8m: 20% | 94 | HW Latency: 25.82 ms | ETA: 00:00:12
+[F[2KNetwork yolov8m/yolov8m: 26% | 126 | HW Latency: 25.82 ms | ETA: 00:00:11
+[F[2KNetwork yolov8m/yolov8m: 33% | 158 | HW Latency: 25.83 ms | ETA: 00:00:10
+[F[2KNetwork yolov8m/yolov8m: 40% | 189 | HW Latency: 25.83 ms | ETA: 00:00:09
+[F[2KNetwork yolov8m/yolov8m: 46% | 221 | HW Latency: 25.83 ms | ETA: 00:00:08
+[F[2KNetwork yolov8m/yolov8m: 53% | 252 | HW Latency: 25.83 ms | ETA: 00:00:07
+[F[2KNetwork yolov8m/yolov8m: 60% | 284 | HW Latency: 25.83 ms | ETA: 00:00:06
+[F[2KNetwork yolov8m/yolov8m: 66% | 316 | HW Latency: 25.84 ms | ETA: 00:00:05
+[F[2KNetwork yolov8m/yolov8m: 73% | 347 | HW Latency: 25.83 ms | ETA: 00:00:04
+[F[2KNetwork yolov8m/yolov8m: 80% | 379 | HW Latency: 25.84 ms | ETA: 00:00:03
+[F[2KNetwork yolov8m/yolov8m: 86% | 411 | HW Latency: 25.84 ms | ETA: 00:00:02
+[F[2KNetwork yolov8m/yolov8m: 93% | 442 | HW Latency: 25.84 ms | ETA: 00:00:01
+[F[2KNetwork yolov8m/yolov8m: 100% | 473 | HW Latency: 25.84 ms | ETA: 00:00:00
+
+=======
+Summary
+=======
+FPS     (hw_only)                 = 31.4658
+        (streaming)               = 31.4663
+Latency (hw)                      = 25.8364 ms
+# after: thermal_zone0=58.4C vcgencmd=58.2C throttled=0x0 fan=5211rpm end=2026-11-09T21:16:19+08:00 exit=0 verdict=ok

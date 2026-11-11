@@ -1,0 +1,27 @@
+# benchmark-deployed-13class-r1-a1
+# command: hailortcli benchmark -t 3 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef
+# before: thermal_zone0=55.1C vcgencmd=57.1C throttled=0x0 fan=3049rpm start=2026-11-09T20:32:31+08:00
+Starting Measurements...
+Measuring FPS in HW-only mode
+Network best/best: 33% | 184 | FPS: 183.82 | ETA: 00:00:02
+[F[2KNetwork best/best: 66% | 370 | FPS: 184.79 | ETA: 00:00:01
+[F[2KNetwork best/best: 100% | 556 | FPS: 185.17 | ETA: 00:00:00
+[F[2KNetwork best/best: 100% | 556 | FPS: 184.96 | ETA: 00:00:00
+Measuring FPS (and Power on supported platforms) in streaming mode
+Network best/best: 33% | 184 | FPS: 183.82 | ETA: 00:00:02
+[F[2KNetwork best/best: 66% | 370 | FPS: 184.80 | ETA: 00:00:01
+[F[2KNetwork best/best: 100% | 556 | FPS: 185.14 | ETA: 00:00:00
+[F[2KNetwork best/best: 100% | 556 | FPS: 184.98 | ETA: 00:00:00
+Measuring HW Latency
+Network best/best: 33% | 75 | HW Latency: 11.61 ms | ETA: 00:00:02
+[F[2KNetwork best/best: 66% | 149 | HW Latency: 11.61 ms | ETA: 00:00:01
+[F[2KNetwork best/best: 100% | 224 | HW Latency: 11.61 ms | ETA: 00:00:00
+[F[2KNetwork best/best: 100% | 224 | HW Latency: 11.61 ms | ETA: 00:00:00
+
+=======
+Summary
+=======
+FPS     (hw_only)                 = 184.965
+        (streaming)               = 184.981
+Latency (hw)                      = 11.6072 ms
+# after: thermal_zone0=58.4C vcgencmd=58.2C throttled=0x0 fan=3011rpm end=2026-11-09T20:32:40+08:00 exit=0 verdict=ok

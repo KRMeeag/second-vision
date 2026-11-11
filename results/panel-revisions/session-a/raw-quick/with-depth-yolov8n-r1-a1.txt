@@ -1,0 +1,22 @@
+# with-depth-yolov8n-r1-a1
+# command: hailortcli run2 -t 5 --multi-process-service -j /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/raw-quick/with-depth-yolov8n-r1-a1.json set-net /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/downloads/model-zoo-v2.17.0/hailo8/yolov8n.hef set-net /usr/local/hailo/resources/models/hailo8/scdepthv3.hef
+# before: thermal_zone0=54.5C vcgencmd=55.4C throttled=0x0 fan=3007rpm start=2026-11-09T20:30:40+08:00
+[>                   ]   0% 00:00:05
+yolov8n:   fps: 0.00
+scdepthv3: fps: 0.00
+[F[2K[F[2K[F[2K[===>                ]  20% 00:00:04
+yolov8n:   fps: 127.74
+scdepthv3: fps: 135.68
+[F[2K[F[2K[F[2K[=======>            ]  40% 00:00:03
+yolov8n:   fps: 131.76
+scdepthv3: fps: 132.73
+[F[2K[F[2K[F[2K[===========>        ]  60% 00:00:02
+yolov8n:   fps: 132.41
+scdepthv3: fps: 132.93
+[F[2K[F[2K[F[2K[===============>    ]  80% 00:00:01
+yolov8n:   fps: 133.11
+scdepthv3: fps: 133.58
+[F[2K[F[2K[F[2K[===================>] 100% 00:00:00
+yolov8n:   fps: 132.90
+scdepthv3: fps: 134.26
+# after: thermal_zone0=57.3C vcgencmd=57.6C throttled=0x0 fan=2948rpm end=2026-11-09T20:30:45+08:00 exit=0 verdict=ok

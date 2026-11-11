@@ -1,0 +1,187 @@
+# with-depth-deployed-13class-r2-a1
+# command: hailortcli run2 -t 60 --multi-process-service -j /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-a/raw/with-depth-deployed-13class-r2-a1.json set-net /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef set-net /usr/local/hailo/resources/models/hailo8/scdepthv3.hef
+# before: thermal_zone0=56.8C vcgencmd=58.7C throttled=0x0 fan=3107rpm start=2026-11-09T21:07:16+08:00
+[>                   ]   0% 00:01:00
+scdepthv3: fps: 0.00
+best:      fps: 0.00
+[F[2K[F[2K[F[2K[>                   ]   1% 00:00:59
+scdepthv3: fps: 87.68
+best:      fps: 87.65
+[F[2K[F[2K[F[2K[>                   ]   3% 00:00:58
+scdepthv3: fps: 90.27
+best:      fps: 87.76
+[F[2K[F[2K[F[2K[>                   ]   5% 00:00:57
+scdepthv3: fps: 90.47
+best:      fps: 87.80
+[F[2K[F[2K[F[2K[>                   ]   6% 00:00:56
+scdepthv3: fps: 89.82
+best:      fps: 88.31
+[F[2K[F[2K[F[2K[>                   ]   8% 00:00:55
+scdepthv3: fps: 89.42
+best:      fps: 88.62
+[F[2K[F[2K[F[2K[=>                  ]  10% 00:00:54
+scdepthv3: fps: 89.16
+best:      fps: 88.82
+[F[2K[F[2K[F[2K[=>                  ]  11% 00:00:53
+scdepthv3: fps: 88.98
+best:      fps: 88.98
+[F[2K[F[2K[F[2K[=>                  ]  13% 00:00:52
+scdepthv3: fps: 88.96
+best:      fps: 88.83
+[F[2K[F[2K[F[2K[==>                 ]  15% 00:00:51
+scdepthv3: fps: 89.50
+best:      fps: 88.72
+[F[2K[F[2K[F[2K[==>                 ]  16% 00:00:50
+scdepthv3: fps: 89.44
+best:      fps: 88.63
+[F[2K[F[2K[F[2K[==>                 ]  18% 00:00:49
+scdepthv3: fps: 89.29
+best:      fps: 88.65
+[F[2K[F[2K[F[2K[===>                ]  20% 00:00:48
+scdepthv3: fps: 89.16
+best:      fps: 88.83
+[F[2K[F[2K[F[2K[===>                ]  21% 00:00:47
+scdepthv3: fps: 89.06
+best:      fps: 89.05
+[F[2K[F[2K[F[2K[===>                ]  23% 00:00:46
+scdepthv3: fps: 88.97
+best:      fps: 88.96
+[F[2K[F[2K[F[2K[====>               ]  25% 00:00:45
+scdepthv3: fps: 89.16
+best:      fps: 88.89
+[F[2K[F[2K[F[2K[====>               ]  26% 00:00:44
+scdepthv3: fps: 89.32
+best:      fps: 88.82
+[F[2K[F[2K[F[2K[====>               ]  28% 00:00:43
+scdepthv3: fps: 89.23
+best:      fps: 88.82
+[F[2K[F[2K[F[2K[=====>              ]  30% 00:00:42
+scdepthv3: fps: 89.15
+best:      fps: 88.93
+[F[2K[F[2K[F[2K[=====>              ]  31% 00:00:41
+scdepthv3: fps: 89.08
+best:      fps: 89.03
+[F[2K[F[2K[F[2K[=====>              ]  33% 00:00:40
+scdepthv3: fps: 89.02
+best:      fps: 89.02
+[F[2K[F[2K[F[2K[======>             ]  35% 00:00:39
+scdepthv3: fps: 88.96
+best:      fps: 88.96
+[F[2K[F[2K[F[2K[======>             ]  36% 00:00:38
+scdepthv3: fps: 89.27
+best:      fps: 88.91
+[F[2K[F[2K[F[2K[======>             ]  38% 00:00:37
+scdepthv3: fps: 89.21
+best:      fps: 88.86
+[F[2K[F[2K[F[2K[=======>            ]  40% 00:00:36
+scdepthv3: fps: 89.16
+best:      fps: 88.95
+[F[2K[F[2K[F[2K[=======>            ]  41% 00:00:35
+scdepthv3: fps: 89.11
+best:      fps: 88.98
+[F[2K[F[2K[F[2K[=======>            ]  43% 00:00:34
+scdepthv3: fps: 89.06
+best:      fps: 89.02
+[F[2K[F[2K[F[2K[========>           ]  45% 00:00:33
+scdepthv3: fps: 89.01
+best:      fps: 89.01
+[F[2K[F[2K[F[2K[========>           ]  46% 00:00:32
+scdepthv3: fps: 89.11
+best:      fps: 88.97
+[F[2K[F[2K[F[2K[========>           ]  48% 00:00:31
+scdepthv3: fps: 89.21
+best:      fps: 88.93
+[F[2K[F[2K[F[2K[=========>          ]  50% 00:00:30
+scdepthv3: fps: 89.16
+best:      fps: 88.93
+[F[2K[F[2K[F[2K[=========>          ]  51% 00:00:29
+scdepthv3: fps: 89.12
+best:      fps: 88.96
+[F[2K[F[2K[F[2K[=========>          ]  53% 00:00:28
+scdepthv3: fps: 89.08
+best:      fps: 89.02
+[F[2K[F[2K[F[2K[==========>         ]  55% 00:00:27
+scdepthv3: fps: 89.04
+best:      fps: 89.04
+[F[2K[F[2K[F[2K[==========>         ]  56% 00:00:26
+scdepthv3: fps: 89.01
+best:      fps: 89.01
+[F[2K[F[2K[F[2K[==========>         ]  58% 00:00:25
+scdepthv3: fps: 89.09
+best:      fps: 88.97
+[F[2K[F[2K[F[2K[===========>        ]  60% 00:00:24
+scdepthv3: fps: 89.17
+best:      fps: 88.94
+[F[2K[F[2K[F[2K[===========>        ]  61% 00:00:23
+scdepthv3: fps: 89.13
+best:      fps: 88.94
+[F[2K[F[2K[F[2K[===========>        ]  63% 00:00:22
+scdepthv3: fps: 89.10
+best:      fps: 88.99
+[F[2K[F[2K[F[2K[============>       ]  65% 00:00:21
+scdepthv3: fps: 89.06
+best:      fps: 89.01
+[F[2K[F[2K[F[2K[============>       ]  66% 00:00:20
+scdepthv3: fps: 89.03
+best:      fps: 89.03
+[F[2K[F[2K[F[2K[============>       ]  68% 00:00:19
+scdepthv3: fps: 89.05
+best:      fps: 89.00
+[F[2K[F[2K[F[2K[=============>      ]  70% 00:00:18
+scdepthv3: fps: 89.17
+best:      fps: 88.98
+[F[2K[F[2K[F[2K[=============>      ]  71% 00:00:17
+scdepthv3: fps: 89.14
+best:      fps: 88.95
+[F[2K[F[2K[F[2K[=============>      ]  73% 00:00:16
+scdepthv3: fps: 89.11
+best:      fps: 88.97
+[F[2K[F[2K[F[2K[==============>     ]  75% 00:00:15
+scdepthv3: fps: 89.08
+best:      fps: 89.01
+[F[2K[F[2K[F[2K[==============>     ]  76% 00:00:14
+scdepthv3: fps: 89.05
+best:      fps: 89.05
+[F[2K[F[2K[F[2K[==============>     ]  78% 00:00:13
+scdepthv3: fps: 89.03
+best:      fps: 89.02
+[F[2K[F[2K[F[2K[===============>    ]  80% 00:00:12
+scdepthv3: fps: 89.08
+best:      fps: 89.00
+[F[2K[F[2K[F[2K[===============>    ]  81% 00:00:11
+scdepthv3: fps: 89.14
+best:      fps: 88.98
+[F[2K[F[2K[F[2K[===============>    ]  83% 00:00:10
+scdepthv3: fps: 89.11
+best:      fps: 88.97
+[F[2K[F[2K[F[2K[================>   ]  85% 00:00:09
+scdepthv3: fps: 89.09
+best:      fps: 89.01
+[F[2K[F[2K[F[2K[================>   ]  86% 00:00:08
+scdepthv3: fps: 89.07
+best:      fps: 89.03
+[F[2K[F[2K[F[2K[================>   ]  88% 00:00:07
+scdepthv3: fps: 89.04
+best:      fps: 89.04
+[F[2K[F[2K[F[2K[=================>  ]  90% 00:00:06
+scdepthv3: fps: 89.02
+best:      fps: 89.02
+[F[2K[F[2K[F[2K[=================>  ]  91% 00:00:05
+scdepthv3: fps: 89.14
+best:      fps: 89.00
+[F[2K[F[2K[F[2K[=================>  ]  93% 00:00:04
+scdepthv3: fps: 89.12
+best:      fps: 88.98
+[F[2K[F[2K[F[2K[==================> ]  95% 00:00:03
+scdepthv3: fps: 89.10
+best:      fps: 88.99
+[F[2K[F[2K[F[2K[==================> ]  96% 00:00:02
+scdepthv3: fps: 89.08
+best:      fps: 89.02
+[F[2K[F[2K[F[2K[==================> ]  98% 00:00:01
+scdepthv3: fps: 89.05
+best:      fps: 89.04
+[F[2K[F[2K[F[2K[===================>] 100% 00:00:00
+scdepthv3: fps: 89.11
+best:      fps: 88.97
+# after: thermal_zone0=58.4C vcgencmd=57.6C throttled=0x0 fan=5089rpm end=2026-11-09T21:08:16+08:00 exit=0 verdict=ok

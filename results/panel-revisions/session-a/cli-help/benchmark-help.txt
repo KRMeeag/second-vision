@@ -1,0 +1,40 @@
+Measure basic performance on compiled network
+Usage: hailortcli benchmark [OPTIONS] hef
+
+Positionals:
+  hef TEXT:FILE REQUIRED      Path of the HEF to load
+
+Options:
+  -h,--help                   Print this help message and exit
+  -t,--time-to-run UINT:POSITIVE [15] 
+                              Measurement time in seconds per hw_only/streaming/latency measurement mode
+  --batch-size UINT [1]       Inference batch size (default is 1)
+  --power-mode ENUM:{performance,ultra_performance} [performance] 
+                              Core power mode (PCIE only; ignored otherwise)
+  --input-files TEXT:		Input file (.bin) path/paths. On single input network, give the full path of the data file.
+                    		On multiple inputs network, the format is input_name1=path1 input_name2=path2, where
+                    		input_name1 is the name of the input stream. If not given, random data will be used ...
+                                The input files need to be in UINT8 before transformations.
+  --csv TEXT                  If set print the output as csv to the specified path
+
+[Option Group: Device Options]
+  Options:
+    -s,--device-id TEXT ...     Device id, same as returned from `hailortcli scan` command. For multiple devices, use space as separator.
+                                
+    --bdf TEXT:BDF ...          Device bdf ([<domain>]:<bus>:<device>.<func>, same as in lspci command).
+                                For multiple BDFs, use space as separator.
+                                
+    --ip TEXT:IPV4 ...          IP address of the target
+[Option Group: VDevice Options]
+  Options:
+    --device-count UINT:POSITIVE
+                                VDevice device count
+    --multi-process-service     VDevice multi process service
+    --group-id TEXT             VDevice group id
+[Option Group: Measure Power]
+  Options:
+    --sampling-period UINT:{140,204,332,588,1100,2116,4156,8244} [1100] 
+                                Sampling Period
+    --averaging-factor UINT:{1,4,16,64,128,256,512,1024} [256] 
+                                Averaging Factor
+
