@@ -159,6 +159,16 @@ DEPTH_ERROR_LOG_SECONDS = 5.0        # Floor on repeat error logging; a bad fram
 LATENCY_WARN_MS = 300.0
 LATENCY_WARN_EVERY_SECONDS = 5.0     # a lagging branch must not also flood the console
 
+# ---- Measurement logging (off unless SV_LATENCY_LOG=1) ----
+# The [DEPTH] line above times the depth branch only, and its "det FPS" is an average since
+# start, so a detection branch that drops frames (its queue is leaky) cannot be seen in it.
+# With SV_LATENCY_LOG=1 the detection callback also prints "[DET] Frame N | lat X ms" every
+# DET_LOG_EVERY detection frames: N is the detection frame count, X the frame's age on
+# arrival (camera capture to this callback, same clock as the [DEPTH] figure). Read once at
+# import; unset, nothing changes on the per-frame path. Panel-revision measurements, 2026-11.
+LATENCY_LOG = os.environ.get("SV_LATENCY_LOG") == "1"
+DET_LOG_EVERY = 15                   # detection frames between [DET] lines, as for [DEPTH]
+
 # ---- Zone boundaries (fractions of frame width) ----
 LEFT_BOUNDARY = 0.22          # Below this -> "left"
 CENTER_LEFT_BOUNDARY = 0.25   # Between this and CENTER_RIGHT_BOUNDARY -> "center"
@@ -171,10 +181,32 @@ def on_det_frame(element, buffer, user_data):
     if buffer is None:
         return
 
+    if LATENCY_LOG:
+        _log_det_window(element, buffer, user_data)
+
     if HAILO_AVAILABLE:
         _process_real_detections(element, buffer, user_data)
     else:
         pass  # Mock mode — mock_detection_generator handles this
+
+
+def _log_det_window(element, buffer, user_data) -> None:
+    """
+    SV_LATENCY_LOG=1 only: print "[DET] Frame N | lat X ms" on every DET_LOG_EVERY-th detection
+    frame. N is user_data.get_count(), which the framework's wrapper increments before this
+    callback runs; X is _pipeline_latency_ms() on arrival, before any detection processing.
+    One short print every 15 frames, like the existing [DEPTH] line. Never raises: a
+    measurement must not be able to take the pipeline down.
+    """
+    try:
+        count = user_data.get_count()
+        if count <= 0 or count % DET_LOG_EVERY != 0:
+            return
+        lat_ms = _pipeline_latency_ms(element, buffer)
+        lat_text = f"lat {lat_ms:.0f} ms" if lat_ms is not None else "lat n/a"
+        print(f"[DET] Frame {count} | {lat_text}")
+    except Exception:
+        pass
 
 def on_depth_frame(element, buffer, user_data):
     """Process depth results. Runs in GStreamer thread — must be fast."""

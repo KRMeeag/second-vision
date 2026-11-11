@@ -19,7 +19,8 @@ What it does, in order:
   3. Starts scripts/sv-main.sh exactly as the service does (same arguments, headless: no DISPLAY, so
      no preview window), console output saved with a timestamp per line to <stem>-app.log.
   4. When the first [DEPTH] line appears, starts perf_sample.py for --duration seconds.
-  5. Takes a screenshot of the Pi's desktop half-way and at the end (grim; needs the desktop running).
+  5. Takes a screenshot of the Pi's desktop half-way and at the end (grim; needs the desktop running),
+     unless --no-screenshots is given.
   6. Stops the app with Ctrl+C (SIGINT), as the service does, and records how long it took to exit
      and its exit code: a clean stop is part of the result.
   7. Draws <stem>.png with perf_plot.py.
@@ -134,6 +135,8 @@ def main() -> int:
     ap.add_argument("--label", default="both")
     ap.add_argument("--out", default=str(REPO / "docs/testing/reports/T-15/evidence"))
     ap.add_argument("--npu", action="store_true", help="sample the NPU with hailortcli monitor (needs HAILO_MONITOR=1 in hailort_service)")
+    ap.add_argument("--no-screenshots", action="store_true",
+                    help="take no desktop screenshots (privacy: ask before saving any image of the device in use)")
     ap.add_argument("--real-boards", action="store_true",
                     help="use the real glasses board and control panel (default: stand-ins, so the "
                          "motors stay quiet and a panel switch left off cannot turn detection or depth off)")
@@ -243,7 +246,8 @@ def main() -> int:
     try:
         sampler.wait(timeout=args.duration / 2)
     except subprocess.TimeoutExpired:
-        shots["mid"] = screenshot(Path(f"{stem}-screen-mid.png"))
+        shots["mid"] = ("not taken (--no-screenshots)" if args.no_screenshots
+                        else screenshot(Path(f"{stem}-screen-mid.png")))
         sampler.wait()
     sampled_min = (time.monotonic() - sampled_from) / 60
     if npu_thread:
@@ -260,7 +264,8 @@ def main() -> int:
         stop = "did NOT exit within 20 s of Ctrl+C: killed"
     time.sleep(1)
     log.close()
-    shots["end"] = screenshot(Path(f"{stem}-screen-end.png"))
+    shots["end"] = ("not taken (--no-screenshots)" if args.no_screenshots
+                    else screenshot(Path(f"{stem}-screen-end.png")))
     packets = f"stand-in glasses received {glasses.count} packets\n" if glasses else ""
     if glasses:
         glasses.close()
