@@ -1,0 +1,17 @@
+image,announced_boxes,by_eye,verdict
+open_images__007fc3156017582a,Tables 0.78,a table with a checked cloth,real object not labelled
+open_images__01ed1afcc0e18f66,Person 0.78,a woman standing in a room,real object not labelled
+open_images__03cd75ee68a9605d,Person 0.74 / Person 0.70,a crowd of people in uniform at night (enlarged crop),real object not labelled
+open_images__445bd5bb0859963a,Person 0.78 / Person 0.77,people at a gate in the distance,real object not labelled
+open_images__4b6a9031e56c75b5,Person 0.70,a small person beside a building,real object not labelled
+open_images__58008f2477a2445e,Person 0.78,a man at the left edge of the frame (enlarged crop),real object not labelled
+open_images__58aff6c78b2600f6,Vehicle 0.77 / Vehicle 0.74,parked cars on both sides of a lane,real object not labelled
+open_images__58bffa9760601c88,Person 0.71,a person walking near a stadium,real object not labelled
+open_images__5a1e638fe06c829a,Person 0.76,an item on the bottom shelf of a pantry,false alarm
+open_images__641bb4b2ff9611ff,Chairs 0.84 / Tables 0.83,bar stools and a kitchen island,real object not labelled
+open_images__7129cc9a674250ea,Vehicle 0.77,a car far down the road,real object not labelled
+open_images__86926242ae3bf4cb,Vehicle 0.72,a car on a road at night,real object not labelled
+open_images__9fd91d7b109cfccd,Person 0.80,a small figurine on a shelf,false alarm
+open_images__ab0b5df6969855c1,Vehicle 0.71,two cars seen from above at night (enlarged crop),real object not labelled
+open_images__b34a18d1322cae8a,Doors 0.74,a door in a building front,real object not labelled
+open_images__fbab184d1828dca2,Tables 0.75,a desk beside a bookshelf,real object not labelled

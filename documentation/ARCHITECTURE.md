@@ -38,10 +38,10 @@
 │  ┌────────▼────────┐          ┌──────────▼──────────┐          │
 │  │  Serial Worker   │          │    TTS Worker        │          │
 │  │  (daemon thread) │          │   (daemon thread)    │          │
-│  │  binary protocol │          │   espeak-ng + cooldown│          │
+│  │  binary protocol │          │ Filipino clips / espeak│          │
 │  └────────┬─────────┘          └──────────┬──────────┘          │
 │           │                               │                     │
-│      USB Serial                      espeak-ng                  │
+│      USB Serial                pw-play or espeak-ng             │
 │      to ESP32                        subprocess                 │
 │                                                                 │
 │  ┌──────────────────┐     ┌─────────────────┐                  │
@@ -69,7 +69,7 @@
 | 1 | GLib MainLoop | Main thread | GStreamer bus events | Pipeline state mgmt | App lifetime |
 | 2 | Depth streaming | GStreamer-managed | Camera frames | SCDepthV3 inference → depth_callback | While depth pipeline active |
 | 3 | Det streaming | GStreamer-managed | Camera frames | YOLOv8 inference → det_callback | While det pipeline active |
-| 4 | `tts-worker` | `threading.Thread` daemon | `tts_queue`, taken through `user_data.alerts` | espeak-ng audio | App lifetime |
+| 4 | `tts-worker` | `threading.Thread` daemon | `tts_queue`, taken through `user_data.alerts` | Filipino clips played by `pw-play`, or English espeak-ng audio (D45) | App lifetime |
 | 5 | `alert-scheduler` | `threading.Thread` daemon | the raised failsafe alerts (`user_data.alerts`), every 0.05 s | one alert at a time into `tts_queue` | App lifetime |
 | 6 | `serial-writer` | `threading.Thread` daemon | `serial_queue`, `user_data.patterns` | Binary packets to the glasses ESP32; its ACKs: glasses lost / back | App lifetime |
 | 7 | `config-reader` | `threading.Thread` daemon | Control panel serial text | `SystemConfig` updates; panel lost / back | Only with `--config-port` |
@@ -388,7 +388,54 @@ Hysteresis:    0.22-0.25 and 0.75-0.78 = keep previous zone
 ```
 
 The hysteresis bands **hold the previous zone** rather than dropping the detection, and the
-state is tracked per tracker ID, not per label.
+state is tracked per tracker ID, not per label. A NEW object first seen inside a band gets the outer zone
+(left for 0.22-0.25, right for 0.75-0.78). Checked on the device on 2026-11-12 (tracker case TC-002-004,
+`results/panel-revisions/session-b/`).
+
+### Spoken language: Filipino clips, English fallback (D45)
+
+`SystemConfig.language` is `"fil"` by default (`--language en` for English only). The callback, the
+mailbox and the queue contract are unchanged: the speech worker is still handed the English text
+(`"multiple person still left"`, `"both mode"`, an alert sentence).
+
+- **Turning text into clips.** `core/fil_clips.py` loads `assets/audio/fil/` once, when the speech worker
+  starts. The folder holds `clips.csv` (`clip_id, type, en_text, fil_text, use, notes`) and one 16-bit mono
+  WAV per row. `ClipBank.resolve(text)` returns the clips that say the whole text, or None:
+  - a mode announcement or alert matches one sentence clip on its English text (case, spacing and a final
+    full stop ignored);
+  - a detection phrase is parsed as `[multiple] <label> [still | leaving to] <zone>` and spliced from word
+    clips. The labels come from the CSV's `word: object` rows, not from the code.
+- **All or nothing.** None means the whole utterance is spoken in English by espeak-ng, exactly as before.
+  It is logged once per text. A missing folder gives an empty bank and one warning.
+- **Playing.** `tts_worker._start_speech()` replaces the direct espeak-ng start:
+  - `ClipBank.render()` joins the clips with `CLIP_GAP_SECONDS` of silence and scales them by the knob's
+    amplitude / 100, the same level change espeak-ng's `-a` gives;
+  - the result is written to `/dev/shm` and played by `pw-play`, in a `Popen` subclass (`_ClipPlayback`) that
+    deletes the WAV when playback ends, is cut, or at exit.
+
+  Preemption, failsafe alerts (D41, D42), pacing and the head-turn mute see a `Popen` and are unchanged.
+- **Why `pw-play`.** On the Pi, ALSA's default device is the HDMI output, and PipeWire holds the USB
+  earphone card. espeak-ng reaches the earphones through PipeWire's default sink (PulseAudio API →
+  pipewire-pulse), and `pw-play` plays to that same sink. `aplay` would play on HDMI.
+- **The log line** is `[TTS] '<English text>' (fil)` or `(en)`.
+- **Tests.**
+  - `tests/test_fil_clips.py` checks that every spoken sentence and every detection label of the model in use
+    has clips, so a changed string fails a test instead of quietly going back to English.
+  - `tests/conftest.py` gives every test an empty bank, so no test plays the shipped clips.
+
+### Measuring delay: the opt-in latency log (D44)
+
+`core/latency_log.py` is off unless `SV_LATENCY_LOG=1`. Off, `latency_log.LOG` is None and each hook is
+one `is None` test. On, it writes CSV files to `SV_LATENCY_DIR`, on one monotonic clock:
+- `haptic.csv`: per motor command, the depth frame's capture time, queued, taken by the serial worker,
+  UART write;
+- `acks.csv`: when the serial worker noticed an ACK;
+- `audio.csv`: per announcement, the track's first qualifying frame, the deciding frame, and speech start
+  (`fil-clips`, `espeak-ng` or the fallback engine).
+
+Queued items are linked to their timings by identity in a bounded side table. Nothing is added to the queue
+dicts (the contract above). Rows are written by the module's own thread, never the GStreamer thread. With it
+on, the callback also prints `[DET] Frame N | lat X ms` every 15 detection frames.
 
 ---
 
@@ -415,7 +462,7 @@ src/second_vision/
 │   ├── callbacks.py        ← on_det_frame and on_depth_frame (both built; depth through DepthPostProcessor)
 │   └── TBR-*.py            ← Draft/staging files, unwired. Not imported by anything
 ├── workers/
-│   ├── tts_worker.py       ← espeak-ng, serialized + interruptible; failsafe alerts finish (D-16)
+│   ├── tts_worker.py       ← Filipino clips (pw-play) or espeak-ng, serialized + interruptible; failsafe alerts finish (D-16)
 │   ├── alert_worker.py     ← runs the alert scheduler's step every 0.05 s
 │   ├── serial_worker.py    ← glasses ESP32 link: real port, packets, heartbeat, ACK / link state, patterns
 │   ├── config_reader.py    ← control panel link: real port, text protocol, lost / back
@@ -424,6 +471,8 @@ src/second_vision/
 ├── core/
 │   ├── config.py           ← SystemConfig: thread-safe shared state
 │   ├── priority.py         ← PriorityMailbox + all TTS scoring/preemption tunables
+│   ├── fil_clips.py        ← Filipino clip bank: English text -> clips -> one WAV (D45)
+│   ├── latency_log.py      ← opt-in timing log, SV_LATENCY_LOG=1 (D44)
 │   ├── alerts.py           ← AlertScheduler: when each failsafe alert is spoken (see "Failsafe alerts")
 │   ├── connections.py      ← the parts that can be lost: wording, cadence, D-17's "back" sentence
 │   ├── haptic_patterns.py  ← the failsafe vibration patterns (PatternPlayer)
@@ -457,7 +506,9 @@ coordinates directly on what lands and how it affects the other side.
 | `pipeline/app.py` | control (`get_pipeline_string`, `_connect_callback`), depth (branch wiring), detection (tracker params), failsafe alerts (camera lost / back, the camera view probe; demo track) |
 | `core/config.py`, `workers/config_reader.py` | control |
 | `workers/serial_worker.py`, `core/protocol.py` | firmware, depth (hazard fields), failsafe patterns (demo track) |
-| `workers/tts_worker.py`, `core/alerts.py`, `core/haptic_patterns.py` | TTS, failsafe alerts and patterns (demo track) |
+| `workers/tts_worker.py`, `core/alerts.py`, `core/haptic_patterns.py` | TTS, failsafe alerts and patterns (demo track), Filipino clips (`_start_speech`) |
+| `core/fil_clips.py`, `assets/audio/fil/` | TTS (Filipino clips, D45); any change to a spoken string needs a clip |
+| `core/latency_log.py` | measurement hooks in `callbacks.py`, `serial_worker.py` and `tts_worker.py` (D44) |
 | `core/connections.py`, `workers/earphones_worker.py` | failsafe alerts (glasses, panel, earphones; demo track), control (`depth_on`, `detection_on`) |
 | `core/camera_view.py`, `core/status_board.py`, `core/status_view.py`, `workers/status_worker.py` | failsafe checks on screen (demo track); detection (`_draw_detection_overlay` draws the status) |
 | `core/priority.py` | TTS |

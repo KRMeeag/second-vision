@@ -100,7 +100,7 @@ P1 = critical failsafes, done first (team, 2026-10-11). P2 = everything else.
 | T-04 | Earphones missing or lost failsafe. **Split (Lead, 2026-10-18):** T-04a detection and the *strong weak* x3 alert with its cadence, T-04b the reconnect (D-17 wording and the *beep beep*) | P1 | IN PROGRESS (parent): T-04a and T-04b **BUILT** (F3), Tester pass queued | REQ-CON-10, 11, 12 | TC-025-002 to 007 | T-00b | — | Detection method decided: D-18 (USB sound card with a playback stream in `/proc/asound`) | —  |
 | T-04a | Earphones missing: the Pi notices when no USB sound card can play (absent at start-up or lost while running) and plays the *strong weak* x3 pattern on all three motors at once, every 30 s while object detection is enabled and once while it is disabled (including switched off mid-run); stops when the earphones return (subtask of T-04; no reconnect confirmation) | P1 | **BUILT** (demo track F3, 2026-10-18); Tester pass queued | REQ-CON-10, 11 | TC-025-002 to 006 | T-00b, T-00a (cadence machinery) | demo-track author (Sonnet, F3); tester: sonnet | Device check outstanding (DEMO-CHECKLIST Part C). **Open:** that `usb_sim.py detach earphones` (the USB `authorized` flag) makes the card leave `/proc/asound` as a real unplug does; D-18 expects it, the checklist reads `/proc/asound/cards` during the detach. DEMO-TRACK said to use usb_sim's rule; the code follows D-18 (same answer on this Pi; F3.md) | [F3](reports/DEMO/F3.md); [VERIFICATION-PLAN](reports/DEMO/VERIFICATION-PLAN.md) |
 | T-04b | Earphones back: "Earphones connected" (or "everything is connected" when no other alert is raised, D-17) spoken through the returned earphones, and the reconnect *beep beep* (subtask of T-04) | P1 | **BUILT** (demo track F3, 2026-10-18); Tester pass queued with T-04a | REQ-CON-12 | TC-025-007 | T-04a, T-00b | demo-track author (Sonnet, F3); tester: sonnet | Device check outstanding: the sentence is heard in the returned earphones, not cut off (F3.md, "the returned earphones may need a moment"). D-17 applied | [F3](reports/DEMO/F3.md); [VERIFICATION-PLAN](reports/DEMO/VERIFICATION-PLAN.md) |
-| T-05 | Each model class gets its own spoken label | P2 | BACKLOG (**NOT BUILT**; FIX-RANKING rank 6) | REQ-DET-01, 02 | TC-001-001, 002 | — | — | — | —  |
+| T-05 | Each model class gets its own spoken label | P2 | **DONE 2026-11-12** outside the Lead loop (D46; `feat/filipino-audio`) | REQ-DET-01, 02 | TC-001-001, 002 | — | — | — | —  |
 | T-06 | Battery announcements and low-battery shutdown | P2 | BACKLOG (**NOT BUILT**; FIX-RANKING rank 1; brief being prepared, see "Next, after the freeze") | REQ-PWR-02, 04 | TC-028-*, TC-029-002 | T-00 (speech part) | — | Nothing in `src/` reads the battery (checked 2026-10-19). Now unblocked: the X1202 gauge reads over I2C 0x36 without root (4.18 V, 98.4 % on 2026-10-19; `docs/testing/tools/perf_sample.py` `battery()`). The gauge cannot say whether the charger is plugged in; GPIO6 (the HAT's power-loss line) is unconfigured | —  |
 | T-07 | "Device shutting down." on clean shutdown | P2 | BACKLOG (**NOT BUILT**; FIX-RANKING rank 1, with T-06; brief being prepared) | REQ-PWR-03 | TC-029-001 | — | — | — | —  |
 | T-08 | Depth pipeline status and recovery | — | DEFERRED | REQ-DHP-06, 07 | TC-018-001, 002 | — | — | Deferred (D-08) | — |
@@ -128,7 +128,7 @@ Order of work (Lead, rewritten 2026-10-19 after the demo track built most of it)
    (save the panel's settings), T-05 (bicycle and tricycle), T-11 (stop right after a start), the NaN depth
    frame, the strength knob test.
 4. **Not built (stated plainly, 2026-10-19):** T-02a, T-05, T-06, T-07, T-11, T-12, T-14, and the battery rundown
-   measurement (REQ-PERF-01).
+   measurement (REQ-PERF-01). *T-05 since built, 2026-11-12 (D46).*
 
 ## Demo track → board (Lead, checked against the code 2026-10-19, AGENTS.md Rule 7)
 
@@ -244,7 +244,8 @@ devices.
 **T-05.** Ownership confirmed (2026-10-15): the detection workstream owner asked for it. Changes
 `DETECTION_CLASS_MAP` and the priority tables keyed by label. That is a label table, not the
 detection algorithm. `tests/test_detection_classes.py` pins the current label set and must be
-updated with it.
+updated with it. **Done 2026-11-12** (D46): "bicycle" and "tricycle", weight 1.0 and urgent when centred
+like "vehicle"; the test file pins the new set and checks the urgency.
 
 **T-07.** The power button: with the desktop running, one press opens a dialog and a second press
 shuts down cleanly, stopping `second-vision.service` first (`scripts/install-service.sh`). The

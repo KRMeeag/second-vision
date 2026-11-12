@@ -1,0 +1,37 @@
+{
+  "hef": "models/hef_v3/hef_deploy/best.hef",
+  "hef_sha256": "648ddb167080c93f4651a015f3c5688eae9f63585d51dc58350ef35298a79d90",
+  "images_dir": "results/panel-revisions/session-b/b1/images",
+  "images_seen": 440,
+  "images_unreadable": 0,
+  "overrides": {
+    "conf": 0.3,
+    "iou": 0.45,
+    "max_per_class": null
+  },
+  "per_image_cap": null,
+  "multi_process_service": true,
+  "boxes_written": 269,
+  "boxes_dropped_by_image_cap": 0,
+  "lowest_conf_written": 0.303641,
+  "largest_class_count_in_one_image": 21,
+  "images_with_a_class_at_its_cap": 0,
+  "boxes_per_class": {
+    "Person": 78,
+    "Vehicle": 47,
+    "Motorcycle": 9,
+    "Animals": 4,
+    "Doors": 17,
+    "Chairs": 43,
+    "Tables": 26,
+    "Tricycle": 7,
+    "Potholes": 4,
+    "Trash Bins": 11,
+    "Bicycle": 9,
+    "Stairs": 4,
+    "Bench": 10
+  },
+  "started_utc": "2026-11-12T01:37:21+00:00",
+  "wall_clock_s": 10.1,
+  "images_per_s": 43.75
+}

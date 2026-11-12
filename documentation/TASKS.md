@@ -1,6 +1,6 @@
 # TASKS.md — Status Board
 
-> **Last synced: 2026-07-27.** This file is the **source of truth for status**.
+> **Last synced: 2026-11-12** (panel revisions). This file is the **source of truth for status**.
 > Tick boxes here as work lands. `.agents/*.md` handoffs remain the narrative record —
 > the why, the decisions, the instructive failures — but they are local to one machine and
 > are not the status board.
@@ -87,6 +87,10 @@
 - [x] Hard repeat floor (`MIN_REPEAT_INTERVAL = 10.0`) with urgent bypass
 - [x] Removed the old `CooldownManager`; suppression now lives in one layer
 - [x] espeak-ng primary, pyttsx3 fallback for dev machines
+- [x] Filipino by default from pre-made clips spliced per utterance, English espeak-ng fallback
+      (`core/fil_clips.py`, `_start_speech`, `pw-play`; D45). 2026-11-12, with placeholder clips
+- [ ] Filipino: install the team's 34 real clips (`scripts/prepare_fil_clips.py`) and run the on-device checks
+      (audible at knob max/min, cut time, frame rate, start-up time); tune `CLIP_GAP_SECONDS` by ear
 - [x] All tunables consolidated as named constants in `core/priority.py`
 - [x] `tests/test_priority.py` — **19 tests passing**
 - [ ] Wire the `W_APPROACH` approach-velocity hook (reserved, currently `0.0`)
@@ -185,14 +189,32 @@
       keep checking USB, alert every 10 s, recover on reconnect. Never fall back to `--mock`
 - [/] **T-04** *(P1)* Earphones missing or lost: "strong weak ×3" vibration, repeating or once
       per the detection switch; confirmation on reconnect
-- [ ] **T-05** *(P2)* Each detection class (14 in hef_v2, 13 in hef_v3, which has no Pole) gets its own spoken label (no more
-      Bicycle/Tricycle → "vehicle")
+- [x] **T-05** *(P2)* Each detection class (14 in hef_v2, 13 in hef_v3, which has no Pole) gets its own spoken label (no more
+      Bicycle/Tricycle → "vehicle"). Done 2026-11-12 on `feat/filipino-audio`: "bicycle" and "tricycle", same weight
+      and urgency as "vehicle" (D46)
 - [ ] **T-06** *(P2)* Battery announcements at power-on and at 80/60/40/20/5 %; announce and
       shut down cleanly at 2 %
 - [ ] **T-07** *(P2)* Say "Device shutting down." on a clean shutdown (power-button double-press)
 - [~] **T-08** Depth pipeline status and recovery: deferred
 - [~] ~~**T-09** Strength knob keeps a felt minimum~~: withdrawn 2026-10-15. The team kept the
       current knob behaviour (minimum = motors off); see docs/testing/DISAGREEMENTS.md D-14
+
+---
+
+## Panel revisions (after the thesis defense) — 2026-11
+
+> From the brief "Panel revisions, on-device runs" (2026-11-09). Results and method in
+> `results/panel-revisions/{step1,session-a,session-b,session-c}/RESULTS.md`.
+
+- [x] **Step 1** Setup and inventory (2026-11-09)
+- [x] **Session A** YOLOv8 n/s/m/l/x against the deployed model, on the chip and inside the app (D43)
+- [x] **B1** The 12 object-detection tracker cases on the 13-class model, on test-split images (2026-11-12)
+- [x] **B2** Opt-in latency log, `SV_LATENCY_LOG=1` (D44)
+- [x] **B3** 20-minute real-time re-run against 18 Oct, stand-in and real boards, haptic latency (D44)
+- [~] ~~**B4** Audio latency trials~~: not run. The thesis states the speech delay as a limitation
+      (Kenth, 2026-11-12)
+- [/] **Session C** Filipino audio from spliced clips (D45, D46). Code and tests done; waiting on the team's clips
+- [~] ~~Audio tutorial mode~~: dropped (Kenth, 2026-11-11)
 
 ---
 

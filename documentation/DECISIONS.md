@@ -1,6 +1,6 @@
 # DECISIONS.md — Architectural Decision Log
 
-> **Last synced: 2026-07-27.**
+> **Last synced: 2026-11-12** (D43–D46 from the panel revisions, `results/panel-revisions/`).
 > D1–D29 come from the original architecture planning phase (v1–v8). D30+ were made during
 > implementation and are promoted here from the `.agents/` handoffs.
 >
@@ -14,7 +14,7 @@
 | # | Decision | Choice | Rationale Summary |
 |---|---|---|---|
 | 1 | Consumer threading model | `threading.Thread` + `queue.Queue` | I/O-bound consumers; GIL irrelevant for serial/TTS |
-| 2 | TTS engine | pyttsx3 / espeak-ng | < 1% CPU, < 50ms latency; utterances too short for neural TTS quality to matter |
+| 2 | TTS engine | pyttsx3 / espeak-ng | < 1% CPU, < 50ms latency; utterances too short for neural TTS quality to matter. **Amended by D45**: Filipino clips first, espeak-ng (English) as the fallback |
 | 3 | Serial protocol (ESP32) | Binary: `0xAA` + type + payload + XOR | Deterministic parsing on MCU, no string allocation |
 | 4 | Baud rate | 115,200 | < 1% wire capacity used; universally reliable |
 | 5 | ACK strategy | Non-blocking, 10ms timeout | Stale data worse than missing data in obstacle avoidance |
@@ -25,7 +25,7 @@
 | 10 | ~~Cooldown strategy~~ | ~~Per `"{label}-{zone}"` key, 3s default~~ | **SUPERSEDED by D30–D34** — replaced by layered suppression |
 | 11 | TTS scope | Detection only — no depth in speech | Prevents info overload; motors handle depth |
 | 12 | Motor mode | Proportional (all motors active) | Single-motor mode has dangerous corridor failure mode |
-| 13 | TTS phrasing | Short: `"person left"` | 0.6s per utterance; leaves silence between cooldowns |
+| 13 | TTS phrasing | Short: `"person left"` | 0.6s per utterance; leaves silence between cooldowns. **Amended by D45**: the same short phrases, spoken in Filipino from word clips |
 | 14 | ESP32 firmware | Teammate-owned; protocol spec provided | Independent development against the binary protocol spec |
 | 15 | Form factor | Head-mounted | Camera, motors, earpiece all on headband |
 | 16 | Target user | Visually impaired, **no white cane** | Earlier drafts assumed a cane fallback; corrected Sept 2026 — see D36 |
@@ -54,6 +54,11 @@
 | 39 | UAT work process | Requirements layer in `docs/testing/`; failsafes first; vision algorithms untouched | The working detection and depth chain is too risky to change; a crash or a silent failure matters more than a missing feature |
 | 40 | Strength knob at minimum | Knob multiplies motor commands; minimum = motors off | Team kept the current code (UAT D-14); the floor-preserving variant on `feat/depth-callback` must not come in by merge |
 | 41 | Failsafe alerts and the control panel switches | A failsafe alert is spoken or vibrated even when its switch is off, at the knob's level but never below 30 %, one time only | A safety alert nobody can perceive is not an alert; the switches go back as the wearer left them (UAT D-15) |
+| 42 | A failsafe alert in progress | It finishes; an object warning waits for it, and a due alert goes next | Under a stream of urgent warnings the alert was never heard (UAT D-16) |
+| 43 | Detector size | YOLOv8s kept | With depth beside it, only n and s hold both networks at 30 FPS on the chip; yolov8m slows the haptics and doubles detection delay in the app |
+| 44 | Measuring end-to-end delay | Opt-in log (`SV_LATENCY_LOG=1`), queue contract unchanged | Capture to motor command: median 108 ms, worst 219 ms with the real boards; the 13-class model keeps the 18 Oct real-time figures |
+| 45 | Spoken language | Filipino by default, from pre-made clips spliced per utterance; English espeak-ng for anything the clips cannot say whole | Three of six UAT interviewees asked for Filipino; eSpeak NG has no Filipino voice. Amends D2 and D13 |
+| 46 | Bicycle and tricycle | Announced by their own names, no longer as "vehicle" | A wrong word for a common road user (T-05); same weight and urgency as before |
 
 ---
 
@@ -375,3 +380,127 @@ once per repeat.
   replacing it in the mailbox slot.
 - Measured with a stub speaker (`tests/uat/test_t00a_alert_scheduler.py`): under urgent warnings arriving
   every 0.8, 0.3 or 0.1 s, the alert went from never heard to heard within 1.3 s.
+
+---
+
+## D43: YOLOv8s is kept as the detector size on RPi 5 + Hailo-8
+
+*Decided by the team, 2026-11-12 (Kenth, for the team), after the thesis panel asked whether YOLOv8s is the
+right size (Sir Franze #3). From on-device measurements on 2026-11-09 and 2026-11-11
+(`results/panel-revisions/session-a/RESULTS.md`).*
+
+**What**: the detector stays a YOLOv8s (the deployed 13-class build, `models/hef_v3/hef_deploy/best.hef`).
+
+**Why**:
+- **On the chip alone, with SC-DepthV3 beside it** (`hailortcli run2`, accelerator only, so upper bounds for
+  the app), the Model Zoo builds that kept both networks at or above 30 FPS (the camera cap) in every run
+  were only yolov8n (134.3 / 134.4 FPS) and yolov8s (121.7 / 121.8).
+  - yolov8m reached 27.6 / 27.7: above the 25 FPS real-time floor, below the cap.
+  - yolov8l (17.9) and yolov8x (12.8) fell below 25.
+  - The deployed build kept both at 89.1.
+- **Between the two that pass,** the Model Zoo lists yolov8s at 44.6 COCO mAP (float) against 37.0 for yolov8n.
+- **Inside the app, with depth on, for 30 minutes,** yolov8m against the deployed model:
+  - the depth branch (the haptics) ran below 29.5 FPS in 86 % of 15-frame windows, against 30 %;
+  - median camera-to-detection delay was 176 ms against 92;
+  - the Hailo chip ran about 10 °C hotter: a peak of 76.2 °C against 64.9.
+- **Neither throttled.** The chip's first throttling step is 104 °C, and the Pi's flags stayed 0x0.
+- **yolov8n and yolov8s** behaved like the deployed model in the app (about 30 FPS, about 92 ms).
+- **yolov8l and yolov8x** could not hold 25 FPS (21.7 and 15.8), with 1.3 s and 1.9 s detection delay.
+
+**Cost**:
+- **The Model Zoo's COCO figures** are for its 80-class builds, not for the team's 13-class model.
+- **The deployed build is slower than the Model Zoo's yolov8s:** 185.7 against 491.3 FPS alone. The reason is
+  not established (it would need the build's compile settings).
+- **Thirty minutes** cannot show the heat over longer use, in a hotter room, or inside an enclosure.
+
+---
+
+## D44: End-to-end delay is measured by an opt-in log; the 13-class model keeps the 18 Oct real-time figures
+
+*Decided by the team, 2026-11-12 (Kenth, for the team), for the panel's questions on the 13- against
+14-class model (Sir Franze #6) and the target latency (Mam Vanessa #1). From
+`results/panel-revisions/session-b/RESULTS.md`.*
+
+**What**:
+- **Timing** is measured by `core/latency_log.py`, switched on with `SV_LATENCY_LOG=1` and off by default. Off,
+  every hook is one `is None` test.
+- **It records,** on one monotonic clock:
+  - per motor command: camera capture → depth callback → serial worker → UART write, and the glasses board's
+    acknowledgements;
+  - per detection announcement: the track's first qualifying frame, the deciding frame, and speech start.
+- **The queue contract is unchanged** (AGENTS.md Rule 2): queued items are linked to their timings by
+  identity in a side table, never by new keys.
+
+**Measured, deployed 13-class model, both models on, 20 minutes, against 18 Oct (14-class):**
+- **Frame rate:** 29.6 FPS on average, both days; 15-frame windows median 30.0, p1 20.4 (20.2 on 18 Oct).
+- **Camera to depth callback:** median 106 ms, worst 158 (104 / 147 on 18 Oct).
+- **App CPU** 77 %; no throttling.
+- **With the real boards, camera to the motor command's UART write:** median 108 ms, p99 143, worst 219, over
+  33,769 commands. That is under the thesis target of 320 ms to vibration (Gao et al., 2025).
+- **The glasses board** acknowledges in about 1 ms (median 1.05 ms, 200 of 200).
+- **The roughly six-minute dips** to about 20 FPS (about 19 s each) appear on both days.
+- **The 12 detection tracker cases,** re-run on test-split images:
+  - wrong-class errors were rare (no cross-labelling in the confusion pairs);
+  - most misses were objects the model saw below the callback's 0.70 threshold;
+  - priority, nearest-instance, zones and hysteresis behaved as written whenever objects reached them.
+
+**Not measured**:
+- motor onset;
+- sound at the ear: the speech delay is stated as a limitation, with no number.
+
+---
+
+## D45: Filipino is the default spoken language, from pre-made clips; English espeak-ng is the fallback
+
+*Decided by the team, 2026-11-11 (Kenth, for the team), for the panel's comments on innovation
+(Sir Dante #5) and the learning curve (Mam Vanessa #3). Three of the six UAT interviewees asked for
+Filipino audio. Amends D2 and D13. Built 2026-11-12 (`results/panel-revisions/session-c/RESULTS.md`);
+verified by functional tests, not by the (frozen) UAT.*
+
+**What**:
+- **`SystemConfig.language` defaults to `"fil"`.** `--language en` gives English only.
+- **The speech worker is still handed English text,** and the queue contract is unchanged.
+  `core/fil_clips.py` turns it into pre-made clips:
+  - mode announcements and alerts are one sentence clip each (15);
+  - detection phrases are spliced from word clips (19): [maraming] [object] [pa rin | papunta] [direction].
+- **All or nothing:** anything the clips cannot say whole is spoken in English by espeak-ng, exactly as before.
+- **Playback:**
+  - Clips are joined with a short gap, scaled by the volume knob the way espeak-ng's `-a` is, written to RAM
+    (`/dev/shm`) and played by `pw-play`, the same PipeWire output espeak-ng uses. ALSA's default device on the
+    Pi is the HDMI port.
+  - Cuts, failsafe rules (D41, D42), pacing and the head-turn mute are unchanged.
+- **No TTS model on the device, no network at runtime, no new hardware.**
+- **The clips** are AI-generated by a team member (ElevenLabs first, edge-tts as fallback; the engine and voice
+  are recorded in `voice_info.txt` with the clips).
+- **Dropped or out of scope:**
+  - the audio tutorial mode (dropped);
+  - status-button and battery announcements (neither exists in the code);
+  - new sentences of any kind.
+
+**Why**: eSpeak NG has no Filipino voice, and a speech model on the Pi would add CPU, memory and a dependency
+for 34 fixed phrases. Splicing 34 clips covers all 208 detection phrases and every spoken sentence.
+
+**Cost**:
+- **Joined words** may sound less natural than a whole phrase. The gap is tuned by ear; one clip per whole
+  phrase (208 + 15) is the fallback if splicing sounds too choppy.
+- **A spoken string changed in the code** goes back to English until a clip is made. A test
+  (`tests/test_fil_clips.py`) fails when that happens.
+- **`pole`** (the 14-class model only) has no clip.
+
+---
+
+## D46: Bicycle and tricycle are announced by their own names
+
+*Decided by the team, 2026-11-11 (Kenth, for the team). Fixes UAT task T-05, recorded as a stop-gap in
+`docs/testing/DISAGREEMENTS.md`.*
+
+**What**:
+- **`DETECTION_CLASS_MAP`** maps `Bicycle` → `"bicycle"` and `Tricycle` → `"tricycle"` (both were `"vehicle"`).
+- **`core/priority.py`** gives both the weight (1.0) and centre-zone urgency `vehicle` gave them, so only the
+  spoken word changes.
+
+**Why**: "vehicle" for a bicycle or tricycle is a wrong word for two common road users, and the confusion-pair
+test cases (Motorcycle/Bicycle, Bicycle/Tricycle) can only be judged when each is named.
+
+**Built**: 2026-11-12. `tests/test_detection_classes.py` checks the names, and that a centred bicycle or
+tricycle is still urgent.

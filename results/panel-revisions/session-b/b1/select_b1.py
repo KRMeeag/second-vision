@@ -143,19 +143,27 @@ def main() -> int:
                          "images": {n: pick(single(NAMES.index(n), False), 3) for n in thin}}
 
     # TC-002-001: a person and a lower-priority class (the tracker's example: a trash bin). Comparable sizes, so the
-    # class is what decides: the larger box at most 2x the smaller.
+    # class is what decides: the larger box at most 2x the smaller. Lower priority = a class at core/priority.py's
+    # default weight (0.5, below Person's 0.7); Vehicle, Bicycle, Tricycle (1.0) and Motorcycle (0.9) outrank a
+    # person by design and are left out. Trash-bin images first, then other default-weight classes, 3 in all.
     P, TB = NAMES.index("Person"), NAMES.index("Trash Bins")
-    cands = []
+    default_weight = {NAMES.index(n) for n in ("Animals", "Doors", "Chairs", "Tables", "Potholes", "Trash Bins",
+                                                  "Stairs", "Bench")}
+    by_other = {"trash": [], "other": []}
     for s, d in data.items():
         ps = [b for b in d["boxes"] if b[0] == P]
-        ts = [b for b in d["boxes"] if b[0] == TB]
-        if len(ps) == 1 and len(ts) == 1 and len(d["boxes"]) == 2 and 70 <= d["brightness"] <= 190:
-            r = area(ps[0]) / max(area(ts[0]), 1e-9)
-            if 0.5 <= r <= 2 and min(area(ps[0]), area(ts[0])) >= 0.01:
-                cands.append(s)
-    sel["TC-002-001"] = {"rule": "exactly one Person and one Trash Bins box and nothing else; areas within 2x of each "
-                                 "other, each at least 1 % of the image; brightness 70-190; up to 3 at random",
-                         "candidates": len(cands), "images": pick(cands, 3)}
+        os_ = [b for b in d["boxes"] if b[0] != P]
+        if len(ps) == 1 and len(os_) == 1 and os_[0][0] in default_weight and 70 <= d["brightness"] <= 190:
+            r = area(ps[0]) / max(area(os_[0]), 1e-9)
+            if 0.5 <= r <= 2 and min(area(ps[0]), area(os_[0])) >= 0.01:
+                by_other["trash" if os_[0][0] == TB else "other"].append(s)
+    first = pick(by_other["trash"], 3)
+    sel["TC-002-001"] = {"rule": "exactly one Person box and one box of a default-weight class (Animals, Doors, Chairs, "
+                                 "Tables, Potholes, Trash Bins, Stairs, Bench) and nothing else; areas within 2x of "
+                                 "each other, each at least 1 % of the image; brightness 70-190; Trash Bins images "
+                                 "first (the tracker's example), then others at random, 3 in all",
+                         "candidates": {k: len(v) for k, v in by_other.items()},
+                         "images": first + pick(by_other["other"], 3 - len(first))}
 
     # TC-002-002: two people, one clearly nearer (box area at least 3x the other), both recognisable (>= 1 %).
     cands = []
@@ -192,20 +200,35 @@ def main() -> int:
     sel["TC-002-005"] = {"rule": "every image in the split with an empty label file", "images": empty}
 
     # TC-003-001: low light: the 3 darkest images (mean grey) with at least one object of at least 2 % area.
+    # Two tiers, decided after looking at the darkest three and before any model run: the darkest images in the
+    # split are almost black (mean grey 1-3 of 255), the harshest case; a moderate tier (mean grey 20-40) is
+    # closer to an ordinary night scene.
     cands = sorted((d["brightness"], s) for s, d in data.items()
                    if d["boxes"] and max(area(b) for b in d["boxes"]) >= 0.02 and d["brightness"] < 50)
-    sel["TC-003-001"] = {"rule": "the 3 darkest images (mean grey < 50) with at least one labelled object of at "
-                                 "least 2 % area", "candidates": len(cands), "images": [s for _, s in cands[:3]]}
-    used.update(sel["TC-003-001"]["images"])
+    darkest = [s for _, s in cands[:3]]
+    used.update(darkest)
+    moderate_cands = [s for s, d in data.items()
+                      if d["boxes"] and max(area(b) for b in d["boxes"]) >= 0.02 and 20 <= d["brightness"] <= 40]
+    sel["TC-003-001"] = {"rule": "darkest: the 3 darkest images with at least one labelled object of at least 2 % "
+                                 "area; moderate: 3 at random with mean grey 20-40 and the same object rule",
+                         "candidates": {"mean grey < 50": len(cands), "mean grey 20-40": len(moderate_cands)},
+                         "images": {"darkest": darkest, "moderate": pick(moderate_cands, 3)}}
 
     # TC-003-002: motion blur: lowest sharpness among strongly directional images, at least one object >= 2 %.
     cands = sorted((d["sharpness"], s) for s, d in data.items()
                    if d["boxes"] and max(area(b) for b in d["boxes"]) >= 0.02 and d["anisotropy"] >= 3
                    and 50 <= d["brightness"] <= 200 and s not in used)
+    shortlist = [s for _, s in cands[:6]]
+    # Inspected by eye before any model run (2026-11-12): in shortlist order, the door Door0126 is soft but has
+    # almost no texture (ambiguous), the trash can and the dog are smeared, the second door is soft, the car front
+    # is smeared horizontally, the dark cat is not visibly blurred. The first 3 clearly motion-blurred are used.
+    inspected = [s for s in shortlist if s.startswith(("roboflow_trashcan_detection_pihfn__20260309_093243",
+                                                       "open_images__80f3c607859a41f0", "open_images__2421a5d16f639507"))]
+    used.update(inspected)
     sel["TC-003-002"] = {"rule": "anisotropy >= 3 (one gradient direction at least 3x the other), brightness 50-200, "
-                                 "at least one object >= 2 %; the 6 least sharp, of which the first 3 that look "
-                                 "motion-blurred on inspection are used (recorded in RESULTS.md)",
-                         "candidates": len(cands), "images": [s for _, s in cands[:6]]}
+                                 "at least one object >= 2 %; of the 6 least sharp, the first 3 that look "
+                                 "motion-blurred on inspection", "candidates": len(cands), "shortlist": shortlist,
+                         "images": inspected}
 
     # TC-003-003: crowded: the 3 images with the most instances of one class.
     crowd = []

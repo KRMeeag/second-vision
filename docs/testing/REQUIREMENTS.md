@@ -65,7 +65,8 @@ don't exist (D-08).
 - Type: functional · Scope: IN · Priority: P2
 - Acceptance: 14 images, one per class; each returns its own label at > 0.5.
 - Resolved (team, 2026-10-12): reporting Bicycle and Tricycle as "vehicle" was a stop-gap
-  for the earlier model. Each class gets its own label. Today this fails until task T-05.
+  for the earlier model. Each class gets its own label. T-05 done 2026-11-12 (D46); the
+  current model has 13 classes (hef_v3, no Pole).
 
 **REQ-DET-02: Similar classes are not confused**
 - Statement: images of visually similar classes each return their own label.
@@ -74,7 +75,7 @@ don't exist (D-08).
 - Type: functional, edge-case · Scope: IN · Priority: P2
 - Acceptance: every confusion-pair image returns its own class. The workbook names only
   Motorcycle/Bicycle; other pairs are the tester's choice, logged in DEVIATIONS.md.
-- Note: depends on T-05, because Bicycle is currently reported as "vehicle".
+- Note: depended on T-05 (Bicycle was reported as "vehicle"); T-05 done 2026-11-12 (D46).
 
 **REQ-DET-03: Classes with the least training data are recognized too**
 - Statement: images of the class that had the fewest training examples ("thinnest-sourced")

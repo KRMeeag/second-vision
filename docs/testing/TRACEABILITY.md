@@ -109,18 +109,18 @@ case waits on.
 
 | UAT | Requirement | Subsystem | Task | Test | Status | Workbook | Evidence |
 |---|---|---|---|---|---|---|---|
-| TC-001-001 | REQ-DET-01 | `det` `model` | T-05 | rpi-hw · unit: `test_detection_classes.py::test_every_model_label_is_mapped` | TO-FIX | Passed *stale* | — |
-| TC-001-002 | REQ-DET-02 | `det` `model` | T-05 | rpi-hw | TO-FIX | Passed *stale* | — |
-| TC-001-003 | REQ-DET-03 | `det` `model` | — | rpi-hw | READY | Passed *stale* | — |
-| TC-002-001 | REQ-DET-04 | `det` `prio` | — | rpi-hw · unit: `test_detection_classes.py::test_off_list_class_cannot_outrank_an_on_list_one` (partial) | READY | Passed *stale* | — |
-| TC-002-002 | REQ-DET-05 | `det` `prio` | — | rpi-hw · unit: `test_priority.py::test_priority_monotonic_in_area` (partial) | READY | — | — |
-| TC-002-003 | REQ-DET-06 | `det` | — | rpi-hw | READY | Passed *stale* | — |
-| TC-002-004 | REQ-DET-07 | `det` | — | rpi-hw | READY | — | — |
-| TC-002-005 | REQ-DET-08 | `det` `model` | — | rpi-hw | READY | Failed *stale* | — |
-| TC-003-001 | REQ-DET-09 | `det` `model` | — | rpi-hw | READY | Passed *stale* | — |
-| TC-003-002 | REQ-DET-10 | `det` `model` | — | rpi-hw | READY | Passed *stale* | — |
-| TC-003-003 | REQ-DET-11 | `det` | — | rpi-hw | READY | — | — |
-| TC-003-004 | REQ-DET-12 | `det` `model` | — | rpi-hw | READY | Passed *stale* | — |
+| TC-001-001 | REQ-DET-01 | `det` `model` | T-05 (done 2026-11-12) | rpi-hw · unit: `test_detection_classes.py::test_every_model_label_is_mapped` | READY | Passed *stale* | B1 2026-11-12 (`results/panel-revisions/session-b/RESULTS.md`, test-split images, not a Tester report): 11 of 13 |
+| TC-001-002 | REQ-DET-02 | `det` `model` | T-05 (done 2026-11-12) | rpi-hw · unit: `test_detection_classes.py::test_centred_bicycle_and_tricycle_stay_urgent` | READY | Passed *stale* | B1 2026-11-12 (`results/panel-revisions/session-b/RESULTS.md`, test-split images, not a Tester report): no cross-labelling; 13 of 15 at > 0.5 |
+| TC-001-003 | REQ-DET-03 | `det` `model` | — | rpi-hw | READY | Passed *stale* | B1 2026-11-12 (session-b RESULTS.md, not a Tester report): 8 of 9 at > 0.5 (Doors, Trash Bins, Tricycle) |
+| TC-002-001 | REQ-DET-04 | `det` `prio` | — | rpi-hw · unit: `test_detection_classes.py::test_off_list_class_cannot_outrank_an_on_list_one` (partial) | READY | Passed *stale* | B1 2026-11-12 (session-b RESULTS.md, not a Tester report): 1 of 3; the person won whenever both reached the callback |
+| TC-002-002 | REQ-DET-05 | `det` `prio` | — | rpi-hw · unit: `test_priority.py::test_priority_monotonic_in_area` (partial) | READY | — | B1 2026-11-12 (session-b RESULTS.md, not a Tester report): 2 of 3 announced the nearer person |
+| TC-002-003 | REQ-DET-06 | `det` | — | rpi-hw | READY | Passed *stale* | B1 2026-11-12 (session-b RESULTS.md, not a Tester report): 2 of 3; the left image's door got no box |
+| TC-002-004 | REQ-DET-07 | `det` | — | rpi-hw | READY | — | B1 2026-11-12 (session-b RESULTS.md, not a Tester report): the code keeps the previous zone (brief); the workbook's "must not flag" disagrees with the code |
+| TC-002-005 | REQ-DET-08 | `det` `model` | — | rpi-hw | READY | Failed *stale* | B1 2026-11-12 (session-b RESULTS.md, not a Tester report): 2 false alarms in 363 really empty images; 14 more announcements were real unlabelled objects |
+| TC-003-001 | REQ-DET-09 | `det` `model` | — | rpi-hw | READY | Passed *stale* | B1 2026-11-12 (session-b RESULTS.md, not a Tester report): darkest 1 of 3, moderate low light 2 of 3 |
+| TC-003-002 | REQ-DET-10 | `det` `model` | — | rpi-hw | READY | Passed *stale* | B1 2026-11-12 (session-b RESULTS.md, not a Tester report): 3 of 3 |
+| TC-003-003 | REQ-DET-11 | `det` | — | rpi-hw | READY | — | B1 2026-11-12 (session-b RESULTS.md, not a Tester report): 0 of 3 reach 70 % (tiny, distant instances) |
+| TC-003-004 | REQ-DET-12 | `det` `model` | — | rpi-hw | READY | Passed *stale* | B1 2026-11-12 (session-b RESULTS.md, not a Tester report): 1 of 3 |
 
 ### M02 Depth estimation
 
@@ -277,8 +277,8 @@ case waits on.
 
 | Status | Cases | Of which P1 |
 |---|---|---|
-| READY | 76 | 21: the 5 older ones (TC-018-003, TC-022-001, TC-023-001, TC-024-001, TC-025-001) plus the 16 the demo track built (TC-022-002 to 007, TC-023-007, TC-024-002 to 004, TC-025-002 to 007). **Built is not verified:** none of the 16 has a Tester report yet |
-| TO-FIX | 4 | 2 (TC-023-002, TC-023-004: alert built, settings saving T-02a not built); the other 2 are T-05 (TC-001-001, TC-001-002) |
+| READY | 78 | 21: the 5 older ones (TC-018-003, TC-022-001, TC-023-001, TC-024-001, TC-025-001) plus the 16 the demo track built (TC-022-002 to 007, TC-023-007, TC-024-002 to 004, TC-025-002 to 007). **Built is not verified:** none of the 16 has a Tester report yet |
+| TO-FIX | 2 | 2 (TC-023-002, TC-023-004: alert built, settings saving T-02a not built). *2026-11-12: TC-001-001 and TC-001-002 moved to READY when T-05 was built* |
 | NOT-BUILT | 7 | 0 (the battery and shutdown cases TC-028 and TC-029, T-06 and T-07) |
 | DEFERRED | 2 | — |
 | OUT-SCOPE | 3 | — |

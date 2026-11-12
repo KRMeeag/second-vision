@@ -92,6 +92,8 @@ folder. Add a name to each when the team confirms it.
   - Reporting Bicycle and Tricycle as "vehicle" **needs to be fixed** (task T-05). Confirmed
     2026-10-12: the merge was a stop-gap for the earlier model; each of the 14 classes gets
     its own spoken label.
+    **Done 2026-11-12** (decision D46 in `documentation/DECISIONS.md`): Bicycle → "bicycle",
+    Tricycle → "tricycle", with the weight and urgency "vehicle" gave them.
   - Cup and laptop are replaced by in-model classes when tested, logged in DEVIATIONS.md.
 - **Workbook change:** "13" becomes "14". Replace cup and laptop in TC-013-001 and 013-002.
 

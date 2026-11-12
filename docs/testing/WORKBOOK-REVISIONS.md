@@ -74,7 +74,7 @@ Hardware names in the sheet (IMX291 camera, ESP32 boards, UART on the GPIO pins)
 ### M01 Object Detection
 
 **TC-001-001** · row 16 · **Revise + re-run** · D-06, D-08, W-21, REQ-DET-01
-- Finding: The model has 14 classes, not 13. Steps name ./scripts/setup_env.sh and ./tests/obj_det_unit/*.py; neither exists in any repo on the Pi. The Passed result was recorded before the 14-class model was added (2026-10-11). Bicycle and Tricycle are both spoken as "vehicle" today, so this fails until that is fixed.
+- Finding: The model has 14 classes, not 13. Steps name ./scripts/setup_env.sh and ./tests/obj_det_unit/*.py; neither exists in any repo on the Pi. The Passed result was recorded before the 14-class model was added (2026-10-11). Bicycle and Tricycle are both spoken as "vehicle" today, so this fails until that is fixed. *Update 2026-11-12: fixed (T-05, D46); the deployed model now has 13 classes (no Pole); re-run on test-split images in B1 2026-11-12 (`results/panel-revisions/session-b/RESULTS.md`, test-split images, not a Tester report): 11 of 13 images correct at > 0.5.*
 - Steps (B) →  1. Open the second-vision repo  2. Activate the environment: source my_hailo_env/bin/activate  3. Run this case's UAT test in tests/uat/ (file name to be filled in when the test is added)
 - Input (C) →  Load the 14-image batch (one image per model class: Person, Vehicle, Motorcycle, Pole, Animals, Doors, Chairs, Tables, Tricycle, Potholes, Trash Bins, Bicycle, Stairs, Bench; single centred object, clear conditions) and run each through the object detection callback.
 - Expected (D) →  All 14 images return their own class label with confidence > 0.5.
@@ -82,7 +82,7 @@ Hardware names in the sheet (IMX291 camera, ESP32 boards, UART on the GPIO pins)
 - Repo status now: TO-FIX: built; needs a fix first. Repo-side work: Task T-05: give every class its own spoken label (Bicycle and Tricycle stop being "vehicle"). Then: Write an automated test on the Pi that runs this case's images through the real detection callback, then verify it and save the log as evidence. No code change planned. Needs the team's test images (none are in the repo). Queued after the P1 (failsafe) tasks.
 
 **TC-001-002** · row 17 · **Revise + re-run** · D-06, D-08, W-21, REQ-DET-02
-- Finding: Steps name ./scripts/setup_env.sh and ./tests/obj_det_unit/*.py; neither exists in any repo on the Pi. Only one confusion pair is named. Passed was recorded before the 14-class model. Bicycle is spoken as "vehicle" until T-05.
+- Finding: Steps name ./scripts/setup_env.sh and ./tests/obj_det_unit/*.py; neither exists in any repo on the Pi. Only one confusion pair is named. Passed was recorded before the 14-class model. Bicycle is spoken as "vehicle" until T-05. *Update 2026-11-12: T-05 done (D46); re-run in B1 2026-11-12 (`results/panel-revisions/session-b/RESULTS.md`, test-split images, not a Tester report): no cross-labelling in the three pairs; 13 of 15 images at > 0.5.*
 - Steps (B) →  1. Open the second-vision repo  2. Activate the environment: source my_hailo_env/bin/activate  3. Run this case's UAT test in tests/uat/ (file name to be filled in when the test is added)
 - Input (C) →  Load the confusion-pair test images (Motorcycle/Bicycle, Bicycle/Tricycle, Chairs/Bench) and run each through the callback.
 - Actual/Status (E/F) →  Clear the recorded Passed, or comment "re-run needed".
