@@ -476,6 +476,22 @@ def _glib_main_loop_guard(request, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _no_filipino_clip_bank(monkeypatch):
+    """
+    Give every test an EMPTY Filipino clip bank (core/fil_clips.py), so the speech worker speaks
+    everything with espeak-ng exactly as it did before the clips existed, and no test plays the
+    clips shipped in assets/audio/fil through the earphones. A test that wants clips installs its
+    own bank with monkeypatch (tests/test_fil_clips.py). In-process only: an app started as a
+    subprocess loads its bank as on the device.
+    """
+    try:
+        from second_vision.core import fil_clips
+    except ImportError:                  # a checkout without fil_clips: nothing to keep quiet
+        return
+    monkeypatch.setattr(fil_clips, "_bank", fil_clips.ClipBank.empty())
+
+
 # ============================================================
 # Fixtures: GStreamer
 # ============================================================

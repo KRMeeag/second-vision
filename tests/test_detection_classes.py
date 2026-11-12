@@ -3,7 +3,7 @@ Unit tests for the detection class set (callbacks.DETECTION_CLASS_MAP).
 
 Three guarantees:
   * Off-list labels never reach tracking state, the overlay or TTS, and
-    on-list ones arrive under their mapped name ("Tricycle" -> "vehicle").
+    on-list ones arrive under their mapped name ("Trash Bins" -> "trash bin").
   * core/priority.py's class tables are keyed on the mapped names. A raw model
     label there never matches and silently drops a class to the default weight
     or out of the urgent tier — the regression this file exists to catch.
@@ -172,8 +172,8 @@ def test_off_list_class_cannot_outrank_an_on_list_one(run_frame):
 @pytest.mark.parametrize("model_label,mapped", [
     ("Person", "person"),
     ("Vehicle", "vehicle"),
-    ("Bicycle", "vehicle"),
-    ("Tricycle", "vehicle"),
+    ("Bicycle", "bicycle"),
+    ("Tricycle", "tricycle"),
     ("Motorcycle", "motorcycle"),
     ("Animals", "animal"),
     ("Chairs", "chair"),
@@ -200,13 +200,23 @@ def test_centred_vehicle_is_still_urgent_after_mapping(run_frame):
     assert payload["tier"] == TIER_URGENT
 
 
+@pytest.mark.parametrize("model_label,mapped", [("Bicycle", "bicycle"), ("Tricycle", "tricycle")])
+def test_centred_bicycle_and_tricycle_stay_urgent(run_frame, model_label, mapped):
+    # Until 2026-11-11 both were announced as "vehicle", which is urgent when centred.
+    # Naming them separately must not change their tier.
+    ud = run_frame([_Det(model_label, 1, confidence=0.75, size=0.05)])
+    payload = ud.tts_queue.peek()
+    assert payload["label"] == mapped
+    assert payload["tier"] == TIER_URGENT
+
+
 # ============================================================
 # Vocabulary consistency between callbacks.py and priority.py
 # ============================================================
 def test_map_emits_exactly_the_agreed_classes():
     assert set(callbacks.DETECTION_CLASS_MAP.values()) == {
-        "person", "table", "vehicle", "chair", "animal", "motorcycle", "bench",
-        "pole", "door", "pothole", "stairs", "trash bin",
+        "person", "table", "vehicle", "bicycle", "tricycle", "chair", "animal", "motorcycle",
+        "bench", "pole", "door", "pothole", "stairs", "trash bin",
     }
 
 

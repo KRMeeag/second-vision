@@ -1,0 +1,9 @@
+# waiting for the panel to report M:both, from 2026-11-12T06:46:55+08:00
+06:47:04 S:tts_enabled:1
+06:47:04 S:vibration_enabled:1
+06:47:04 S:motor_strength:0.37
+06:47:04 M:both
+06:47:04 panel reports both rockers ON
+# b3-realboards-20min start 2026-11-12T06:47:06+08:00; Pi 49.6 C
+# b3-realboards-20min perf_run exit 0 2026-11-12T07:07:10+08:00
+# b3-realboards-20min done 2026-11-12T07:07:11+08:00

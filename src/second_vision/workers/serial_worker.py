@@ -8,6 +8,8 @@ import time
 from second_vision.core.alerts import failsafe_level
 from second_vision.core.connections import glasses_back, glasses_lost
 from second_vision.core.haptic_patterns import felt_duty
+# Measurement only: latency_log.LOG is None unless SV_LATENCY_LOG=1 (core/latency_log.py).
+from second_vision.core import latency_log
 
 # Guarded like every other optional dependency in this project: a missing
 # pyserial must degrade to "no board attached", not take the whole pipeline
@@ -191,6 +193,8 @@ def serial_worker(user_data, config):
         # so checking immediately after a write would measure the round trip
         # rather than the link.
         ack_seen = _check_ack(port)
+        if latency_log.LOG is not None:
+            latency_log.LOG.haptic_ack(ack_seen and port is not None)
 
         # Independent of ACK/link-health bookkeeping below: whatever BMI160
         # reading _check_ack staged from this same drain, publish it for any
@@ -265,6 +269,7 @@ def serial_worker(user_data, config):
         except queue.Empty:
             last_write_at = _heartbeat_if_due(port, last_write_at)
             continue
+        lat_rec = latency_log.LOG.haptic_dequeued(depth) if latency_log.LOG is not None else None
 
         if not config.get("vibration_enabled"):
             # Say "stop" once, then fall back to heartbeats. Previously this
@@ -297,7 +302,9 @@ def serial_worker(user_data, config):
 
         # Send motor update
         packet = _pack_motor_update(left, center, right)
-        _send_packet(port, packet)
+        sent = _send_packet(port, packet)
+        if lat_rec is not None:
+            latency_log.LOG.haptic_written(lat_rec, sent, depth["left"], depth["center"], depth["right"])
         # Any packet resets the ESP32's watchdog, so a steady frame rate means
         # heartbeats are never needed — they exist for the gaps, not the flow.
         last_write_at = time.monotonic()

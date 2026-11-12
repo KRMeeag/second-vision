@@ -1,0 +1,21 @@
+run: perf-b3-realboards-20min
+detection model (from the app's log): /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef
+app's own averages at the last [DEPTH] line (since start, hide dips): depth 29.6 / det 29.7 FPS
+
+DETECTION branch, frame rate per 15 frames (after the first 60 s): 2254 windows: median 30.0, p5 28.4, p1 21.0, min 19.2 FPS, stdev 1.64; windows under 29.5 FPS: 721, under 25: 61; longest window 1.00 s (15 frames at 30 FPS take 0.50 s)
+DETECTION branch, camera-to-detection-callback delay: median 91 ms, p95 117, p99 124, max 152 (2254 readings)
+DEPTH branch, frame rate per 15 frames (after the first 60 s): 2247 windows: median 30.0, p5 28.5, p1 20.4, min 18.0 FPS, stdev 1.69; windows under 29.5 FPS: 690, under 25: 58; longest window 1.02 s (15 frames at 30 FPS take 0.50 s)
+DEPTH branch, camera-to-depth-callback delay: median 106 ms, p95 129, p99 136, max 158 (2252 readings)
+
+camera losses ("Camera lost (error ..." to "Camera back:"): 0, 0.0 s without vision in total; speech lines spoken ([TTS]): 0
+EXCLUDING windows that overlap a camera loss (or start within 5 s of it ending):
+  DETECTION frame rate: 2254 windows: median 30.0, p5 28.4, p1 21.0, min 19.2 FPS, stdev 1.64; windows under 29.5 FPS: 721, under 25: 61; longest window 1.00 s (15 frames at 30 FPS take 0.50 s)
+  DETECTION delay: median 91 ms, p95 117, p99 124, max 152 (2255 readings)
+  DEPTH frame rate: 2247 windows: median 30.0, p5 28.5, p1 20.4, min 18.0 FPS, stdev 1.69; windows under 29.5 FPS: 690, under 25: 58; longest window 1.02 s (15 frames at 30 FPS take 0.50 s)
+  DEPTH delay: median 106 ms, p95 129, p99 136, max 158 (2252 readings)
+
+Pi SoC temperature (every 10 s): start 51.8, max 63.9, end 60.0 C; trend over the last 10 min +0.50 C per 10 min
+Pi throttle flags seen: 0x0; CPU clock below its maximum in 4 of 120 samples
+app CPU: mean 77.2 % of one core (min 59.0, max 81.3); app memory 195 -> 204 MB
+Hailo-8 chip temperature (hotter of its 2 sensors, every 10 s): start 51.3, max 60.7, end 60.7 C; trend over the last 10 min +1.66 C per 10 min (119 readings)
+Hailo sampler notes: thermal protection enabled: True

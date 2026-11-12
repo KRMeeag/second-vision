@@ -1,0 +1,21 @@
+run: perf-b3-realboards-20min
+detection model (from the app's log): /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef
+app's own averages at the last [DEPTH] line (since start, hide dips): depth 29.6 / det 48.8 FPS
+
+DETECTION branch, frame rate per 15 frames (after the first 60 s): no windows
+DETECTION branch, camera-to-detection-callback delay: no readings
+DEPTH branch, frame rate per 15 frames (after the first 60 s): 2213 windows: median 30.0, p5 29.8, p1 20.4, min 19.4 FPS, stdev 1.57; windows under 29.5 FPS: 70, under 25: 64; longest window 0.77 s (15 frames at 30 FPS take 0.50 s)
+DEPTH branch, camera-to-depth-callback delay: median 80 ms, p95 101, p99 104, max 109 (2217 readings)
+
+camera losses ("Camera lost (error ..." to "Camera back:"): 4, 17.5 s without vision in total; speech lines spoken ([TTS]): 49
+EXCLUDING windows that overlap a camera loss (or start within 5 s of it ending):
+  DETECTION frame rate: no windows
+  DETECTION delay: no readings
+  DEPTH frame rate: 2187 windows: median 30.0, p5 29.8, p1 20.4, min 19.4 FPS, stdev 1.58; windows under 29.5 FPS: 70, under 25: 64; longest window 0.77 s (15 frames at 30 FPS take 0.50 s)
+  DEPTH delay: median 80 ms, p95 101, p99 104, max 109 (2191 readings)
+
+Pi SoC temperature (every 10 s): start 55.1, max 59.5, end 56.8 C; trend over the last 10 min +0.11 C per 10 min
+Pi throttle flags seen: 0x0; CPU clock below its maximum in 9 of 120 samples
+app CPU: mean 57.2 % of one core (min 33.5, max 63.1); app memory 160 -> 192 MB
+Hailo-8 chip temperature (hotter of its 2 sensors, every 10 s): start 54.8, max 54.8, end 53.0 C; trend over the last 10 min +0.04 C per 10 min (119 readings)
+Hailo sampler notes: thermal protection enabled: True

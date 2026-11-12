@@ -138,6 +138,11 @@ def main():
              "text at 9600 one-way, the motor board binary at 115200. Omit to "
              "run with no panel attached.",
     )
+    pre_parser.add_argument(
+        "--language", choices=("fil", "en"), default=None,
+        help="Spoken language: fil (default: pre-made Filipino clips, English for anything they "
+             "cannot say) or en (English espeak-ng only). For tests and demos.",
+    )
     pre_args, remaining = pre_parser.parse_known_args()
 
     # Mock mode is reachable ONLY by --mock (decision D-13, REQ-CON-08). It used to start
@@ -164,6 +169,8 @@ def main():
         config.update(serial_baudrate=pre_args.serial_baud)
     if pre_args.config_port:
         config.update(config_port=pre_args.config_port)
+    if pre_args.language:
+        config.update(language=pre_args.language)
 
     # 2. Shared user data
     user_data = SecondVisionUserData(config)

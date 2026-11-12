@@ -1,0 +1,21 @@
+run: perf-b3-standin-1min
+detection model (from the app's log): /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef
+app's own averages at the last [DEPTH] line (since start, hide dips): depth 29.6 / det 29.7 FPS
+
+DETECTION branch, frame rate per 15 frames (after the first 60 s): 59 windows: median 30.0, p5 28.5, p1 28.3, min 28.3 FPS, stdev 0.95; windows under 29.5 FPS: 18, under 25: 0; longest window 0.53 s (15 frames at 30 FPS take 0.50 s)
+DETECTION branch, camera-to-detection-callback delay: median 87 ms, p95 107, p99 113, max 113 (59 readings)
+DEPTH branch, frame rate per 15 frames (after the first 60 s): 60 windows: median 29.9, p5 28.7, p1 27.5, min 27.5 FPS, stdev 0.86; windows under 29.5 FPS: 19, under 25: 0; longest window 0.55 s (15 frames at 30 FPS take 0.50 s)
+DEPTH branch, camera-to-depth-callback delay: median 109 ms, p95 120, p99 144, max 144 (61 readings)
+
+camera losses ("Camera lost (error ..." to "Camera back:"): 0, 0.0 s without vision in total; speech lines spoken ([TTS]): 0
+EXCLUDING windows that overlap a camera loss (or start within 5 s of it ending):
+  DETECTION frame rate: 59 windows: median 30.0, p5 28.5, p1 28.3, min 28.3 FPS, stdev 0.95; windows under 29.5 FPS: 18, under 25: 0; longest window 0.53 s (15 frames at 30 FPS take 0.50 s)
+  DETECTION delay: median 84 ms, p95 107, p99 113, max 113 (60 readings)
+  DEPTH frame rate: 60 windows: median 29.9, p5 28.7, p1 27.5, min 27.5 FPS, stdev 0.86; windows under 29.5 FPS: 19, under 25: 0; longest window 0.55 s (15 frames at 30 FPS take 0.50 s)
+  DEPTH delay: median 109 ms, p95 120, p99 144, max 144 (61 readings)
+
+Pi SoC temperature (every 10 s): start 52.9, max 56.2, end 56.2 C; trend over the last 10 min n/a (run under 15 min)
+Pi throttle flags seen: 0x0; CPU clock below its maximum in 0 of 9 samples
+app CPU: mean 78.0 % of one core (min 75.9, max 81.2); app memory 196 -> 200 MB
+Hailo-8 chip temperature (hotter of its 2 sensors, every 10 s): start 51.0, max 54.7, end 54.7 C; trend over the last 10 min n/a (run under 15 min) (8 readings)
+Hailo sampler notes: thermal protection enabled: True

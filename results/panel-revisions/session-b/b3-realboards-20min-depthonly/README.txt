@@ -1,0 +1,1 @@
+First real-boards run, 2026-11-12 05:04-05:24: the panel's DETECT rocker read OFF, so the app ran depth only (mode depth). Haptic timings valid; FPS/CPU/temperature not comparable with 18 Oct. Superseded by b3-realboards-20min.

@@ -95,6 +95,8 @@ from second_vision.core.priority import (
     compute_priority,
     compute_tier,
 )
+# Measurement only: latency_log.LOG is None unless SV_LATENCY_LOG=1 (core/latency_log.py).
+from second_vision.core import latency_log
 
 # ---- Object detection tuning ----
 CONFIDENCE_THRESHOLD = 0.70
@@ -124,13 +126,14 @@ DISPLAY_PHRASE_HOLD_SECONDS = 2.0    # How long an event phrase stays on the deb
 # Keys are the trained names, capitalised. A missing labels.json makes the
 # postprocess emit lowercase COCO names instead, which match nothing here —
 # detection goes silent rather than announcing a pole as "motorcycle".
-# "vehicle" keeps the old COCO-era grouping: bicycles (and now tricycles) are
-# vehicles, motorcycle stays its own class.
+# Bicycle and Tricycle are announced under their own names, not grouped into
+# "vehicle"; motorcycle stays its own class. In core/priority.py they keep the
+# weight and urgency "vehicle" gave them, so only the spoken word changes.
 DETECTION_CLASS_MAP = {
     "Person": "person",
     "Vehicle": "vehicle",
-    "Bicycle": "vehicle",
-    "Tricycle": "vehicle",
+    "Bicycle": "bicycle",
+    "Tricycle": "tricycle",
     "Motorcycle": "motorcycle",
     "Animals": "animal",
     "Chairs": "chair",
@@ -208,10 +211,28 @@ def _log_det_window(element, buffer, user_data) -> None:
     except Exception:
         pass
 
+
+# Measurement only (SV_LATENCY_LOG=1): camera capture time of the depth frame being processed, set
+# at the top of on_depth_frame and read by _publish_motors on the same (GStreamer) thread.
+_depth_capture_mono = None
+
+
+def _capture_mono(element, buffer):
+    """
+    The camera capture time of this frame on time.monotonic()'s clock: now minus the frame's age
+    (_pipeline_latency_ms). None if the pipeline has no clock yet. Measurement only.
+    """
+    age_ms = _pipeline_latency_ms(element, buffer)
+    return None if age_ms is None else time.monotonic() - age_ms / 1000.0
+
 def on_depth_frame(element, buffer, user_data):
     """Process depth results. Runs in GStreamer thread — must be fast."""
     if buffer is None:
         return
+
+    if latency_log.LOG is not None:
+        global _depth_capture_mono
+        _depth_capture_mono = _capture_mono(element, buffer)
 
     if HAILO_AVAILABLE:
         if not DEPTH_POSTPROC_AVAILABLE:
@@ -526,6 +547,11 @@ def _process_real_detections(element, buffer, user_data):
     now = time.time()
     frame_count = user_data.get_count()
 
+    # Measurement only (SV_LATENCY_LOG=1): this frame's capture time, and the track of each candidate.
+    lat_log = latency_log.LOG
+    lat_capture = _capture_mono(element, buffer) if lat_log is not None else None
+    lat_candidates = []
+
     # A fast head turn makes every tracked object appear to slide sideways
     # together; suppress "leaving center" announcements for a bit so it isn't
     # misread as every object simultaneously walking out of frame.
@@ -604,6 +630,10 @@ def _process_real_detections(element, buffer, user_data):
         if now - first_seen < MIN_CONFIRMATION_SECONDS:
             should_announce = False
 
+        if lat_log is not None and first_seen == now:
+            # First frame this track passed the confidence threshold: the confirmation window starts.
+            lat_log.track_first_seen(track_id, lat_capture)
+
         track_history[track_id] = {
             "zone": zone,
             "label": label,
@@ -633,6 +663,8 @@ def _process_real_detections(element, buffer, user_data):
 
         if should_announce:
             candidates.append((priority, tier, confidence, label, zone, phrase))
+            if lat_log is not None:
+                lat_candidates.append((track_id, last_announced is None))
 
     # Forget tracks the tracker hasn't updated recently, so zone hysteresis and
     # cooldown state don't leak onto an unrelated object that later reuses the ID.
@@ -668,7 +700,8 @@ def _process_real_detections(element, buffer, user_data):
     # then bbox area). Cross-frame competition is handled downstream by the
     # PriorityMailbox + the worker's preemption, so a runner-up simply wins on a
     # later frame — persistent objects re-emit every frame from track_history.
-    priority, tier, confidence, label, zone, phrase = max(candidates, key=lambda c: c[0])
+    winner = max(candidates, key=lambda c: c[0])
+    priority, tier, confidence, label, zone, phrase = winner
     payload = {
         "label": label,
         "zone": zone,
@@ -685,6 +718,13 @@ def _process_real_detections(element, buffer, user_data):
         payload["phrase"] = f"multiple {phrase or f'{label} {zone}'}"
     elif phrase:
         payload["phrase"] = phrase
+
+    if lat_log is not None:
+        track_id, first_announcement = lat_candidates[candidates.index(winner)]
+        lat_log.tag(payload, "audio", track_id=track_id, label=label, zone=zone,
+                    phrase=payload.get("phrase", ""), tier=tier, first_announcement=first_announcement,
+                    first_capture_mono=lat_log.track_first(track_id), decision_capture_mono=lat_capture,
+                    decision_mono=time.monotonic())
 
     # offer() never blocks or raises: the mailbox keeps the higher-priority of
     # {pending, this}, so a busy TTS worker gets the most urgent item, not a stale one.
@@ -780,6 +820,9 @@ def _publish_motors(user_data, motors, hazard=False, severity=0) -> None:
         "hazard": hazard,
         "hazard_severity": severity,
     }
+    if latency_log.LOG is not None:
+        latency_log.LOG.tag(packet, "haptic", capture_mono=_depth_capture_mono,
+                            queued_mono=time.monotonic())
     try:
         user_data.serial_queue.put_nowait(packet)
     except queue.Full:

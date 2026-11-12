@@ -1,0 +1,1 @@
+2026-11-12T04:42:06+08:00 PipeWire default sink (USB Audio, earphones) volume 0.78 -> 0.25 at Kenth's request (quieter during the B3 runs); restore with: wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.78

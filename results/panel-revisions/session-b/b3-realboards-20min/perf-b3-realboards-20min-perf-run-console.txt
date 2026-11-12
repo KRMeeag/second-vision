@@ -1,0 +1,165 @@
+perf_run b3-realboards-20min
+kernel: Linux 6.12.62+rpt-rpi-2712 aarch64
+HailoRT: HailoRT-CLI version 4.23.0
+code: the development tree; files changed in src/scripts and not committed:
+M src/second_vision/pipeline/callbacks.py
+ M src/second_vision/workers/serial_worker.py
+ M src/second_vision/workers/tts_worker.py
+?? src/second_vision/core/latency_log.py
+model file: -rw-rw-r-- 1 sv-rpi5 sv-rpi5 9745854 Oct 19 19:26 /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/models/hef_v3/hef_deploy/best.hef
+holders of /dev/hailo0 (sudo -n fuser -v, read-only): 
+before: temp=51.6'C, throttled=0x0 (0x0 = never throttled since boot)
+run: 1200 s, headless like the boot service, NPU monitor sampling off; hailort_service has HAILO_MONITOR=0; boards: real glasses and panel
+battery at the start (X1202 gauge): 97.5 % by the gauge, 4.166 V, the charger is IN
+app running (pid 373994); sampling for 1200 s
+    10 s   51.8 C    2400/2400 MHz  cores 26 28 31 25      mem   4303 MB  app cpu    75%  app rss   195 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+    20 s   54.0 C    2400/2400 MHz  cores 24 28 32 26      mem   4307 MB  app cpu    76%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+    30 s   55.1 C    2400/2400 MHz  cores 23 32 28 24      mem   4265 MB  app cpu    77%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+    40 s   55.6 C    2400/2400 MHz  cores 23 30 28 26      mem   3222 MB  app cpu    76%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+    50 s   54.5 C    2400/2400 MHz  cores 23 28 24 27      mem   3171 MB  app cpu    76%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+    60 s   54.5 C    2400/2400 MHz  cores 25 30 24 24      mem   3149 MB  app cpu    76%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+    70 s   54.5 C    2400/2400 MHz  cores 28 29 30 28      mem   3143 MB  app cpu    76%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+    80 s   55.6 C    2400/2400 MHz  cores 34 31 27 26      mem   3144 MB  app cpu    77%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+    90 s   57.3 C    2400/2400 MHz  cores 25 28 25 26      mem   3176 MB  app cpu    77%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+   100 s   57.3 C    2400/2400 MHz  cores 20 30 24 26      mem   3170 MB  app cpu    77%  app rss   200 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+   110 s   56.8 C    2400/2400 MHz  cores 24 26 28 28      mem   3159 MB  app cpu    77%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+   120 s   56.2 C    2400/2400 MHz  cores 24 28 30 24      mem   3150 MB  app cpu    78%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+   130 s   57.9 C    2400/2400 MHz  cores 26 28 24 29      mem   3146 MB  app cpu    77%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+   140 s   56.8 C    1900/2400 MHz  cores 24 28 29 26      mem   3155 MB  app cpu    78%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+   150 s   57.9 C    2400/2400 MHz  cores 26 29 33 28      mem   3152 MB  app cpu    77%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+   160 s   57.9 C    2400/2400 MHz  cores 35 26 28 30      mem   3157 MB  app cpu    77%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+   170 s   57.9 C    2400/2400 MHz  cores 23 25 26 27      mem   3158 MB  app cpu    77%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+   180 s   58.4 C    2400/2400 MHz  cores 21 27 29 22      mem   3156 MB  app cpu    77%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+   191 s   59.5 C    2400/2400 MHz  cores 24 28 23 27      mem   3163 MB  app cpu    78%  app rss   199 MB  throttled 0x0  battery  97.5 % 4.165 V CHARGER IN
+   201 s   57.9 C    2400/2400 MHz  cores 22 26 32 26      mem   3162 MB  app cpu    77%  app rss   199 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   211 s   59.5 C    2400/2400 MHz  cores 22 24 29 31      mem   3156 MB  app cpu    77%  app rss   199 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   221 s   59.5 C    2400/2400 MHz  cores 28 30 31 28      mem   3172 MB  app cpu    78%  app rss   199 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   231 s   59.5 C    2400/2400 MHz  cores 28 27 31 28      mem   3170 MB  app cpu    77%  app rss   200 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   241 s   59.0 C    2400/2400 MHz  cores 37 29 29 27      mem   3166 MB  app cpu    78%  app rss   200 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   251 s   59.0 C    2400/2400 MHz  cores 28 27 28 33      mem   3185 MB  app cpu    79%  app rss   200 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   261 s   59.5 C    2400/2400 MHz  cores 24 31 34 31      mem   3178 MB  app cpu    78%  app rss   200 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   271 s   59.0 C    2400/2400 MHz  cores 28 30 29 30      mem   3181 MB  app cpu    79%  app rss   201 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   281 s   57.3 C    1900/2400 MHz  cores 22 30 28 28      mem   3187 MB  app cpu    78%  app rss   201 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   291 s   59.5 C    2400/2400 MHz  cores 26 33 25 24      mem   3174 MB  app cpu    78%  app rss   201 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   301 s   58.4 C    2400/2400 MHz  cores 26 30 28 30      mem   3186 MB  app cpu    78%  app rss   201 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   311 s   60.0 C    2400/2400 MHz  cores 31 31 29 33      mem   3188 MB  app cpu    78%  app rss   201 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   321 s   59.0 C    2400/2400 MHz  cores 64 59 57 59      mem   3940 MB  app cpu    62%  app rss   201 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   331 s   58.4 C    2400/2400 MHz  cores 23 18 25 22      mem   3723 MB  app cpu    66%  app rss   201 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   341 s   60.0 C    2400/2400 MHz  cores 24 28 27 28      mem   3687 MB  app cpu    78%  app rss   201 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   351 s   59.0 C    2400/2400 MHz  cores 26 32 26 27      mem   3671 MB  app cpu    79%  app rss   201 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   361 s   60.0 C    2400/2400 MHz  cores 28 34 33 32      mem   3754 MB  app cpu    79%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   371 s   60.0 C    2400/2400 MHz  cores 25 32 24 26      mem   3720 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   381 s   58.4 C    2400/2400 MHz  cores 25 27 28 26      mem   3678 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   391 s   60.0 C    2400/2400 MHz  cores 31 27 26 28      mem   3685 MB  app cpu    78%  app rss   203 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   401 s   58.4 C    2400/2400 MHz  cores 37 30 26 29      mem   3686 MB  app cpu    77%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   411 s   58.4 C    2400/2400 MHz  cores 23 28 20 26      mem   3687 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   421 s   59.0 C    2400/2400 MHz  cores 24 30 25 23      mem   3488 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   431 s   60.0 C    2400/2400 MHz  cores 29 29 28 27      mem   3374 MB  app cpu    79%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   441 s   59.5 C    2400/2400 MHz  cores 27 26 29 29      mem   3379 MB  app cpu    79%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   451 s   59.0 C    2400/2400 MHz  cores 24 32 26 25      mem   3370 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   461 s   59.5 C    2400/2400 MHz  cores 22 30 27 27      mem   3376 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   471 s   60.0 C    2400/2400 MHz  cores 27 30 28 28      mem   3377 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   481 s   58.4 C    2400/2400 MHz  cores 38 33 27 27      mem   3359 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   491 s   60.0 C    2400/2400 MHz  cores 24 29 23 24      mem   3360 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   501 s   59.5 C    2400/2400 MHz  cores 24 28 26 23      mem   3362 MB  app cpu    77%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   511 s   59.0 C    1900/2400 MHz  cores 24 26 27 24      mem   3367 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   521 s   59.5 C    2400/2400 MHz  cores 25 28 28 23      mem   3359 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   531 s   58.4 C    2400/2400 MHz  cores 24 29 29 29      mem   3326 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   541 s   60.0 C    2400/2400 MHz  cores 24 27 28 27      mem   3323 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   551 s   59.5 C    2400/2400 MHz  cores 27 28 30 28      mem   3323 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   561 s   59.5 C    2400/2400 MHz  cores 38 37 35 31      mem   3352 MB  app cpu    79%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   572 s   60.0 C    2400/2400 MHz  cores 27 27 32 21      mem   3351 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   582 s   59.0 C    2400/2400 MHz  cores 24 26 28 27      mem   3347 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   592 s   59.0 C    2400/2400 MHz  cores 24 28 26 24      mem   3340 MB  app cpu    78%  app rss   203 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   602 s   59.0 C    2400/2400 MHz  cores 25 30 34 30      mem   3372 MB  app cpu    79%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   612 s   61.1 C    2400/2400 MHz  cores 23 24 29 29      mem   3344 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   622 s   59.5 C    2400/2400 MHz  cores 21 26 30 29      mem   3342 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   632 s   60.0 C    2400/2400 MHz  cores 25 32 26 28      mem   3341 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   642 s   59.0 C    2400/2400 MHz  cores 35 28 28 32      mem   3346 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   652 s   60.6 C    2400/2400 MHz  cores 29 28 21 25      mem   3341 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   662 s   59.0 C    2400/2400 MHz  cores 26 28 23 25      mem   3339 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   672 s   59.0 C    2400/2400 MHz  cores 22 24 24 31      mem   3343 MB  app cpu    78%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   682 s   61.1 C    2400/2400 MHz  cores 22 28 23 24      mem   3345 MB  app cpu    74%  app rss   202 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   692 s   62.8 C    2400/2400 MHz  cores 40 42 38 36      mem   3642 MB  app cpu    66%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   702 s   63.9 C    2400/2400 MHz  cores 44 48 60 49      mem   3819 MB  app cpu    80%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   712 s   60.6 C    2400/2400 MHz  cores 30 34 29 29      mem   3890 MB  app cpu    76%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   722 s   60.0 C    2400/2400 MHz  cores 31 27 32 29      mem   3866 MB  app cpu    77%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   732 s   59.5 C    2400/2400 MHz  cores 28 25 29 25      mem   3875 MB  app cpu    79%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   742 s   61.1 C    2400/2400 MHz  cores 23 25 32 21      mem   3870 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   752 s   59.5 C    2400/2400 MHz  cores 22 29 25 26      mem   3868 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   762 s   62.8 C    2400/2400 MHz  cores 31 30 30 28      mem   3881 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   772 s   59.5 C    2400/2400 MHz  cores 33 39 49 35      mem   3995 MB  app cpu    81%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   782 s   60.6 C    2400/2400 MHz  cores 30 30 35 29      mem   3970 MB  app cpu    79%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   792 s   60.6 C    2400/2400 MHz  cores 30 28 26 27      mem   3968 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   802 s   60.0 C    2400/2400 MHz  cores 33 30 31 33      mem   3975 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   812 s   59.5 C    2400/2400 MHz  cores 31 24 27 25      mem   3972 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   822 s   61.7 C    2400/2400 MHz  cores 28 26 27 26      mem   3973 MB  app cpu    79%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   832 s   60.6 C    2400/2400 MHz  cores 22 24 28 29      mem   3983 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   842 s   62.2 C    2400/2400 MHz  cores 28 30 26 29      mem   3980 MB  app cpu    79%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   852 s   61.1 C    2400/2400 MHz  cores 22 23 31 27      mem   3986 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   862 s   60.0 C    2400/2400 MHz  cores 25 24 27 28      mem   3995 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   872 s   60.0 C    2400/2400 MHz  cores 26 29 33 27      mem   3542 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   882 s   61.1 C    2400/2400 MHz  cores 35 28 27 30      mem   3528 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   892 s   60.6 C    2400/2400 MHz  cores 21 24 28 24      mem   3521 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   902 s   60.6 C    2400/2400 MHz  cores 24 21 27 26      mem   3519 MB  app cpu    77%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   912 s   61.1 C    2400/2400 MHz  cores 22 28 26 22      mem   3520 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   922 s   61.1 C    2400/2400 MHz  cores 22 25 20 32      mem   3521 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   932 s   60.0 C    2400/2400 MHz  cores 23 27 25 28      mem   3520 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   942 s   61.1 C    2400/2400 MHz  cores 24 28 21 30      mem   3518 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   952 s   60.0 C    2400/2400 MHz  cores 25 28 28 31      mem   3522 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   962 s   59.0 C    2400/2400 MHz  cores 36 26 26 31      mem   3498 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   972 s   60.0 C    2400/2400 MHz  cores 18 25 30 24      mem   3500 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   982 s   61.1 C    2400/2400 MHz  cores 21 29 28 26      mem   3453 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+   992 s   60.0 C    2400/2400 MHz  cores 23 23 24 30      mem   3459 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1003 s   60.0 C    2400/2400 MHz  cores 23 27 28 25      mem   3462 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1013 s   60.0 C    2400/2400 MHz  cores 24 26 30 25      mem   3462 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1023 s   60.6 C    2400/2400 MHz  cores 24 31 26 25      mem   3459 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1033 s   61.1 C    2400/2400 MHz  cores 30 29 32 25      mem   3453 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1043 s   61.1 C    2400/2400 MHz  cores 33 26 25 29      mem   3454 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1053 s   60.0 C    2400/2400 MHz  cores 22 30 25 22      mem   3455 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1063 s   59.0 C    2400/2400 MHz  cores 22 27 22 20      mem   3459 MB  app cpu    73%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1073 s   61.1 C    2400/2400 MHz  cores 14 19 21 18      mem   3463 MB  app cpu    59%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1083 s   61.1 C    1900/2400 MHz  cores 20 25 22 25      mem   3460 MB  app cpu    70%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1093 s   60.6 C    2400/2400 MHz  cores 26 25 27 27      mem   3460 MB  app cpu    77%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1103 s   61.1 C    2400/2400 MHz  cores 23 29 27 27      mem   3456 MB  app cpu    78%  app rss   205 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1113 s   61.1 C    2400/2400 MHz  cores 27 28 29 32      mem   3458 MB  app cpu    77%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1123 s   61.1 C    2400/2400 MHz  cores 33 31 24 24      mem   3455 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1133 s   60.0 C    2400/2400 MHz  cores 22 26 26 24      mem   3453 MB  app cpu    78%  app rss   205 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1143 s   61.7 C    2400/2400 MHz  cores 27 23 24 26      mem   3309 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1153 s   61.7 C    2400/2400 MHz  cores 23 25 25 26      mem   3298 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1163 s   60.0 C    2400/2400 MHz  cores 22 28 25 28      mem   3292 MB  app cpu    77%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1173 s   60.6 C    2400/2400 MHz  cores 22 28 28 26      mem   3295 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1183 s   60.6 C    2400/2400 MHz  cores 24 28 26 29      mem   3288 MB  app cpu    77%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1193 s   62.2 C    2400/2400 MHz  cores 28 31 30 26      mem   3294 MB  app cpu    78%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+  1200 s   60.0 C    2400/2400 MHz  cores 38 24 22 29      mem   3282 MB  app cpu    77%  app rss   204 MB  throttled 0x0  battery  97.3 % 4.165 V CHARGER IN
+perf_sample b3-realboards-20min
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 1200.0 --live --sudo-vcgencmd --label b3-realboards-20min --out /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-b/b3-realboards-20min --app-log /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-b/b3-realboards-20min/perf-b3-realboards-20min-app.log
+samples: 120 every 10 s; app found: yes
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: 0x0
+
+temperature: min 51.8, mean 59.4, max 63.9 C
+CPU clock: min 1900.0, mean 2383.3, max 2400.0 MHz
+system memory used: min 3142.5, mean 3475.2, max 4307.1 MB
+app CPU: min 59.0, mean 77.2, max 81.3 % of one core
+app resident memory: min 195.2, mean 202.2, max 204.8 MB
+busiest core: min 20.6, mean 31.1, max 63.5 %
+CPU clock below its maximum in 4 of 120 samples (lowest 1900 MHz, at 57 to 61 C): short dips; thermal throttling is judged by the flags below
+throttle flags seen (vcgencmd get_throttled): 0x0 (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+depth FPS, the app's own counter (an average since start, so it hides dips): median 29.7, min 29.5
+detection FPS, the app's own counter (same): median 29.7, min 29.5
+camera-to-callback delay: median 106 ms, p95 129 ms, p99 136 ms, max 158 ms (2252 lines)
+frame rate per 15-frame window (after the first minute, 2247 windows): median 30.0, 5th percentile 28.5, 1st percentile 20.4, min 18.0 FPS; longest window 1.02 s (15 frames take 0.50 s at 30 FPS); windows over 1 s: 2
+battery (X1202 gauge): 97.5 % -> 97.3 %, 4.165 V -> 4.165 V over 20 min (120 readings; the percentage drifts, the voltage is the measure)
+power source (the HAT's power-loss line): on battery in 0 of 120 samples; THE CHARGER WAS IN for the rest: this is not a clean battery run
+battery: on the charger throughout: this run says nothing about battery life
+stability (REQ-DTA-09): memory 199 -> 204 MB (+2.6 %, limit +5 %): PASS
+stability (REQ-DTA-09): app CPU first 3 min 77 %, last 3 min 76 % (limit 10 points apart): PASS
+
+written: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-b/b3-realboards-20min/perf-b3-realboards-20min.csv, /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-b/b3-realboards-20min/perf-b3-realboards-20min.txt
+written: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-b/b3-realboards-20min/perf-b3-realboards-20min.png
+
+stop: exited 0 1.0 s after Ctrl+C
+after: temp=58.7'C, throttled=0x0
+screenshots: {'mid': 'not taken (--no-screenshots)', 'end': 'not taken (--no-screenshots)'}

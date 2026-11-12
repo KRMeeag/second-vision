@@ -1,0 +1,28 @@
+perf_sample b3-standin-1min
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 90.0 --live --sudo-vcgencmd --label b3-standin-1min --out /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-b/b3-standin-1min --app-log /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-b/b3-standin-1min/perf-b3-standin-1min-app.log
+samples: 9 every 10 s; app found: yes
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: 0x0
+
+temperature: min 52.4, mean 54.6, max 56.2 C
+CPU clock: min 2400.0, mean 2400.0, max 2400.0 MHz
+system memory used: min 4458.4, mean 4498.7, max 4564.6 MB
+app CPU: min 75.9, mean 78.0, max 81.2 % of one core
+app resident memory: min 196.0, mean 198.2, max 199.6 MB
+busiest core: min 26.6, mean 36.5, max 65.4 %
+CPU clock stayed at its maximum in every sample
+throttle flags seen (vcgencmd get_throttled): 0x0 (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+depth FPS, the app's own counter (an average since start, so it hides dips): median 29.6, min 29.5
+detection FPS, the app's own counter (same): median 29.6, min 29.5
+camera-to-callback delay: median 109 ms, p95 120 ms, p99 144 ms, max 144 ms (61 lines)
+frame rate per 15-frame window (after the first minute, 60 windows): median 29.9, 5th percentile 28.7, 1st percentile 27.5, min 27.5 FPS; longest window 0.55 s (15 frames take 0.50 s at 30 FPS); windows over 1 s: 0
+battery (X1202 gauge): 97.5 % -> 97.5 %, 4.166 V -> 4.166 V over 1 min (9 readings; the percentage drifts, the voltage is the measure)
+power source (the HAT's power-loss line): on battery in 0 of 9 samples; THE CHARGER WAS IN for the rest: this is not a clean battery run
+battery: on the charger throughout: this run says nothing about battery life
+stability (REQ-DTA-09): not judged, the run is shorter than 7 minutes
+
+stop: exited 0 0.5 s after Ctrl+C
+stand-in glasses received 2719 packets
+after: temp=54.3'C, throttled=0x0
+screenshots: {'mid': 'not taken (--no-screenshots)', 'end': 'not taken (--no-screenshots)'}

@@ -30,6 +30,10 @@ class SystemConfig:
         # loudness, so a run without a panel sounds exactly as it always has.
         # The knob never mutes: switching speech off is the DETECT rocker's job.
         self.tts_volume = 1.0
+        # Spoken language. "fil" (the default since 2026-11-11, Kenth): pre-made Filipino clips
+        # (core/fil_clips.py), with English espeak-ng for anything the clips cannot say whole.
+        # "en": English espeak-ng only, as before. Set with --language; nothing changes it at runtime.
+        self.language = "fil"
         self.cooldown_seconds = 3.0
         # Features
         self.depth_enabled = True

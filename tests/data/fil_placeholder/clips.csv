@@ -1,0 +1,35 @@
+clip_id,type,en_text,fil_text,use,notes
+w_person,word: object,person,tao,slot 2 (object),
+w_vehicle,word: object,vehicle,sasakyan,slot 2 (object),
+w_bicycle,word: object,bicycle,bisikleta,slot 2 (object),
+w_tricycle,word: object,tricycle,traysikel,slot 2 (object),
+w_motorcycle,word: object,motorcycle,motorsiklo,slot 2 (object),
+w_animal,word: object,animal,hayop,slot 2 (object),
+w_door,word: object,door,pinto,slot 2 (object),
+w_chair,word: object,chair,upuan,slot 2 (object),
+w_table,word: object,table,mesa,slot 2 (object),
+w_pothole,word: object,pothole,lubak,slot 2 (object),
+w_trash_bin,word: object,trash bin,basurahan,slot 2 (object),
+w_stairs,word: object,stairs,hagdan,slot 2 (object),
+w_bench,word: object,bench,bangko,slot 2 (object),
+w_left,word: direction,left,sa kaliwa,slot 4 (direction),
+w_center,word: direction,center,sa harap,slot 4 (direction),'center' drafted as 'sa harap' (in front); literal is 'sa gitna'
+w_right,word: direction,right,sa kanan,slot 4 (direction),
+w_multiple,word: modifier,multiple,maraming,slot 1 (optional),
+w_still,word: modifier,still,pa rin,slot 3 (optional),
+w_leaving_to,word: modifier,leaving to,papunta,slot 3 (optional),only before left/right
+s_mode_detection,sentence: mode,detection mode,Pagtukoy ng bagay lang,whole clip,meaning-based draft
+s_mode_depth,sentence: mode,depth mode,Vibration lang,whole clip,meaning-based draft
+s_mode_both,sentence: mode,both mode,Pagtukoy ng bagay at vibration,whole clip,meaning-based draft
+s_mode_none,sentence: mode,none mode,Naka-off ang pagtukoy at vibration,whole clip,meaning-based draft
+s_camera_missing,sentence: alert,Critical Error: Camera cannot be reached,Babala: Hindi makonekta ang camera.,whole clip,
+s_camera_back,sentence: alert,Camera has been reconnected,Nakakonekta na ulit ang camera.,whole clip,
+s_view_dark,sentence: alert,Camera is blocked or it is too dark. Obstacle warnings may be missing.,Natatakpan ang camera o masyadong madilim. Maaaring may mga harang na hindi mababanggit.,whole clip,
+s_view_bright,sentence: alert,Camera is facing very bright light. Obstacle warnings may be missing.,Nakaharap ang camera sa napakaliwanag na ilaw. Maaaring may mga harang na hindi mababanggit.,whole clip,
+s_view_back,sentence: alert,Camera view is back.,Malinaw na ulit ang camera.,whole clip,
+s_vibration_missing,sentence: alert,Vibration is not working,Hindi gumagana ang vibration.,whole clip,
+s_vibration_back,sentence: alert,Vibration is working again,Gumagana na ulit ang vibration.,whole clip,
+s_earphones_back,sentence: alert,Earphones connected,Nakakonekta na ang earphones.,whole clip,
+s_panel_missing,sentence: alert,Controller board cannot be reached. Using the current settings.,Hindi makonekta ang controller. Gagamitin ang kasalukuyang settings.,whole clip,
+s_panel_back,sentence: alert,Controller board connected,Nakakonekta na ang controller.,whole clip,
+s_everything_connected,sentence: alert,Everything is connected,Nakakonekta na ang lahat.,whole clip,

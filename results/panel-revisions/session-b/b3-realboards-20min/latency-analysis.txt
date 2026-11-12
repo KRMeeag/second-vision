@@ -1,0 +1,28 @@
+run: b3-realboards-20min
+latency log: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-b/b3-realboards-20min/latency
+left out: the first 60 s after the first [DEPTH] line; camera losses in the run: 0
+
+ACKs noticed by the serial worker: 29072 (from acks.csv); a packet is paired with the first one noticed at least 1 ms after its write (ACKs carry no sequence number)
+
+HAPTIC (all rows): 33769 motor packets written, 0 failed writes
+  capture -> UART write:        median 108 ms, p95 135, p99 143, max 219, min 69 (n=33769)
+  capture -> ACK noticed:       median 150 ms, p95 189, p99 204, max 287, min 97 (n=33767)
+  UART write -> ACK noticed:    median 46 ms, p95 66, p99 72, max 162, min 1 (n=33767)  (when the worker got round to looking: one pass after the next write, not the board's reply time)
+  capture -> depth callback queued it: median 106 ms, p95 128, p99 135, max 197, min 68 (n=33769)
+  queued -> taken by the serial worker: median 0 ms, p95 1, p99 10, max 31, min 0 (n=33769)
+  packets with no ACK noticed afterwards: 2
+
+HAPTIC (outside camera losses): 33769 motor packets written, 0 failed writes
+  capture -> UART write:        median 108 ms, p95 135, p99 143, max 219, min 69 (n=33769)
+  capture -> ACK noticed:       median 150 ms, p95 189, p99 204, max 287, min 97 (n=33767)
+  UART write -> ACK noticed:    median 46 ms, p95 66, p99 72, max 162, min 1 (n=33767)  (when the worker got round to looking: one pass after the next write, not the board's reply time)
+  capture -> depth callback queued it: median 106 ms, p95 128, p99 135, max 197, min 68 (n=33769)
+  queued -> taken by the serial worker: median 0 ms, p95 1, p99 10, max 31, min 0 (n=33769)
+  packets with no ACK noticed afterwards: 2
+
+AUDIO: 0 detection announcements started (0 first announcements of a track)
+  first announcements: (a) first qualifying frame -> speech start: no rows
+  first announcements: (b) decision frame -> speech start:          no rows
+  all announcements: (a) first qualifying frame -> speech start: no rows
+  all announcements: (b) decision frame -> speech start:          no rows
+  speech start = the espeak-ng process had been started; when sound reached the earphones is not measured

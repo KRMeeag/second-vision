@@ -59,6 +59,10 @@ CLASS_WEIGHT_DEFAULT = 0.5
 CLASS_WEIGHTS = {
     "person": 0.7,
     "vehicle": 1.0,
+    # Mapped to "vehicle" until 2026-11-11 (callbacks.DETECTION_CLASS_MAP); now announced
+    # by their own names, with the weight "vehicle" gave them, so only the word changes.
+    "bicycle": 1.0,
+    "tricycle": 1.0,
     "motorcycle": 0.9,
 }
 
@@ -73,7 +77,7 @@ RECENCY_DECAY_SECONDS = 8.0
 # ============================================================
 # Classes that count as urgent when they appear in the CENTER zone (collision
 # path). PLACEHOLDER, same caveat (and same mapped-name keying) as CLASS_WEIGHTS.
-URGENT_CLASSES = {"vehicle", "motorcycle"}
+URGENT_CLASSES = {"vehicle", "bicycle", "tricycle", "motorcycle"}
 # Absolute priority above which anything is urgent regardless of class/zone.
 URGENT_ABS_THRESHOLD = 3.2
 

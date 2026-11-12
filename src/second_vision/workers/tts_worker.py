@@ -21,12 +21,19 @@ from core/turn_event.py (ESP32 -> serial_worker.py -> TurnEvent). See
 _check_turn_mute() below.
 """
 
+import atexit
+import glob
 import math
+import os
 import shutil
 import subprocess
+import tempfile
 import time
 
+from second_vision.core import fil_clips
 from second_vision.core.alerts import CUT, DROPPED, SPOKEN, failsafe_level
+# Measurement only: latency_log.LOG is None unless SV_LATENCY_LOG=1 (core/latency_log.py).
+from second_vision.core import latency_log
 from second_vision.core.priority import (
     MIN_UTTERANCE_GAP,
     TIER_URGENT,
@@ -46,8 +53,11 @@ from second_vision.core.priority import (
 #           that repeat). The worker tells it what became of the items it takes
 #           (take / drain / finish); the queue items themselves are unchanged.
 #           Absent (getattr default None) -> exactly the behaviour without it.
-#   Output: Audio announcement via speaker (espeak-ng, pyttsx3 fallback).
-#   Config: config.tts_enabled, config.tts_volume (the panel's volume knob). A
+#   Output: Audio announcement via speaker: Filipino clips (pw-play) when
+#           config.language is "fil" and the clips can say the whole utterance,
+#           otherwise espeak-ng in English (pyttsx3 fallback). See _start_speech().
+#   Config: config.tts_enabled, config.tts_volume (the panel's volume knob),
+#           config.language. A
 #           failsafe alert (the scheduler's own item, D41) is spoken even with
 #           tts_enabled off, at failsafe_level(tts_volume); see _item_amplitude().
 # ============================================================
@@ -80,6 +90,21 @@ _pyttsx3_engine = None
 # not clip; a=200 saturates.
 _AMPLITUDE_MAX = 100
 _AMPLITUDE_FLOOR = 10
+
+# --- Filipino: pre-made clips (core/fil_clips.py) ----------------------------
+# A Filipino utterance is rendered to one WAV in RAM (/dev/shm) and played by pw-play, which,
+# like espeak-ng, keeps the Popen interface the poll / terminate loop below relies on. The WAV
+# is removed once playback ends or is cut (_ClipPlayback).
+# pw-play, not aplay: on the device ALSA's default device is the HDMI output (aplay -L lists no
+# pipewire or pulse device), and the USB earphone card is held by PipeWire. espeak-ng reaches
+# the earphones through PipeWire's default sink (libpcaudio -> PulseAudio API ->
+# pipewire-pulse); pw-play plays to that same default sink. Checked 2026-11-12.
+# The knob's level is applied to the samples (fil_clips.render: amplitude / 100), the same
+# change espeak-ng's -a gives, so both languages follow the knob alike.
+_PLAYER = "pw-play"
+_CLIP_TMP_DIR = "/dev/shm"
+_CLIP_TMP_PREFIX = "second-vision-tts-"
+_fallback_noted: set = set()      # texts already logged as falling back to English
 
 
 def _espeak_amplitude(volume) -> int:
@@ -176,6 +201,7 @@ def tts_worker(user_data, config):
     turn_event = getattr(user_data, "turn_event", None)
     alerts = getattr(user_data, "alerts", None)
     mute_until = 0.0
+    fil_clips.bank()        # read the Filipino clips now, not on the first utterance
 
     while not user_data.shutdown_event.is_set():
         mute_until = _check_turn_mute(turn_event, mailbox, time.monotonic(), mute_until, alerts)
@@ -203,7 +229,8 @@ def tts_worker(user_data, config):
                 continue
 
             _speak_interruptible(item, mailbox, user_data, amplitude,
-                                 amplitude_for=lambda it: _item_amplitude(it, config, alerts))
+                                 amplitude_for=lambda it: _item_amplitude(it, config, alerts),
+                                 language=config.get("language"))
             _pace(mailbox, user_data)
         except Exception as e:  # never let the worker thread die
             print(f"[TTS] Error processing announcement: {e}")
@@ -211,11 +238,15 @@ def tts_worker(user_data, config):
                 alerts.release(DROPPED)             # never leave the scheduler waiting on it
 
 
-def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX, amplitude_for=None):
+def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX, amplitude_for=None,
+                         language=None):
     """
     Speak `item` at espeak-ng `amplitude`. If a preempting item arrives
-    mid-utterance, terminate the current espeak process and switch to it —
+    mid-utterance, terminate the current speech process and switch to it —
     looping until an utterance finishes naturally (or shutdown).
+
+    `language` ("fil", or anything else for English) picks the engine per utterance through
+    _start_speech(); None, the default for direct callers, is English with espeak-ng as before.
 
     `amplitude_for(item)` (the worker passes _item_amplitude) gives each preempting item its
     own amplitude, or None when it must not be spoken; such an item does not preempt. Without
@@ -233,10 +264,15 @@ def _speak_interruptible(item, mailbox, user_data, amplitude=_AMPLITUDE_MAX, amp
 
     while item is not None and not user_data.shutdown_event.is_set():
         text = _text_for(item)
-        print(f"[TTS] '{text}'")
         speaking_alert = alerts is not None and alerts.is_failsafe(item)
 
-        proc = _start_espeak(text, amplitude)
+        proc = _start_speech(text, amplitude, language)
+        filipino = isinstance(proc, _ClipPlayback)
+        # The English text in the log either way, and which engine said it.
+        print(f"[TTS] '{text}' ({'fil' if filipino else 'en'})")
+        if latency_log.LOG is not None:
+            latency_log.LOG.speech_started(
+                item, "fil-clips" if filipino else "espeak-ng" if proc is not None else "pyttsx3-fallback")
         if proc is None:
             # No espeak-ng available — fall back to a blocking, NON-interruptible
             # engine (dev machines only; the device has espeak-ng).
@@ -318,6 +354,100 @@ def _text_for(item) -> str:
     if phrase:
         return phrase
     return f"{item.get('label', 'unknown')} {item.get('zone', 'center')}"
+
+
+def _start_speech(text: str, amplitude: int = _AMPLITUDE_MAX, language=None):
+    """
+    Start speaking `text` (non-blocking). Returns a Popen, or None when espeak-ng is missing (the
+    caller's blocking fallback), exactly as _start_espeak() does.
+
+    language "fil": when the Filipino clips can say ALL of `text` (fil_clips.ClipBank.resolve),
+    they are rendered at `amplitude` and played by pw-play (_ClipPlayback). Otherwise, and for
+    any other language, the whole utterance is spoken in English by _start_espeak(), unchanged.
+    A Filipino utterance that goes to English is logged once per text (none are logged when no
+    clips loaded at all: fil_clips.bank() already said so once).
+    """
+    if language == "fil":
+        bank = fil_clips.bank()
+        clip_ids = bank.resolve(text)
+        if clip_ids is not None:
+            try:
+                return _start_clips(bank.render(clip_ids, amplitude))
+            except Exception as e:      # no pw-play, no /dev/shm, a write error: English instead
+                _note_fallback(text, f"clip playback failed ({e})")
+        elif len(bank):
+            _note_fallback(text, "no clips for it")
+    return _start_espeak(text, amplitude)
+
+
+def _note_fallback(text: str, why: str) -> None:
+    if text not in _fallback_noted:
+        _fallback_noted.add(text)
+        print(f"[TTS] Filipino: {why}; speaking English: '{text}'")
+
+
+def _player_argv(path: str) -> list:
+    """The command that plays one rendered utterance (see _PLAYER)."""
+    return [_PLAYER, path]
+
+
+def _start_clips(wav: bytes):
+    """Write `wav` to a temporary file in _CLIP_TMP_DIR and start playing it."""
+    fd, path = tempfile.mkstemp(prefix=f"{_CLIP_TMP_PREFIX}{os.getpid()}-", suffix=".wav", dir=_CLIP_TMP_DIR)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(wav)
+    except BaseException:
+        _remove(path)
+        raise
+    return _ClipPlayback(path, _player_argv(path))
+
+
+def _remove(path: str) -> None:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+class _ClipPlayback(subprocess.Popen):
+    """
+    The player process for one rendered Filipino utterance. A Popen, so the speech loop treats
+    it exactly like espeak-ng (poll, terminate). Its WAV is removed from /dev/shm as soon as the
+    process is seen to have ended (poll/wait) or is stopped (terminate: a cut or shutdown), so a
+    cut leaves nothing behind. Linux keeps an unlinked file readable by a process that has it
+    open, so removing it on terminate cannot disturb the player.
+    """
+
+    def __init__(self, wav_path: str, argv: list):
+        self.wav_path = wav_path
+        try:
+            super().__init__(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except BaseException:
+            _remove(wav_path)
+            raise
+
+    def poll(self):
+        code = super().poll()
+        if code is not None:
+            _remove(self.wav_path)
+        return code
+
+    def wait(self, timeout=None):
+        code = super().wait(timeout)
+        _remove(self.wav_path)
+        return code
+
+    def terminate(self):
+        super().terminate()
+        _remove(self.wav_path)
+
+
+@atexit.register
+def _remove_own_clip_files() -> None:
+    """At exit, remove any WAV of this process still in /dev/shm (an utterance cut by exit)."""
+    for path in glob.glob(os.path.join(_CLIP_TMP_DIR, f"{_CLIP_TMP_PREFIX}{os.getpid()}-*.wav")):
+        _remove(path)
 
 
 def _start_espeak(text: str, amplitude: int = _AMPLITUDE_MAX):

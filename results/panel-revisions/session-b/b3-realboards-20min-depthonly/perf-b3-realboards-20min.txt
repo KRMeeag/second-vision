@@ -1,0 +1,28 @@
+perf_sample b3-realboards-20min
+command: /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/docs/testing/tools/perf_sample.py --duration 1200.0 --live --sudo-vcgencmd --label b3-realboards-20min --out /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-b/b3-realboards-20min --app-log /home/sv-rpi5/Projects/Second-Vision/worktrees/kenth/results/panel-revisions/session-b/b3-realboards-20min/perf-b3-realboards-20min-app.log
+samples: 120 every 10 s; app found: yes
+HAILO_MONITOR set in the app: no / unreadable
+vcgencmd get_throttled: 0x0
+
+temperature: min 55.1, mean 57.2, max 59.5 C
+CPU clock: min 1800.0, mean 2359.2, max 2400.0 MHz
+system memory used: min 2884.3, mean 3032.9, max 3134.0 MB
+app CPU: min 33.5, mean 57.2, max 63.1 % of one core
+app resident memory: min 160.3, mean 186.8, max 198.5 MB
+busiest core: min 15.8, mean 30.8, max 52.2 %
+CPU clock below its maximum in 9 of 120 samples (lowest 1800 MHz, at 56 to 58 C): short dips; thermal throttling is judged by the flags below
+throttle flags seen (vcgencmd get_throttled): 0x0 (0x0 means no under-voltage, frequency cap or throttling now, and none since boot)
+undervoltage alarm raised in 0 samples
+depth FPS, the app's own counter (an average since start, so it hides dips): median 29.6, min 14.8
+detection FPS, the app's own counter (same): median 76.7, min 36.6
+camera-to-callback delay: median 80 ms, p95 101 ms, p99 104 ms, max 109 ms (2217 lines)
+frame rate per 15-frame window (after the first minute, 2213 windows): median 30.0, 5th percentile 29.8, 1st percentile 20.4, min 19.4 FPS; longest window 0.77 s (15 frames take 0.50 s at 30 FPS); windows over 1 s: 0
+battery (X1202 gauge): 97.5 % -> 97.5 %, 4.166 V -> 4.166 V over 20 min (120 readings; the percentage drifts, the voltage is the measure)
+power source (the HAT's power-loss line): on battery in 0 of 120 samples; THE CHARGER WAS IN for the rest: this is not a clean battery run
+battery: on the charger throughout: this run says nothing about battery life
+stability (REQ-DTA-09): memory 175 -> 192 MB (+9.3 %, limit +5 %): FAIL
+stability (REQ-DTA-09): app CPU first 3 min 56 %, last 3 min 60 % (limit 10 points apart): PASS
+
+stop: exited 0 1.0 s after Ctrl+C
+after: temp=56.5'C, throttled=0x0
+screenshots: {'mid': 'not taken (--no-screenshots)', 'end': 'not taken (--no-screenshots)'}
